@@ -1,0 +1,18 @@
+[package]
+name = "maqtt"
+version = "0.1.0"
+description = "A desktop MQTT client for exploring and debugging live traffic on several Brokers at once"
+edition.workspace = true
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name, see https://github.com/rust-lang/cargo/issues/8519
+name = "maqtt_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
