@@ -14,6 +14,7 @@ use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme
 
 use crate::message::MessageProperties;
 use crate::profile::{Profile, Protocol, TlsSettings};
+use crate::publish::{OutgoingMessage, OutgoingProperties};
 
 /// The largest packet MQTT allows. `rumqttc` defaults to 10 KiB and drops the Connection on
 /// anything bigger, which is wrong for a tool meant to show whatever the Broker sends.
@@ -118,6 +119,40 @@ impl Client {
                     ..rumqttc::v5::mqttbytes::v5::Filter::new(filter, v5_qos(qos))
                 }])
                 .map_err(|err| err.to_string()),
+        }
+    }
+
+    /// Queues a message for the Broker. MQTT 3.1.1 can't carry properties, so they are refused
+    /// there rather than silently dropped.
+    pub async fn publish(&self, message: &OutgoingMessage) -> Result<(), String> {
+        let payload = message.payload.clone().into_bytes();
+        let properties = message.properties.as_ref().filter(|p| !p.is_empty());
+        match self {
+            Client::V311(c) => {
+                if properties.is_some() {
+                    return Err("MQTT 3.1.1 can't send message properties".into());
+                }
+                c.publish(
+                    &message.topic,
+                    v311_qos(message.qos),
+                    message.retain,
+                    payload,
+                )
+                .await
+                .map_err(|err| err.to_string())
+            }
+            Client::V5(c) => {
+                let topic = &message.topic;
+                let (qos, retain) = (v5_qos(message.qos), message.retain);
+                match properties {
+                    Some(p) => {
+                        c.publish_with_properties(topic, qos, retain, payload, v5_properties(p))
+                            .await
+                    }
+                    None => c.publish(topic, qos, retain, payload).await,
+                }
+                .map_err(|err| err.to_string())
+            }
         }
     }
 
@@ -238,6 +273,19 @@ fn outgoing_event(outgoing: Outgoing) -> Incoming {
         Outgoing::Subscribe(pkid) => Incoming::SubscribeSent { pkid },
         Outgoing::Disconnect => Incoming::DisconnectSent,
         _ => Incoming::Other,
+    }
+}
+
+fn v5_properties(p: &OutgoingProperties) -> rumqttc::v5::mqttbytes::v5::PublishProperties {
+    let non_empty = |s: &Option<String>| s.clone().filter(|s| !s.is_empty());
+    rumqttc::v5::mqttbytes::v5::PublishProperties {
+        payload_format_indicator: p.payload_is_utf8.then_some(1),
+        message_expiry_interval: p.message_expiry_interval,
+        content_type: non_empty(&p.content_type),
+        response_topic: non_empty(&p.response_topic),
+        correlation_data: non_empty(&p.correlation_data).map(|c| c.into_bytes().into()),
+        user_properties: p.user_properties.clone(),
+        ..Default::default()
     }
 }
 

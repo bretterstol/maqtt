@@ -248,3 +248,52 @@ export function messageDetail(
 ): Promise<MessageDetail | null> {
   return invoke("message_detail", { connectionId, seq });
 }
+
+export interface OutgoingProperties {
+  contentType?: string | null;
+  responseTopic?: string | null;
+  correlationData?: string | null;
+  messageExpiryInterval?: number | null;
+  payloadIsUtf8: boolean;
+  userProperties: [string, string][];
+}
+
+export interface OutgoingMessage {
+  topic: string;
+  payload: string;
+  qos: number;
+  retain: boolean;
+  /** MQTT 5 only. */
+  properties?: OutgoingProperties | null;
+}
+
+/** One entry in the Publish History, newest first. */
+export interface PublishRecord {
+  profileId: ProfileId;
+  message: OutgoingMessage;
+  atMs: number;
+}
+
+/** Publishes on the Profile's Connection; resolves to the updated Publish History. */
+export function publish(
+  profileId: ProfileId,
+  message: OutgoingMessage,
+): Promise<PublishRecord[]> {
+  return invoke("publish", { profileId, message });
+}
+
+/** Clears the Broker's Retained Message for a topic. */
+export function clearRetained(
+  profileId: ProfileId,
+  topic: string,
+): Promise<void> {
+  return invoke("clear_retained", { profileId, topic });
+}
+
+export function publishHistory(): Promise<PublishRecord[]> {
+  return invoke("publish_history");
+}
+
+export function clearPublishHistory(): Promise<void> {
+  return invoke("clear_publish_history");
+}

@@ -63,6 +63,11 @@ body,
   display: flex;
 }
 
+.app__header .is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .app__stats {
   margin-left: auto;
   color: var(--text-muted);

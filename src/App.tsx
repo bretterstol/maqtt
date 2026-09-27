@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  clearRetained,
   listProfiles,
   newProfile,
   streamMessages,
@@ -14,6 +15,9 @@ import { MessageLog } from "./messageLog/MessageLog";
 import { MessageLogStore } from "./messageLog/store";
 import { ProfileEditor } from "./profiles/ProfileEditor";
 import { ProfileList } from "./profiles/ProfileList";
+import { emptyDraft, type PublishDraft } from "./publish/draft";
+import { PublishPanel } from "./publish/PublishPanel";
+import { ContextMenu } from "./topicTree/ContextMenu";
 import { TopicTreeStore, type TreeNode } from "./topicTree/store";
 import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
@@ -45,6 +49,15 @@ function App() {
   const [profiles, setProfiles] = useState<ProfileView[]>([]);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [rate, setRate] = useState(0);
+  const [publishing, setPublishing] = useState(false);
+  const [draft, setDraft] = useState<PublishDraft>(() => emptyDraft());
+  /** The topic whose "Clear retained" is waiting for confirmation. */
+  const [clearing, setClearing] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    node: TreeNode;
+    x: number;
+    y: number;
+  } | null>(null);
 
   useEffect(() => {
     listProfiles()
@@ -95,6 +108,49 @@ function App() {
     [statuses],
   );
 
+  const isOnline = (node: TreeNode) =>
+    statuses.get(node.connectionId)?.state.kind === "connected";
+
+  const publishTo = (node: TreeNode) => {
+    const profileId = statuses.get(node.connectionId)?.profileId ?? null;
+    setDraft((d) => ({ ...d, profileId, topic: node.path }));
+    setPublishing(true);
+  };
+
+  const clearRetainedOn = async (node: TreeNode) => {
+    setClearing(null);
+    const status = statuses.get(node.connectionId);
+    if (!status) return;
+    try {
+      await clearRetained(status.profileId, node.path);
+    } catch (err) {
+      console.error("clear_retained failed", err);
+    }
+  };
+
+  const menuItems = menu
+    ? [
+        ...(menu.node.depth > 0 && isOnline(menu.node)
+          ? [
+              {
+                label: "Publish to this topic…",
+                onSelect: () => publishTo(menu.node),
+              },
+            ]
+          : []),
+        ...(menu.node.topic?.retained && isOnline(menu.node)
+          ? [
+              {
+                label: "Clear retained message…",
+                danger: true,
+                // Confirmed in the detail panel, which the right-click already opened.
+                onSelect: () => setClearing(menu.node.key),
+              },
+            ]
+          : []),
+      ]
+    : [];
+
   const startNew = useCallback(async () => {
     setEditing({
       profile: await newProfile(),
@@ -107,6 +163,12 @@ function App() {
     <div className="app">
       <header className="app__header">
         <strong>måqtt</strong>
+        <button
+          className={publishing ? "is-active" : undefined}
+          onClick={() => setPublishing((open) => !open)}
+        >
+          Publish
+        </button>
         <span className="app__stats">
           {rate.toLocaleString()} msg/s · {store.totalReceived.toLocaleString()}{" "}
           received
@@ -146,6 +208,7 @@ function App() {
                 connectionStates={connectionStates}
                 selectedKey={selected?.key ?? null}
                 onSelect={setSelected}
+                onContextMenu={(node, x, y) => setMenu({ node, x, y })}
               />
               {selected && (
                 <TopicDetail
@@ -154,6 +217,12 @@ function App() {
                   node={selected}
                   tree={tree}
                   connectionName={connectionNames.get(selected.connectionId)}
+                  online={isOnline(selected)}
+                  onPublish={() => publishTo(selected)}
+                  confirmingClear={clearing === selected.key}
+                  onClearRetained={() => setClearing(selected.key)}
+                  onConfirmClear={() => void clearRetainedOn(selected)}
+                  onCancelClear={() => setClearing(null)}
                 />
               )}
             </div>
@@ -163,8 +232,25 @@ function App() {
               connectionNames={connectionNames}
             />
           )}
+          {publishing && (
+            <PublishPanel
+              draft={draft}
+              onDraftChange={setDraft}
+              profiles={profiles}
+              statuses={statusesByProfile}
+              onClose={() => setPublishing(false)}
+            />
+          )}
         </main>
       </div>
+      {menu && menuItems.length > 0 && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={menuItems}
+        />
+      )}
       {editing && (
         <ProfileEditor
           key={editing.profile.id}

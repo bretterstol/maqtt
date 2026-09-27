@@ -242,6 +242,15 @@ impl Connection {
         self.task.inner().is_finished()
     }
 
+    /// The client to publish with, if the Connection is online right now.
+    pub fn publisher(&self) -> Result<mqtt::Client, String> {
+        if self.context.session.lock().unwrap().connected {
+            Ok(self.client.clone())
+        } else {
+            Err("Not connected to the Broker right now".into())
+        }
+    }
+
     /// Adds a Subscription for this session only, or changes its QoS.
     pub fn subscribe(&self, subscription: Subscription) -> Result<(), String> {
         subscription.validate()?;
@@ -979,6 +988,138 @@ mod dev_broker_tests {
             "{events:?}"
         );
         wait_until("resubscribed", || all_subscribed(&statuses)).await;
+        manager.disconnect(&profile.id);
+    }
+
+    async fn next_on(
+        rx: &mut tokio::sync::broadcast::Receiver<BusEvent>,
+        topic: &str,
+    ) -> Arc<ReceivedMessage> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(BusEvent::Message(m)) = rx.recv().await
+                    && m.topic == topic
+                {
+                    return m;
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("nothing arrived on {topic}"))
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn published_messages_round_trip_with_properties() {
+        use crate::publish::{OutgoingMessage, OutgoingProperties};
+        let topic = format!("maqtt/it/publish/{}", std::process::id());
+        let mut profile = Profile::new("publish test", "localhost", 21883);
+        profile.subscriptions = vec![Subscription {
+            filter: format!("{topic}/#"),
+            qos: 1,
+        }];
+        let bus = Bus::new();
+        let mut rx = bus.subscribe();
+        let statuses = ConnectionStatuses::default();
+        let mut manager = ConnectionManager::default();
+        manager.connect(&profile, None, &bus, &statuses).unwrap();
+        wait_until("subscribed", || all_subscribed(&statuses)).await;
+        let client = manager.get(&profile.id).unwrap().publisher().unwrap();
+
+        let message = OutgoingMessage {
+            topic: format!("{topic}/json"),
+            payload: r#"{"on":true}"#.into(),
+            qos: 1,
+            retain: false,
+            properties: Some(OutgoingProperties {
+                content_type: Some("application/json".into()),
+                response_topic: Some(format!("{topic}/reply")),
+                correlation_data: Some("req-7".into()),
+                message_expiry_interval: Some(30),
+                payload_is_utf8: true,
+                user_properties: vec![("source".into(), "maqtt".into())],
+            }),
+        };
+        client.publish(&message).await.unwrap();
+        let received = next_on(&mut rx, &message.topic).await;
+        assert_eq!(&received.payload[..], br#"{"on":true}"#);
+        assert_eq!(received.qos, 1);
+        let props = received.properties.as_ref().unwrap();
+        assert_eq!(props.content_type.as_deref(), Some("application/json"));
+        assert_eq!(props.correlation_data.as_deref(), Some(&b"req-7"[..]));
+        assert_eq!(props.payload_format_indicator, Some(1));
+        assert_eq!(props.user_properties, [("source".into(), "maqtt".into())]);
+
+        // Retained, then cleared: with Retain As Published both arrive flagged retained.
+        let retained_topic = format!("{topic}/retained");
+        let retained = OutgoingMessage {
+            topic: retained_topic.clone(),
+            payload: "kept".into(),
+            qos: 1,
+            retain: true,
+            properties: None,
+        };
+        client.publish(&retained).await.unwrap();
+        assert!(next_on(&mut rx, &retained_topic).await.retain);
+        let clear = OutgoingMessage {
+            payload: String::new(),
+            ..retained
+        };
+        client.publish(&clear).await.unwrap();
+        let cleared = next_on(&mut rx, &retained_topic).await;
+        assert!(cleared.retain && cleared.payload.is_empty());
+
+        // A fresh subscriber gets nothing retained any more.
+        let output = std::process::Command::new("mosquitto_sub")
+            .args([
+                "-h",
+                "localhost",
+                "-p",
+                "21883",
+                "-t",
+                &retained_topic,
+                "--retained-only",
+                "-W",
+                "1",
+            ])
+            .output()
+            .expect("mosquitto_sub");
+        assert!(
+            output.stdout.is_empty(),
+            "{:?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        manager.disconnect(&profile.id);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn mqtt311_refuses_properties() {
+        use crate::publish::{OutgoingMessage, OutgoingProperties};
+        let mut profile = Profile::new("3.1.1 publish test", "localhost", 21883);
+        profile.protocol = crate::profile::Protocol::Mqtt311;
+        let bus = Bus::new();
+        let statuses = ConnectionStatuses::default();
+        let mut manager = ConnectionManager::default();
+        manager.connect(&profile, None, &bus, &statuses).unwrap();
+        wait_until("subscribed", || all_subscribed(&statuses)).await;
+        let client = manager.get(&profile.id).unwrap().publisher().unwrap();
+        let message = OutgoingMessage {
+            topic: "maqtt/it/v311".into(),
+            payload: "x".into(),
+            qos: 0,
+            retain: false,
+            properties: Some(OutgoingProperties {
+                content_type: Some("text/plain".into()),
+                ..OutgoingProperties::default()
+            }),
+        };
+        assert!(client.publish(&message).await.is_err());
+        let plain = OutgoingMessage {
+            properties: None,
+            ..message
+        };
+        assert!(client.publish(&plain).await.is_ok());
         manager.disconnect(&profile.id);
     }
 }

@@ -22,6 +22,7 @@ interface Props {
   connectionStates: Map<ConnectionId, ConnectionState>;
   selectedKey: string | null;
   onSelect: (node: TreeNode) => void;
+  onContextMenu: (node: TreeNode, x: number, y: number) => void;
 }
 
 export function TopicTree({
@@ -30,6 +31,7 @@ export function TopicTree({
   connectionStates,
   selectedKey,
   onSelect,
+  onContextMenu,
 }: Props) {
   useSyncExternalStore(store.subscribe, store.getVersion);
   const rows = store.rows();
@@ -73,6 +75,7 @@ export function TopicTree({
                 rootState={connectionStates.get(node.connectionId)}
                 onToggle={() => store.toggle(node)}
                 onSelect={() => onSelect(node)}
+                onContextMenu={(x, y) => onContextMenu(node, x, y)}
               />
             );
           })}
@@ -118,6 +121,7 @@ interface RowProps {
   rootState: ConnectionState | undefined;
   onToggle: () => void;
   onSelect: () => void;
+  onContextMenu: (x: number, y: number) => void;
 }
 
 function Row({
@@ -130,6 +134,7 @@ function Row({
   rootState,
   onToggle,
   onSelect,
+  onContextMenu,
 }: RowProps) {
   const isRoot = node.depth === 0;
   const hasChildren = node.children.size > 0;
@@ -155,6 +160,11 @@ function Row({
       }}
       onClick={onSelect}
       onDoubleClick={onToggle}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onSelect();
+        onContextMenu(e.clientX, e.clientY);
+      }}
     >
       <button
         className="topic-tree__expander"

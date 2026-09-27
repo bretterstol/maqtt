@@ -6,6 +6,7 @@ mod message;
 mod mqtt;
 mod profile;
 mod profile_store;
+mod publish;
 mod topics;
 mod ui_bridge;
 
@@ -22,6 +23,7 @@ use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
 use profile_store::{KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
+use publish::{OutgoingMessage, PublishHistory, PublishRecord};
 use ui_bridge::{LiveFilter, LogEntry, LogRow, MessageDetail, TopicUpdate};
 
 /// Upper bound for one `query_log` page, so a careless caller can't serialize the whole store.
@@ -32,6 +34,7 @@ struct AppState {
     statuses: ConnectionStatuses,
     connections: Mutex<ConnectionManager>,
     profiles: Mutex<ProfileStore>,
+    publish_history: Mutex<PublishHistory>,
     history: Arc<Mutex<HistoryStore>>,
     live_filter: watch::Sender<LiveFilter>,
     /// Only one UI Bridge at a time; a reloaded frontend replaces the previous stream.
@@ -195,6 +198,67 @@ fn autoconnect(state: &AppState) {
     }
 }
 
+/// How long a publish may wait for room in the Connection's request queue.
+const PUBLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn send(
+    state: &AppState,
+    profile_id: &ProfileId,
+    message: &OutgoingMessage,
+) -> Result<(), String> {
+    message.validate()?;
+    let client = {
+        let connections = state.connections.lock().unwrap();
+        connections
+            .get(profile_id)
+            .ok_or("Not connected")?
+            .publisher()?
+    };
+    tokio::time::timeout(PUBLISH_TIMEOUT, client.publish(message))
+        .await
+        .map_err(|_| "The Connection is too busy to send right now".to_string())?
+}
+
+/// Publishes a message on the Profile's Connection and adds it to the Publish History.
+#[tauri::command]
+async fn publish(
+    state: State<'_, AppState>,
+    profile_id: ProfileId,
+    message: OutgoingMessage,
+) -> Result<Vec<PublishRecord>, String> {
+    send(&state, &profile_id, &message).await?;
+    let mut history = state.publish_history.lock().unwrap();
+    history.record(profile_id, message)?;
+    Ok(history.list())
+}
+
+/// Clears the Broker's Retained Message for a topic by publishing an empty retained message.
+#[tauri::command]
+async fn clear_retained(
+    state: State<'_, AppState>,
+    profile_id: ProfileId,
+    topic: String,
+) -> Result<(), String> {
+    let clear = OutgoingMessage {
+        topic,
+        payload: String::new(),
+        qos: 1,
+        retain: true,
+        properties: None,
+    };
+    send(&state, &profile_id, &clear).await
+}
+
+#[tauri::command]
+fn publish_history(state: State<'_, AppState>) -> Vec<PublishRecord> {
+    state.publish_history.lock().unwrap().list()
+}
+
+#[tauri::command]
+fn clear_publish_history(state: State<'_, AppState>) -> Result<(), String> {
+    state.publish_history.lock().unwrap().clear()
+}
+
 /// Ends the backoff wait of a disconnected Profile and tries again now.
 #[tauri::command]
 fn retry_now(state: State<'_, AppState>, profile_id: ProfileId) {
@@ -269,6 +333,11 @@ fn spawn_sleep_watchdog(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let profiles = load_profiles().unwrap_or_else(|err| panic!("{err}"));
+    let sent = PublishHistory::load(
+        ProfileStore::default_path()
+            .expect("config directory")
+            .with_file_name("publish-history.json"),
+    );
     let bus = Bus::new();
     let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits::default())));
     let (live_filter, _) = watch::channel(LiveFilter::default());
@@ -290,6 +359,7 @@ pub fn run() {
             statuses: ConnectionStatuses::default(),
             connections: Mutex::new(ConnectionManager::default()),
             profiles: Mutex::new(profiles),
+            publish_history: Mutex::new(sent),
             history,
             live_filter,
             ui_bridge: Mutex::new(None),
@@ -308,6 +378,10 @@ pub fn run() {
             connect,
             retry_now,
             disconnect,
+            publish,
+            clear_retained,
+            publish_history,
+            clear_publish_history,
             subscribe,
             unsubscribe
         ])

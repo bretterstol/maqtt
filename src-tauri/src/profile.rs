@@ -142,6 +142,20 @@ impl Subscription {
     }
 }
 
+/// Checks that `topic` can be published to: not empty, and no wildcards.
+pub fn validate_topic_name(topic: &str) -> Result<(), String> {
+    if topic.is_empty() {
+        return Err("A topic can't be empty".into());
+    }
+    if topic.contains(['+', '#']) {
+        return Err("A topic to publish to can't contain `+` or `#`".into());
+    }
+    if topic.contains('\0') {
+        return Err("A topic can't contain a null character".into());
+    }
+    Ok(())
+}
+
 /// Checks MQTT topic filter syntax: `#` only as the whole last level, `+` only as a whole level.
 pub fn validate_topic_filter(filter: &str) -> Result<(), String> {
     if filter.is_empty() {
@@ -175,6 +189,16 @@ mod tests {
     fn invalid_topic_filters() {
         for filter in ["", "a/#/b", "a#", "#/a", "a+/b", "a/b+", "++"] {
             assert!(validate_topic_filter(filter).is_err(), "{filter}");
+        }
+    }
+
+    #[test]
+    fn topic_names_for_publishing() {
+        for topic in ["a", "a/b", "/a", "a//b", "$SYS/x"] {
+            assert!(validate_topic_name(topic).is_ok(), "{topic}");
+        }
+        for topic in ["", "a/+", "a/#", "#", "a\0b"] {
+            assert!(validate_topic_name(topic).is_err(), "{topic:?}");
         }
     }
 

@@ -32,9 +32,26 @@ interface Props {
   node: TreeNode;
   tree: TopicTreeStore;
   connectionName: string | undefined;
+  /** Whether the node's Connection is online, so it can publish. */
+  online: boolean;
+  onPublish: () => void;
+  confirmingClear: boolean;
+  onClearRetained: () => void;
+  onConfirmClear: () => void;
+  onCancelClear: () => void;
 }
 
-export function TopicDetail({ node, tree, connectionName }: Props) {
+export function TopicDetail({
+  node,
+  tree,
+  connectionName,
+  online,
+  onPublish,
+  confirmingClear,
+  onClearRetained,
+  onConfirmClear,
+  onCancelClear,
+}: Props) {
   // Re-render as the node's stats change; the node object itself is updated in place.
   useSyncExternalStore(tree.subscribe, tree.getVersion);
   const latestSeq = node.topic?.latest.seq;
@@ -55,6 +72,38 @@ export function TopicDetail({ node, tree, connectionName }: Props) {
             <span>{node.topicCount.toLocaleString()} topics below</span>
           )}
         </div>
+        {node.depth > 0 && (
+          <div className="topic-detail__actions">
+            <button onClick={onPublish} disabled={!online}>
+              Publish…
+            </button>
+            {node.topic?.retained && !confirmingClear && (
+              <button
+                className="topic-detail__danger"
+                onClick={onClearRetained}
+                disabled={!online}
+              >
+                Clear retained
+              </button>
+            )}
+          </div>
+        )}
+        {confirmingClear && node.topic?.retained && (
+          <div className="topic-detail__confirm" role="alertdialog">
+            <span>
+              Clear the retained message? The Broker stops sending it to new
+              subscribers.
+            </span>
+            <button
+              className="topic-detail__danger"
+              onClick={onConfirmClear}
+              disabled={!online}
+            >
+              Clear
+            </button>
+            <button onClick={onCancelClear}>Cancel</button>
+          </div>
+        )}
       </header>
       {node.topic && latestSeq !== undefined ? (
         <Messages node={node} latestSeq={latestSeq} />
