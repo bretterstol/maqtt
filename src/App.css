@@ -6,14 +6,77 @@
     sans-serif;
   font-size: 14px;
   color-scheme: light dark;
-  color: light-dark(#1f2328, #e6edf3);
-  background-color: light-dark(#ffffff, #0d1117);
+
+  --text: light-dark(#1f2328, #e6edf3);
+  --text-muted: light-dark(#59636e, #9198a1);
+  --bg: light-dark(#ffffff, #0d1117);
+  --bg-raised: light-dark(#f6f8fa, #151b23);
+  --border: light-dark(#d1d9e0, #3d444d);
+  --border-subtle: light-dark(#eff2f5, #1f252d);
+  --ok: #1a7f37;
+  --warn: #bf8700;
+  --bad: #cf222e;
+
+  color: var(--text);
+  background-color: var(--bg);
 }
 
-body {
+html,
+body,
+#root {
+  height: 100%;
   margin: 0;
 }
 
 .app {
-  padding: 1rem;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.app__stats {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.connection-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.connection-badge__dot--connected {
+  background: var(--ok);
+}
+
+.connection-badge__dot--connecting {
+  background: var(--warn);
+}
+
+.connection-badge__dot--disconnected {
+  background: var(--bad);
+}
+
+.badge {
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  font-size: 11px;
+  background: var(--border-subtle);
+  color: var(--text-muted);
 }

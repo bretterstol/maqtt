@@ -10,9 +10,11 @@
     "tauri": "tauri",
     "lint": "eslint . && prettier --check . && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
     "format": "prettier --write . && cargo fmt --all",
-    "dev:env": "dev/env.sh up"
+    "dev:env": "dev/env.sh up",
+    "test": "vitest run && cargo test --workspace"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.13",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "react": "^19.1.0",
@@ -32,6 +34,7 @@
     "prettier": "^3.9.9",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.1",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^5.0.2"
   }
 }

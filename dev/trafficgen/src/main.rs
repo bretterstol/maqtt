@@ -24,6 +24,8 @@ const ROOMS: &[&str] = &[
     "hallway",
 ];
 const KINDS: &[&str] = &["climate", "power", "motion"];
+/// Battery percentage points each device loses per second, on average.
+const BATTERY_DRAIN_PER_SEC: f64 = 1.0 / 180.0;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -197,6 +199,9 @@ async fn sensors(client: AsyncClient, args: Args, sent: Arc<AtomicU64>) -> Resul
         .map(|_| rng.random_range(18.0..24.0))
         .collect();
     let mut batteries: Vec<u8> = devices.iter().map(|_| rng.random_range(60..=100)).collect();
+    // Drain about 1% battery per device every few minutes, independent of the message rate.
+    let per_device_rate = args.rate / devices.len().max(1) as f64;
+    let drain_chance = (BATTERY_DRAIN_PER_SEC / per_device_rate).min(1.0);
     let mut seq = 0u64;
     let mut next = 0usize;
     let mut pacer = Pacer::new(args.rate);
@@ -208,7 +213,7 @@ async fn sensors(client: AsyncClient, args: Args, sent: Arc<AtomicU64>) -> Resul
             next = (next + 1) % devices.len();
             seq += 1;
             temps[i] = (temps[i] + rng.random_range(-0.2..0.2)).clamp(10.0, 35.0);
-            if rng.random_bool(0.01) {
+            if rng.random_bool(drain_chance) {
                 batteries[i] = batteries[i].saturating_sub(1);
             }
             let payload = json!({
