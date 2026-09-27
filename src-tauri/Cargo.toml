@@ -1,6 +1,6 @@
 [package]
 name = "maqtt"
-version = "0.1.0"
+version = "0.1.1"
 description = "A desktop MQTT client for exploring and debugging live traffic on several Brokers at once"
 edition.workspace = true
 

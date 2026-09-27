@@ -3,8 +3,9 @@
 .DEFAULT_GOAL := help
 SHELL := bash
 
-APPIMAGE := target/release/bundle/appimage/maqtt_0.1.0_amd64.AppImage
-RPM := target/release/bundle/rpm/maqtt-0.1.0-1.x86_64.rpm
+# Whatever version was built last.
+APPIMAGE = $(lastword $(sort $(wildcard target/release/bundle/appimage/maqtt_*_amd64.AppImage)))
+RPM = $(lastword $(sort $(wildcard target/release/bundle/rpm/maqtt-*.x86_64.rpm)))
 SANDBOX := /tmp/maqtt-sandbox
 
 .PHONY: help dev sandbox app broker traffic stress stop test test-broker lint format build run-release install-rpm clean-sandbox
@@ -62,11 +63,11 @@ build: node_modules ## Release build: .deb, .rpm and AppImage in target/release/
 	pnpm tauri build
 
 run-release: ## Run the release AppImage (after make build)
-	@test -f $(APPIMAGE) || { echo "No AppImage yet; run make build first."; exit 1; }
+	@test -n "$(APPIMAGE)" || { echo "No AppImage yet; run make build first."; exit 1; }
 	$(APPIMAGE)
 
 install-rpm: ## Install the release .rpm on this machine (after make build)
-	@test -f $(RPM) || { echo "No .rpm yet; run make build first."; exit 1; }
+	@test -n "$(RPM)" || { echo "No .rpm yet; run make build first."; exit 1; }
 	sudo dnf install $(RPM)
 
 clean-sandbox: ## Forget the sandbox config, and its passwords in the keyring
