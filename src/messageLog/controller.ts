@@ -25,12 +25,15 @@ export class MessageLogController {
   async showLatest(): Promise<void> {
     const request = ++this.latestRequest;
     const generation = this.store.generation;
+    const pauses = this.store.pauses;
     this.loadingLatest = true;
     try {
       const page = await queryLog({ filter: this.filter, limit: PAGE_SIZE });
+      // Stale if a newer request, a filter change, or the user pausing came in meanwhile.
       if (
         request === this.latestRequest &&
-        generation === this.store.generation
+        generation === this.store.generation &&
+        pauses === this.store.pauses
       ) {
         this.store.showLatest(page);
       }

@@ -74,6 +74,18 @@ describe("MessageLogController", () => {
     expect(store.length).toBe(0);
   });
 
+  it("doesn't resume following if the user paused while the latest page loaded", async () => {
+    const pending = deferred<LogPage>();
+    vi.mocked(queryLog).mockReturnValueOnce(pending.promise);
+    const loading = controller.showLatest();
+    store.pause();
+    pending.resolve(page([1, 2]));
+    await loading;
+    expect(store.following).toBe(false);
+    expect(store.length).toBe(0);
+    expect(controller.isLoadingLatest).toBe(false);
+  });
+
   it("loads the page before the oldest entry with the current filter", async () => {
     vi.mocked(setLogFilter).mockResolvedValue(1);
     vi.mocked(queryLog)

@@ -9,7 +9,7 @@ Each milestone is a vertical slice that ends in something runnable and checked a
 - **Shell**: Tauri 2, targeting Linux and macOS ([ADR 0001](./adr/0001-rust-tauri-desktop-shell.md))
 - **Backend**: Rust, `tokio`, `rumqttc` (both `rumqttc` and `rumqttc::v5`), `keyring`, `serde` + `toml`, `directories`
 - **Frontend**: React + TypeScript + Vite, TanStack Virtual for large lists, Zustand for state, `jsondiffpatch` (or similar) for payload diffs
-- **Identifiers**: `maqtt` (crate, binary, config dir); display name **måqtt**; bundle ID `no.<TBD>.maqtt`
+- **Identifiers**: `maqtt` (crate, binary, config dir); display name **måqtt**; bundle ID `io.github.bretterstol.maqtt`
 
 ## Architecture outline
 
@@ -107,6 +107,8 @@ Each milestone is a vertical slice that ends in something runnable and checked a
 
 **Done when:** v1 is installed and used day-to-day on both machines.
 
+Status: Linux packages build locally, and the release binary passes the WebDriver scenarios. The `Release` workflow (tag `v*`) and `CI` workflow are written but haven't run yet; the macOS build is untested.
+
 ## Risks and things to check early
 
 - **3.1.1 vs 5 in `rumqttc`**: they are separate APIs. Spike the shared internal message type in M1/M3 before building on it.
@@ -120,4 +122,4 @@ In-flight processing, visualization/charts, saved publish templates, recording s
 
 ## Open items
 
-- Reverse domain for the bundle ID (`no.<TBD>.maqtt`)
+- ~~Reverse domain for the bundle ID~~: `io.github.bretterstol.maqtt`, from the GitHub repository

@@ -15,6 +15,8 @@ export class MessageLogStore {
   private scrollAdjustment = 0;
 
   following = true;
+  /** Counts pauses, so a load started before the latest one can tell it is stale. */
+  pauses = 0;
   /** Matching entries that arrived while paused. */
   newWhilePaused = 0;
   /** Whether the History Store may hold older matching entries than the first one here. */
@@ -88,6 +90,7 @@ export class MessageLogStore {
   }
 
   pause(): void {
+    this.pauses++;
     if (!this.following) return;
     this.following = false;
     this.notify();

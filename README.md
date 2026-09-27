@@ -6,6 +6,31 @@ A desktop MQTT client for exploring and debugging live traffic on several Broker
 - Decisions: [docs/adr/](./docs/adr/)
 - Roadmap: [docs/v1-plan.md](./docs/v1-plan.md)
 
+## Installing
+
+Download a build from the [Releases](https://github.com/bretterstol/maqtt/releases) page, or build one yourself (below).
+
+- **Fedora:** `sudo dnf install ./maqtt-<version>-1.x86_64.rpm`
+- **Debian, Ubuntu:** `sudo apt install ./maqtt_<version>_amd64.deb`
+- **Any Linux:** `chmod +x maqtt_<version>_amd64.AppImage` and run it
+- **macOS:** open the `.dmg` and drag måqtt to Applications. The build isn't signed, so the first time, right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/maqtt.app`. macOS asks once whether måqtt may use the Keychain; allow it so stored passwords work.
+
+## Building a release
+
+```sh
+pnpm tauri build
+```
+
+This builds `target/release/bundle/` with a `.deb`, `.rpm` and AppImage on Linux, or a `.app` and `.dmg` on macOS. The AppImage is large (about 110 MB) because it carries its own WebKitGTK.
+
+To publish one, bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, then push a tag:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The `Release` workflow builds Linux packages and a universal macOS `.dmg` and attaches them to a draft release on GitHub; publish the draft when it looks right.
+
 ## Prerequisites
 
 - Rust (stable), Node 22+, pnpm
