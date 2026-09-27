@@ -31,6 +31,8 @@ const STOP_WAIT: Duration = Duration::from_secs(1);
 pub struct PipelineStatus {
     pub name: String,
     pub running: bool,
+    /// It stopped by itself: a `take` passed all it would.
+    pub finished: bool,
     /// Messages from the Pipeline's Connections that entered it.
     pub received: u64,
     /// Messages its Sinks sent.
@@ -171,7 +173,11 @@ impl Runner {
     }
 
     pub fn is_running(&self, name: &str) -> bool {
-        self.running.lock().unwrap().contains_key(name)
+        self.running
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|handle| handle.status.lock().unwrap().running)
     }
 
     pub fn status(&self, name: &str) -> Option<PipelineStatus> {
@@ -266,6 +272,13 @@ impl Job {
                     Err(RecvError::Closed) => break,
                 },
                 _ = tick.tick() => pipeline.tick(Instant::now(), &mut effects),
+            }
+            if pipeline.finished() {
+                // A `take` is done: send what later Stages still hold, and stop.
+                pipeline.flush(Instant::now(), &mut effects);
+                self.handle(&mut effects);
+                self.status.lock().unwrap().finished = true;
+                break;
             }
             self.handle(&mut effects);
             if self.halted.load(Ordering::SeqCst) {
@@ -509,5 +522,21 @@ mod tests {
             rx.try_recv(),
             Ok(BusEvent::TopicsCleared { prefix, .. }) if prefix == "p"
         ));
+    }
+
+    #[test]
+    fn take_finishes_the_pipeline() {
+        let (bus, runner) = setup();
+        runner
+            .start("few", parse(r#"from all |> take 2 |> to app "x""#).unwrap())
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        for _ in 0..5 {
+            bus.publish(message(&bus, 1, "t", "1"));
+        }
+        wait_for("finished", || runner.status("few").unwrap().finished);
+        let status = runner.status("few").unwrap();
+        assert!(!status.running && status.emitted == 2, "{status:?}");
+        assert!(!runner.is_running("few"));
     }
 }

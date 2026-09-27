@@ -111,8 +111,9 @@ pub fn preview(
         let connection = name(message.connection_id).to_string();
         runtime.push(Origin::new(message, &connection), now, &mut effects);
     }
-    // Whatever `throttle` still holds would come out later; let it.
-    runtime.tick(last + Duration::from_secs(24 * 3600), &mut effects);
+    // What later Stages still hold (throttled values, open windows) would come out later: show
+    // it now.
+    runtime.flush(last, &mut effects);
 
     for effect in effects {
         match effect {

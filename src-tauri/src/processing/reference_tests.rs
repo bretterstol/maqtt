@@ -56,7 +56,7 @@ fn every_variable_exists() {
 #[test]
 fn every_function_example_gives_its_output() {
     let reference = reference();
-    let vars: [Val; 8] = std::array::from_fn(|_| Val::Null);
+    let vars: [Val; 9] = std::array::from_fn(|_| Val::Null);
     let value = |json: &str| {
         jaq_json::read::parse_single(json.as_bytes())
             .unwrap_or_else(|e| panic!("{json:?} is not JSON: {e:?}"))

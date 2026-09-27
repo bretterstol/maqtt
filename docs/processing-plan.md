@@ -27,21 +27,33 @@ from "Dev Broker"
 
 ### Stages
 
-| Stage                | Example                                                                            | Does                                                                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `from`               | `from "Dev Broker"`, `from "Dev Broker", "Office"`, `from all`                     | Picks the Connections to read. Always first.                                                                                    |
-| `filter`             | `filter .temperature > 22`, `filter topic "home/#"`, `filter not topic "+/status"` | Keeps messages where the jq condition is true, or whose topic matches an MQTT filter.                                           |
-| `map`                | `map { temp: .temperature / 10 }`                                                  | Replaces the current value with the jq result.                                                                                  |
-| `changes`            | `changes`, `changes by .room`                                                      | Passes a message only if its value differs from the previous one with the same key (the incoming topic, unless `by` names one). |
-| `throttle`           | `throttle 5s`, `throttle 5s by .room`                                              | At most one message per interval per key (the incoming topic, unless `by` names one); the latest wins.                          |
-| `inspect`            | `inspect`, `inspect "after map"`                                                   | Shows the value in the Pipeline's panel and passes it on unchanged.                                                             |
-| `to`                 | `to app "hot/{$levels[2]}"`                                                        | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline.                                        |
-| `scan` _(later)_     | `scan { last: null } { last: ., delta: . - .acc.last }`                            | Carries state from message to message and emits it each time.                                                                   |
-| `debounce` _(later)_ | `debounce 2s`                                                                      | Emits once a topic has been quiet for the interval.                                                                             |
-| `take` _(later)_     | `take 10`                                                                          | Stops after N messages.                                                                                                         |
-| windows _(later)_    | to be designed                                                                     | Aggregates over time, such as an average per minute.                                                                            |
+| Stage      | Example                                                                            | Does                                                                                                                                                                            |
+| ---------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`     | `from "Dev Broker"`, `from "Dev Broker", "Office"`, `from all`                     | Picks the Connections to read. Always first.                                                                                                                                    |
+| `filter`   | `filter .temperature > 22`, `filter topic "home/#"`, `filter not topic "+/status"` | Keeps messages where the jq condition is true, or whose topic matches an MQTT filter.                                                                                           |
+| `map`      | `map { temp: .temperature / 10 }`                                                  | Replaces the current value with the jq result.                                                                                                                                  |
+| `changes`  | `changes`, `changes by .room`                                                      | Passes a message only if its value differs from the previous one with the same key (the incoming topic, unless `by` names one).                                                 |
+| `throttle` | `throttle 5s`, `throttle 5s by .room`                                              | At most one message per interval per key (the incoming topic, unless `by` names one); the latest wins.                                                                          |
+| `inspect`  | `inspect`, `inspect "after map"`                                                   | Shows the value in the Pipeline's panel and passes it on unchanged.                                                                                                             |
+| `to`       | `to app "hot/{$levels[2]}"`                                                        | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline.                                                                                        |
+| `scan`     | `scan 0 ($acc + .)`, `scan 0 ($acc + 1) by .room`                                  | Carries a result from value to value: `$acc` is the previous result, the update gives the next, and each one is sent on. The start is one value; wrap anything longer in `( )`. |
+| `debounce` | `debounce 2s`, `debounce 2s by .room`                                              | Sends the latest value once there has been no new one for the interval.                                                                                                         |
+| `take`     | `take 10`, `take 1 by .room`                                                       | Passes the first N values, then the Pipeline finishes. With `by`: the first N per key, and it keeps running.                                                                    |
+| `window`   | `window 1m`, `window 10`, `window 1m by .room`                                     | Collects values and sends them as a list when the window closes: every minute on the clock (12:00–12:01), or every N values. Empty windows send nothing.                        |
 
-Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `throttle`, `scan`, `debounce`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`.
+Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `throttle`, `scan`, `debounce`, `window`, `take … by`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`. After such a Stage, `$key` is the key a value was kept under: the `by` value, or the topic. Each Stage keeps state for at most 10,000 keys; past that, the least recently seen are forgotten.
+
+A window's list is shaped with an ordinary `map`, helped by aggregate functions and `$key`. Objects may span lines and end with a trailing comma:
+
+```
+|> window 1m by .room
+|> map {
+     room: $key,
+     avg:  avg(.temp),
+     max:  max(.temp),
+     readings: count,
+   }
+```
 
 ### Values and variables
 
@@ -113,7 +125,7 @@ Status: done on the `processing` branch. Checked in the app (two `.pipe` files s
 
 **Done when:** you can write, save, start and watch a Pipeline entirely in the app, and a mistake shows where it is.
 
-Status: done on the `processing` branch. Checked over WebDriver: a mistake is underlined and Save refuses it, Start saves and runs, `inspect` values appear, and new, rename and delete work. The tab loads as its own chunk. Still open: a restarted Pipeline's old Derived Topics stay in the tree, and a stopped Pipeline's branch isn't marked; both need a "forget topics" event.
+Status: done on the `processing` branch. Checked over WebDriver: a mistake is underlined and Save refuses it, Start saves and runs, `inspect` values appear, and new, rename and delete work. The tab loads as its own chunk. Clearing a restarted Pipeline's old Derived Topics and marking a stopped one's branch followed on `pipelines-p4`, through a `TopicsCleared` bus event.
 
 ### P3: Preview
 
@@ -133,8 +145,28 @@ Added after P3, at your request. One file, `src/processing/reference.json`, desc
 
 ### P4: Stateful Stages
 
-- `scan`, `debounce`, `take`
-- Time windows (design them together first: the syntax for "average of `.temp` per minute")
+Decided together after P3:
+
+- `scan <start> <update>` with `$acc`, per topic or `by` key
+- `window <duration>` (on the clock) and `window <count>`, per topic or `by` key, sending a list; shaped with `map`
+- Aggregate functions for lists: `avg(f)`, `sum(f)`, `min(f)`, `max(f)`, `count`
+- `$key` after any Stage that keeps state
+- `debounce <duration> [by …]`
+- `take N` finishes the Pipeline after N values; `take N by …` passes the first N per key and keeps running
+- Objects in expressions may span lines and end with a trailing comma
+- Sliding windows (`window 5m every 1m`) later, if missed
+
+**Done when:** the average temperature per room per minute can be written as in the example above, previewed on real data, and run.
+
+Status: done on the `pipelines-p4` branch. Checked over WebDriver on live traffic: the example previews each room's average right away, and once started, the first window closed on the minute with one Derived Topic per room.
+
+Hardening that came with it:
+
+- Payloads nested deeper than 256 levels are treated as text: parsing one would overflow the stack and abort the app.
+- The parser refuses `def`, `recurse(f)`, `repeat`, `while` and `until`, which can recurse without end, for the same reason.
+- An expression may give at most 10,000 results per value.
+- Stopping a Pipeline waits at most 1 s and sends nothing after; one stuck in an endless expression says so in its status.
+- Preview runs on its own thread, one at a time, and gives up after 3 s.
 
 ### P5: More Sinks
 

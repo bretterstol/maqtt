@@ -25,6 +25,8 @@ export interface Inspected {
 export interface PipelineStatus {
   name: string;
   running: boolean;
+  /** It stopped by itself: a `take` passed all it would. */
+  finished: boolean;
   received: number;
   emitted: number;
   missed: number;

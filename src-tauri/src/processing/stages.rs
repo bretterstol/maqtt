@@ -10,7 +10,7 @@ use jaq_json::Val;
 
 use super::jq;
 use super::keyed::Keyed;
-use super::lang::{Connections, Pipeline, Stage};
+use super::lang::{Connections, Pipeline, Stage, WindowSize};
 use crate::message::ReceivedMessage;
 use crate::profile::topic_matches;
 
@@ -87,6 +87,16 @@ impl Origin {
 struct Item {
     value: Val,
     origin: Rc<Origin>,
+    /// `$key`: what the latest Stage that keeps state kept it under; null before any.
+    key: Val,
+}
+
+/// The jq variables for an item: its message's, then `$key`.
+fn vars(item: &Item) -> [Val; 9] {
+    std::array::from_fn(|i| match item.origin.vars.get(i) {
+        Some(value) => value.clone(),
+        None => item.key.clone(),
+    })
 }
 
 enum Running {
@@ -105,6 +115,28 @@ enum Running {
         key: Option<jq::Filter>,
         keys: Keyed<Throttled>,
     },
+    Debounce {
+        interval: Duration,
+        key: Option<jq::Filter>,
+        /// Per key: when to send, and the latest value.
+        pending: Keyed<(Instant, Item)>,
+    },
+    Scan {
+        start: jq::Filter,
+        update: jq::Filter,
+        key: Option<jq::Filter>,
+        results: Keyed<Val>,
+    },
+    Window {
+        size: WindowSize,
+        key: Option<jq::Filter>,
+        open: Keyed<Window>,
+    },
+    Take {
+        count: usize,
+        key: Option<jq::Filter>,
+        taken: Keyed<usize>,
+    },
     Inspect(Option<String>),
     ToApp(jq::Filter),
 }
@@ -114,12 +146,40 @@ struct Throttled {
     pending: Option<Item>,
 }
 
+/// The values collected so far in one key's window.
+struct Window {
+    /// For a time window: which interval since 1970 it covers.
+    index: u64,
+    items: Vec<Item>,
+    key: Val,
+}
+
+impl Window {
+    /// The window's values as one list, sent on as a value of the newest message.
+    fn close(self) -> Item {
+        let origin = self
+            .items
+            .last()
+            .expect("windows are never empty")
+            .origin
+            .clone();
+        Item {
+            value: self.items.into_iter().map(|item| item.value).collect(),
+            origin,
+            key: self.key,
+        }
+    }
+}
+
 /// A Pipeline ready to run; not `Send` (jq values are reference-counted), so it lives on one
 /// thread.
 pub struct Runtime {
     from: Connections,
     stages: Vec<Running>,
     trace: Option<Vec<StageTrace>>,
+    /// A moment on both clocks, from the first message: time windows follow the messages'
+    /// wall-clock times, while the caller passes monotonic time.
+    epoch: Option<(Instant, u64)>,
 }
 
 impl Runtime {
@@ -145,6 +205,30 @@ impl Runtime {
                         key: key.as_deref().map(compile).transpose()?,
                         keys: Keyed::default(),
                     },
+                    Stage::Debounce(interval, key) => Running::Debounce {
+                        interval: *interval,
+                        key: key.as_deref().map(compile).transpose()?,
+                        pending: Keyed::default(),
+                    },
+                    Stage::Scan { start, update, key } => {
+                        let (prefix, suffix) = jq::SCAN_WRAP;
+                        Running::Scan {
+                            start: compile(start)?,
+                            update: compile(&format!("{prefix}{update}{suffix}"))?,
+                            key: key.as_deref().map(compile).transpose()?,
+                            results: Keyed::default(),
+                        }
+                    }
+                    Stage::Window(size, key) => Running::Window {
+                        size: *size,
+                        key: key.as_deref().map(compile).transpose()?,
+                        open: Keyed::default(),
+                    },
+                    Stage::Take(count, key) => Running::Take {
+                        count: *count,
+                        key: key.as_deref().map(compile).transpose()?,
+                        taken: Keyed::default(),
+                    },
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
                 })
@@ -154,6 +238,7 @@ impl Runtime {
             from: pipeline.from.clone(),
             stages,
             trace: None,
+            epoch: None,
         })
     }
 
@@ -190,22 +275,58 @@ impl Runtime {
     }
 
     pub fn push(&mut self, origin: Origin, now: Instant, out: &mut Vec<Effect>) {
+        if self.finished() {
+            return;
+        }
+        self.epoch
+            .get_or_insert((now, origin.message.received_at_ms));
         let origin = Rc::new(origin);
         let item = Item {
             value: origin.payload(),
             origin,
+            key: Val::Null,
         };
         self.run_from(0, vec![item], now, out);
     }
 
-    /// Lets time-based Stages (throttle) release what they held back.
+    /// Whether a `take` without `by` has passed all it will: the Pipeline is done.
+    pub fn finished(&self) -> bool {
+        self.stages.iter().any(|stage| match stage {
+            Running::Take {
+                count,
+                key: None,
+                taken,
+            } => taken.iter().map(|(_, n)| n).sum::<usize>() >= *count,
+            _ => false,
+        })
+    }
+
+    /// Lets time-based Stages send what is due: throttled and debounced values, and time
+    /// windows that have closed.
     pub fn tick(&mut self, now: Instant, out: &mut Vec<Effect>) {
+        self.release(now, false, out);
+    }
+
+    /// Sends everything still held back, due or not, including windows not yet full. For the
+    /// end of a Preview, or a Pipeline that finished.
+    pub fn flush(&mut self, now: Instant, out: &mut Vec<Effect>) {
+        self.release(now, true, out);
+    }
+
+    fn wall_ms(&self, now: Instant) -> u64 {
+        self.epoch.map_or(0, |(at, ms)| {
+            ms + now.saturating_duration_since(at).as_millis() as u64
+        })
+    }
+
+    fn release(&mut self, now: Instant, all: bool, out: &mut Vec<Effect>) {
+        let wall = self.wall_ms(now);
         for i in 0..self.stages.len() {
             let released = match &mut self.stages[i] {
                 Running::Throttle { interval, keys, .. } => {
                     let mut released = Vec::new();
                     for state in keys.values_mut() {
-                        if now >= state.open_at
+                        if (all || now >= state.open_at)
                             && let Some(item) = state.pending.take()
                         {
                             state.open_at = now + *interval;
@@ -213,6 +334,31 @@ impl Runtime {
                         }
                     }
                     released
+                }
+                Running::Debounce { pending, .. } => {
+                    let due: Vec<String> = pending
+                        .iter()
+                        .filter(|(_, (at, _))| all || now >= *at)
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    let mut released: Vec<(Instant, Item)> =
+                        due.iter().filter_map(|key| pending.remove(key)).collect();
+                    released.sort_by_key(|(at, _)| *at);
+                    released.into_iter().map(|(_, item)| item).collect()
+                }
+                Running::Window { size, open, .. } => {
+                    let closed: Vec<String> = open
+                        .iter()
+                        .filter(|(_, window)| {
+                            all || matches!(size, WindowSize::Time(interval)
+                                if wall >= (window.index + 1) * interval.as_millis() as u64)
+                        })
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    let mut released: Vec<Window> =
+                        closed.iter().filter_map(|key| open.remove(key)).collect();
+                    released.sort_by_key(|w| w.items.last().map(|i| i.origin.message.seq));
+                    released.into_iter().map(Window::close).collect()
                 }
                 _ => continue,
             };
@@ -275,7 +421,7 @@ fn apply(
                 next.push(item);
             }
         }
-        Running::Filter(filter) => match jq::run(filter, item.value.clone(), &item.origin.vars) {
+        Running::Filter(filter) => match jq::run(filter, item.value.clone(), &vars(&item)) {
             Ok(results) => {
                 if results.first().is_some_and(truthy) {
                     next.push(item);
@@ -283,20 +429,96 @@ fn apply(
             }
             Err(err) => out.push(error(&item, "filter", err)),
         },
-        Running::Map(filter) => match jq::run(filter, item.value.clone(), &item.origin.vars) {
+        Running::Map(filter) => match jq::run(filter, item.value.clone(), &vars(&item)) {
             // Each result is its own message downstream; none drops it.
             Ok(results) => next.extend(results.into_iter().map(|value| Item {
                 value,
                 origin: item.origin.clone(),
+                key: item.key.clone(),
             })),
             Err(err) => out.push(error(&item, "map", err)),
         },
         Running::Changes { key, last } => {
-            let Some(key) = state_key(key.as_ref(), &item, "changes", out) else {
+            let Some((key, item)) = keyed(key.as_ref(), item, "changes", out) else {
                 return;
             };
             if last.get(&key) != Some(&item.value) {
                 last.insert(key, item.value.clone());
+                next.push(item);
+            }
+        }
+        Running::Debounce {
+            interval,
+            key,
+            pending,
+        } => {
+            let Some((key, item)) = keyed(key.as_ref(), item, "debounce", out) else {
+                return;
+            };
+            // Latest wins, and the quiet interval starts over.
+            pending.insert(key, (now + *interval, item));
+        }
+        Running::Scan {
+            start,
+            update,
+            key,
+            results,
+        } => {
+            let Some((key, item)) = keyed(key.as_ref(), item, "scan", out) else {
+                return;
+            };
+            let previous = match results.get(&key) {
+                Some(previous) => previous.clone(),
+                None => match jq::run(start, Val::Null, &vars(&item)) {
+                    Ok(values) => values.into_iter().next().unwrap_or(Val::Null),
+                    Err(err) => return out.push(error(&item, "scan", err)),
+                },
+            };
+            let input: Val = [previous, item.value.clone()].into_iter().collect();
+            match jq::run(update, input, &vars(&item)) {
+                Ok(values) => {
+                    if let Some(value) = values.into_iter().next() {
+                        results.insert(key, value.clone());
+                        next.push(Item { value, ..item });
+                    }
+                }
+                Err(err) => out.push(error(&item, "scan", err)),
+            }
+        }
+        Running::Window { size, key, open } => {
+            let Some((key, item)) = keyed(key.as_ref(), item, "window", out) else {
+                return;
+            };
+            let index = match size {
+                WindowSize::Time(interval) => {
+                    item.origin.message.received_at_ms / (interval.as_millis() as u64).max(1)
+                }
+                WindowSize::Count(_) => 0,
+            };
+            // A value from a later interval closes the window it finds open.
+            if open.get(&key).is_some_and(|window| index > window.index) {
+                next.push(open.remove(&key).expect("checked").close());
+            }
+            let window = open.entry(key.clone(), || Window {
+                index,
+                items: Vec::new(),
+                key: item.key.clone(),
+            });
+            window.items.push(item);
+            if matches!(size, WindowSize::Count(n) if window.items.len() >= *n) {
+                next.push(open.remove(&key).expect("just filled").close());
+            }
+        }
+        Running::Take { count, key, taken } => {
+            let limited_per_key = key.is_some();
+            let Some((key, item)) = keyed(key.as_ref(), item, "take", out) else {
+                return;
+            };
+            // Without `by`, one count for everything.
+            let slot = if limited_per_key { key } else { String::new() };
+            let n = taken.entry(slot, || 0);
+            if *n < *count {
+                *n += 1;
                 next.push(item);
             }
         }
@@ -305,7 +527,7 @@ fn apply(
             key,
             keys,
         } => {
-            let Some(key) = state_key(key.as_ref(), &item, "throttle", out) else {
+            let Some((key, item)) = keyed(key.as_ref(), item, "throttle", out) else {
                 return;
             };
             let state = keys.entry(key, || Throttled {
@@ -330,7 +552,7 @@ fn apply(
             next.push(item);
         }
         Running::ToApp(filter) => {
-            match jq::run(filter, item.value.clone(), &item.origin.vars) {
+            match jq::run(filter, item.value.clone(), &vars(&item)) {
                 Ok(results) => match results.first() {
                     Some(Val::TStr(topic)) => {
                         match derived_topic(&String::from_utf8_lossy(topic)) {
@@ -358,27 +580,36 @@ fn apply(
 }
 
 /// Which state a stateful Stage keeps for this item: its `by` key, or else its incoming topic.
-/// `None` (after reporting an error) when the key can't be worked out.
-fn state_key(
+/// The item comes back with that key as its `$key`; `None` (after reporting an error) when the
+/// key can't be worked out.
+fn keyed(
     key: Option<&jq::Filter>,
-    item: &Item,
+    mut item: Item,
     stage: &str,
     out: &mut Vec<Effect>,
-) -> Option<String> {
+) -> Option<(String, Item)> {
     let Some(key) = key else {
-        return Some(item.origin.topic().to_string());
+        let topic = item.origin.topic().to_string();
+        item.key = Val::from(topic.clone());
+        return Some((topic, item));
     };
-    match jq::run(key, item.value.clone(), &item.origin.vars) {
+    match jq::run(key, item.value.clone(), &vars(&item)) {
         Ok(results) => match results.into_iter().next() {
-            Some(Val::TStr(text)) => Some(String::from_utf8_lossy(&text).into_owned()),
-            Some(value) => Some(value.to_string()),
+            Some(value) => {
+                let text = match &value {
+                    Val::TStr(text) => String::from_utf8_lossy(text).into_owned(),
+                    other => other.to_string(),
+                };
+                item.key = value;
+                Some((text, item))
+            }
             None => {
-                out.push(error(item, stage, "the `by` key gave no value".into()));
+                out.push(error(&item, stage, "the `by` key gave no value".into()));
                 None
             }
         },
         Err(err) => {
-            out.push(error(item, stage, err));
+            out.push(error(&item, stage, err));
             None
         }
     }
@@ -772,6 +1003,153 @@ mod tests {
         assert_eq!(rt.trace()[0].passed, 2);
         assert_eq!(rt.trace()[1].passed, 2);
     }
+
+    fn origin_at(topic: &str, payload: &str, at_ms: u64) -> Origin {
+        let o = origin(topic, payload);
+        let mut message = (*o.message).clone();
+        message.received_at_ms = at_ms;
+        Origin::new(Arc::new(message), "Dev Broker")
+    }
+
+    fn values(out: &[Effect]) -> Vec<String> {
+        out.iter()
+            .map(|e| match e {
+                Effect::Derived { payload, .. } => String::from_utf8_lossy(payload).into_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scan_carries_a_result_per_topic_or_key() {
+        let mut rt = runtime(r#"from all |> scan 0 ($acc + .) |> to app "x""#);
+        let out = run(&mut rt, &[("a", "1"), ("a", "2"), ("b", "10"), ("a", "3")]);
+        assert_eq!(values(&out), ["1", "3", "10", "6"]);
+
+        let mut rt = runtime(r#"from all |> scan 0 ($acc + 1) by .room |> to app "{$key}""#);
+        let out = run(
+            &mut rt,
+            &[
+                ("s1", r#"{"room":"k"}"#),
+                ("s2", r#"{"room":"k"}"#),
+                ("s3", r#"{"room":"o"}"#),
+            ],
+        );
+        assert_eq!(values(&out), ["1", "2", "1"]);
+        assert!(matches!(&out[2], Effect::Derived { topic, .. } if topic == "o"));
+    }
+
+    #[test]
+    fn scan_can_build_objects_from_the_previous_result() {
+        let mut rt = runtime(
+            r#"from all |> scan null { t: ., change: (. - ($acc.t // .)) } |> map .change |> to app "x""#,
+        );
+        let out = run(&mut rt, &[("a", "20"), ("a", "22"), ("a", "21")]);
+        assert_eq!(values(&out), ["0", "2", "-1"]);
+    }
+
+    #[test]
+    fn debounce_sends_the_latest_once_quiet() {
+        let mut rt = runtime(r#"from all |> debounce 1s |> to app "x""#);
+        let start = Instant::now();
+        let mut out = Vec::new();
+        rt.push(origin("a", "1"), start, &mut out);
+        rt.push(
+            origin("a", "2"),
+            start + Duration::from_millis(500),
+            &mut out,
+        );
+        rt.tick(start + Duration::from_millis(1_200), &mut out);
+        assert!(
+            out.is_empty(),
+            "the second value restarted the quiet interval"
+        );
+        rt.tick(start + Duration::from_millis(1_600), &mut out);
+        assert_eq!(values(&out), ["2"]);
+    }
+
+    #[test]
+    fn time_windows_close_on_the_clock_and_send_a_list() {
+        let mut rt = runtime(
+            r#"from all |> window 1m by .room |> map { room: $key, avg: avg(.t), n: count } |> to app "x""#,
+        );
+        let start = Instant::now();
+        let mut out = Vec::new();
+        // 12:00:50, 12:00:55 and 12:01:05 (in ms since 1970, on a whole minute boundary).
+        let minute = 60_000 * 1_000_000;
+        rt.push(
+            origin_at("a", r#"{"room":"k","t":20}"#, minute + 50_000),
+            start,
+            &mut out,
+        );
+        rt.push(
+            origin_at("b", r#"{"room":"k","t":22}"#, minute + 55_000),
+            start + Duration::from_secs(5),
+            &mut out,
+        );
+        rt.tick(start + Duration::from_secs(9), &mut out);
+        assert!(out.is_empty(), "12:00:59 — the window is still open");
+        rt.tick(start + Duration::from_secs(10), &mut out);
+        assert_eq!(values(&out), [r#"{"room":"k","avg":21.0,"n":2}"#]);
+
+        // A value from a later minute closes an open window at once.
+        rt.push(
+            origin_at("a", r#"{"room":"k","t":1}"#, minute + 65_000),
+            start + Duration::from_secs(15),
+            &mut out,
+        );
+        rt.push(
+            origin_at("a", r#"{"room":"k","t":2}"#, minute + 125_000),
+            start + Duration::from_secs(75),
+            &mut out,
+        );
+        assert_eq!(values(&out)[1], r#"{"room":"k","avg":1.0,"n":1}"#);
+    }
+
+    #[test]
+    fn count_windows_send_every_n_values() {
+        let mut rt = runtime(r#"from all |> window 2 |> map sum(.) |> to app "x""#);
+        let out = run(
+            &mut rt,
+            &[("a", "1"), ("a", "2"), ("a", "3"), ("b", "5"), ("a", "4")],
+        );
+        assert_eq!(values(&out), ["3", "7"]);
+
+        // A flush sends what an unfinished window holds.
+        let mut out = Vec::new();
+        rt.flush(Instant::now(), &mut out);
+        assert_eq!(values(&out), ["5"]);
+    }
+
+    #[test]
+    fn take_passes_the_first_values_then_finishes() {
+        let mut rt = runtime(r#"from all |> take 2 |> to app "x""#);
+        let out = run(&mut rt, &[("a", "1"), ("b", "2"), ("a", "3")]);
+        assert_eq!(values(&out), ["1", "2"]);
+        assert!(rt.finished());
+
+        let mut rt = runtime(r#"from all |> take 1 by .room |> to app "x""#);
+        let out = run(
+            &mut rt,
+            &[
+                ("a", r#"{"room":"k"}"#),
+                ("b", r#"{"room":"k"}"#),
+                ("c", r#"{"room":"o"}"#),
+            ],
+        );
+        assert_eq!(out.len(), 2);
+        assert!(!rt.finished(), "with `by` it keeps running");
+    }
+
+    #[test]
+    fn key_is_the_topic_without_by_and_null_before_any_state() {
+        let mut rt = runtime(r#"from all |> map $key |> changes |> map $key |> to app "x""#);
+        let out = run(&mut rt, &[("home/k", "1")]);
+        assert_eq!(values(&out), ["home/k"]);
+        let mut rt = runtime(r#"from all |> map ($key == null) |> to app "x""#);
+        assert_eq!(values(&run(&mut rt, &[("a", "1")])), ["true"]);
+    }
+
     #[test]
     fn a_deeply_nested_payload_is_text_not_a_crash() {
         let deep = "[".repeat(200_000) + &"]".repeat(200_000);

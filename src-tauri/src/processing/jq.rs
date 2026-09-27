@@ -6,7 +6,7 @@ use jaq_core::{Compiler, Ctx, Vars, data, unwrap_valr};
 use jaq_json::Val;
 
 /// The variables every expression can use, in the order their values are supplied.
-pub const VARIABLES: [&str; 8] = [
+pub const VARIABLES: [&str; 9] = [
     "$payload",
     "$topic",
     "$levels",
@@ -15,7 +15,20 @@ pub const VARIABLES: [&str; 8] = [
     "$qos",
     "$retained",
     "$properties",
+    "$key",
 ];
+
+/// A `scan` update runs on `[previous result, value]`, so `$acc` exists only inside it.
+pub const SCAN_WRAP: (&str, &str) = (". as [$acc, $__value] | $__value | (", ")");
+
+/// Functions måqtt adds to jq, mostly for the lists a `window` sends.
+const OWN_DEFS: &str = r#"
+def avg(f): map(f) | if length == 0 then null else add / length end;
+def sum(f): map(f) | add;
+def min(f): map(f) | min;
+def max(f): map(f) | max;
+def count: length;
+"#;
 
 pub type Filter = jaq_core::compile::Filter<jaq_core::Native<data::JustLut<Val>>>;
 
@@ -30,9 +43,11 @@ pub struct CompileError {
 pub fn compile(code: &str) -> Result<Filter, CompileError> {
     use jaq_core::load::Error;
 
+    let own = jaq_core::load::parse(OWN_DEFS, |p| p.defs()).expect("our own defs parse");
     let defs = jaq_core::defs()
         .chain(jaq_std::defs())
-        .chain(jaq_json::defs());
+        .chain(jaq_json::defs())
+        .chain(own);
     let funs = jaq_core::funs()
         .chain(jaq_std::funs())
         .chain(jaq_json::funs());
@@ -94,7 +109,7 @@ pub fn compile(code: &str) -> Result<Filter, CompileError> {
 }
 
 /// Runs a compiled expression on `input` with the message variables; every output, or the first error.
-pub fn run(filter: &Filter, input: Val, vars: &[Val; 8]) -> Result<Vec<Val>, String> {
+pub fn run(filter: &Filter, input: Val, vars: &[Val; 9]) -> Result<Vec<Val>, String> {
     let ctx = Ctx::<data::JustLut<Val>>::new(&filter.lut, Vars::new(vars.iter().cloned()));
     let results: Vec<Val> = filter
         .id
@@ -117,7 +132,7 @@ pub const MAX_RESULTS: usize = 10_000;
 mod tests {
     use super::*;
 
-    fn vars(topic: &str) -> [Val; 8] {
+    fn vars(topic: &str) -> [Val; 9] {
         let levels: Val = topic.split('/').map(|l| Val::from(l.to_string())).collect();
         [
             Val::Null,
@@ -127,6 +142,7 @@ mod tests {
             Val::from(0usize),
             Val::from(0usize),
             Val::Bool(false),
+            Val::Null,
             Val::Null,
         ]
     }
@@ -172,6 +188,34 @@ mod tests {
         );
         let bad = compile(".a + 1").unwrap();
         assert!(run(&bad, json(r#"{"a":"x"}"#), &vars("t")).is_err());
+    }
+
+    #[test]
+    fn aggregates_work_on_lists() {
+        let input = json(r#"[{"t": 1}, {"t": 3}, {"t": 2}]"#);
+        let out = |code: &str| {
+            run(&compile(code).unwrap(), input.clone(), &vars("a")).unwrap()[0].to_string()
+        };
+        assert_eq!(out("avg(.t)"), "2.0");
+        assert_eq!(out("sum(.t)"), "6");
+        assert_eq!(out("min(.t)"), "1");
+        assert_eq!(out("max(.t)"), "3");
+        assert_eq!(out("count"), "3");
+        // jq's own min and max still work.
+        assert_eq!(out("map(.t) | max"), "3");
+        assert_eq!(
+            run(&compile("avg(.)").unwrap(), json("[]"), &vars("a")).unwrap()[0].to_string(),
+            "null"
+        );
+    }
+
+    #[test]
+    fn acc_exists_only_in_a_wrapped_scan_update() {
+        let (prefix, suffix) = SCAN_WRAP;
+        let update = compile(&format!("{prefix}$acc + .{suffix}")).unwrap();
+        let out = run(&update, json("[10, 5]"), &vars("a")).unwrap();
+        assert_eq!(out[0].to_string(), "15");
+        assert!(compile("$acc + 1").is_err());
     }
 
     #[test]
