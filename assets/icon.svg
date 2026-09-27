@@ -1,28 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- måqtt, bridge console: petrol panel, fog topic tree, amber waves for arriving messages -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2f7bf0"/>
-      <stop offset="1" stop-color="#0b3d91"/>
+    <linearGradient id="panel" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#1b4452"/>
+      <stop offset="1" stop-color="#0f2a33"/>
     </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
   </defs>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
-  <!-- Broadcast waves from the root: messages arriving -->
-  <g stroke="#9ecbff" stroke-width="40" stroke-linecap="round" fill="none">
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#panel)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="none" stroke="#2a4c57" stroke-width="6"/>
+
+  <!-- Broadcast waves from the root, in lamp amber, with a soft glow like an indicator -->
+  <g stroke="#f0a53a" stroke-width="40" stroke-linecap="round" fill="none">
+    <path d="M330 170 A 160 160 0 0 1 490 330" filter="url(#glow)" opacity="0.55"/>
     <path d="M330 170 A 160 160 0 0 1 490 330"/>
-    <path d="M330 100 A 230 230 0 0 1 560 330" opacity="0.7"/>
+    <path d="M330 100 A 230 230 0 0 1 560 330" opacity="0.6"/>
   </g>
+
   <!-- The topic tree -->
-  <g stroke="#ffffff" stroke-width="46" stroke-linecap="round" fill="none">
+  <g stroke="#e3ecea" stroke-width="46" stroke-linecap="round" fill="none">
     <path d="M330 400 V 780"/>
     <path d="M330 520 H 560"/>
     <path d="M330 650 H 560"/>
     <path d="M330 780 H 560"/>
   </g>
   <!-- The root as the ring of the å -->
-  <circle cx="330" cy="330" r="62" fill="none" stroke="#ffffff" stroke-width="40"/>
-  <g fill="#ffffff">
+  <circle cx="330" cy="330" r="62" fill="none" stroke="#e3ecea" stroke-width="40"/>
+
+  <!-- Topic values -->
+  <g fill="#7f9ca3">
     <rect x="600" y="490" width="250" height="60" rx="30"/>
     <rect x="600" y="620" width="190" height="60" rx="30"/>
-    <rect x="600" y="750" width="220" height="60" rx="30" opacity="0.75"/>
+    <rect x="600" y="750" width="220" height="60" rx="30" opacity="0.7"/>
   </g>
 </svg>
