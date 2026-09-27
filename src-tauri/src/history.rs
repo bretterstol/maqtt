@@ -255,16 +255,13 @@ impl HistoryStore {
 
         let mut newest_first = Vec::with_capacity(query.limit.min(1024));
         let mut has_more = false;
-        loop {
-            // Take the newest head among the sources; there are only ever a handful.
-            let Some(source) = sources
-                .iter_mut()
-                .filter_map(|source| source.peek().map(LogItem::seq).zip(Some(source)))
-                .max_by_key(|(seq, _)| *seq)
-                .map(|(_, source)| source)
-            else {
-                break;
-            };
+        // Take the newest head among the sources each time; there are only ever a handful.
+        while let Some(source) = sources
+            .iter_mut()
+            .filter_map(|source| source.peek().map(LogItem::seq).zip(Some(source)))
+            .max_by_key(|(seq, _)| *seq)
+            .map(|(_, source)| source)
+        {
             let item = source.next().expect("peeked");
             if !query.filter.matches_item(&item) {
                 continue;
