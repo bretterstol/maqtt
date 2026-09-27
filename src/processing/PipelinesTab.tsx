@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "../ui/toast";
 import {
+  brokerNames,
   deletePipeline,
   listPipelines,
   pipelinesFolder,
@@ -13,7 +14,9 @@ import {
   type Preview,
   type PipelineView,
 } from "./api";
+import type { Hints } from "./editor/assistExtension";
 import { PipelineEditor } from "./editor/PipelineEditor";
+import { Reference } from "./Reference";
 import { OutputPanel, type OutputView } from "./OutputPanel";
 import { stageNotes, type StageNote } from "./stageNotes";
 import "./PipelinesTab.css";
@@ -24,6 +27,15 @@ const PREVIEW_DELAY_MS = 300;
 const PREVIEW_EVERY_MS = 3_000;
 
 const NO_NOTES: StageNote[] = [];
+const REFERENCE_KEY = "maqtt.pipelines.reference";
+
+function referenceWasOpen(): boolean {
+  try {
+    return localStorage.getItem(REFERENCE_KEY) !== "closed";
+  } catch {
+    return true;
+  }
+}
 
 const TEMPLATE = `# Describe what this Pipeline does
 from all
@@ -42,6 +54,7 @@ function problemsOnly(problems: Diagnostic[]): Preview {
   return {
     problems,
     messages: 0,
+    payload: null,
     ends: [],
     stages: [],
     results: [],
@@ -72,6 +85,18 @@ export default function PipelinesTab() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [folder, setFolder] = useState("");
+  const [brokers, setBrokers] = useState<string[]>([]);
+  const [referenceOpen, setReferenceOpen] = useState(referenceWasOpen);
+
+  const toggleReference = () =>
+    setReferenceOpen((open) => {
+      try {
+        localStorage.setItem(REFERENCE_KEY, open ? "closed" : "open");
+      } catch {
+        // Only a preference.
+      }
+      return !open;
+    });
 
   const show = useCallback((list: PipelineView[]) => {
     setPipelines(list);
@@ -96,6 +121,7 @@ export default function PipelinesTab() {
 
   useEffect(() => {
     void pipelinesFolder().then(setFolder);
+    void brokerNames().then(setBrokers, () => {});
     const poll = () => void refresh();
     poll();
     const timer = setInterval(poll, POLL_MS);
@@ -108,6 +134,14 @@ export default function PipelinesTab() {
   const preview =
     current && previewed?.name === current.name ? previewed : null;
   const problems = preview?.preview.problems ?? [];
+  const hints = useMemo<Hints>(
+    () => ({
+      payload: preview?.preview.payload ?? null,
+      stageValues: preview?.preview.stages.map((s) => s.last) ?? [],
+      brokers,
+    }),
+    [preview, brokers],
+  );
 
   // Preview the text shortly after typing stops, then keep it fresh. It also finds the
   // problems underlined in the editor. An answer for text that has since changed is dropped.
@@ -338,6 +372,14 @@ export default function PipelinesTab() {
               </button>
             )}
             <span className="pipelines__spacer" />
+            <button
+              className={referenceOpen ? "is-active" : undefined}
+              aria-pressed={referenceOpen}
+              onClick={toggleReference}
+              title="What each Stage, value and function does"
+            >
+              Reference
+            </button>
             {confirmingDelete ? (
               <>
                 <span className="pipelines__confirm">
@@ -377,6 +419,7 @@ export default function PipelinesTab() {
             onSave={() => void save()}
             diagnostics={problems}
             notes={preview?.notes ?? NO_NOTES}
+            hints={hints}
           />
           <p
             className={
@@ -406,6 +449,7 @@ export default function PipelinesTab() {
           </p>
         </section>
       )}
+      {referenceOpen && <Reference onClose={toggleReference} />}
     </div>
   );
 }

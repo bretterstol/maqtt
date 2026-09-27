@@ -9,6 +9,7 @@ import { useEffect, useRef } from "react";
 import type { Diagnostic } from "../api";
 import { byteToIndex } from "../offsets";
 import type { StageNote } from "../stageNotes";
+import { pipeAutocomplete, pipeHover, type Hints } from "./assistExtension";
 import { pipeLanguage, pipeTheme } from "./pipeLanguage";
 import { setStageNotes, stageNotesField } from "./stageNotesField";
 
@@ -24,6 +25,8 @@ interface Props {
   diagnostics: Diagnostic[];
   /** Preview's result after each Stage. */
   notes: StageNote[];
+  /** Real data and names for autocomplete. */
+  hints: Hints;
 }
 
 /** CodeMirror with måqtt's pipeline language; the parent owns the text. */
@@ -34,13 +37,14 @@ export function PipelineEditor({
   onSave,
   diagnostics,
   notes,
+  hints,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   // Callbacks change every render; the editor reads the latest through refs.
-  const handlers = useRef({ onChange, onSave });
+  const handlers = useRef({ onChange, onSave, hints });
   useEffect(() => {
-    handlers.current = { onChange, onSave };
+    handlers.current = { onChange, onSave, hints };
   });
 
   useEffect(() => {
@@ -63,6 +67,8 @@ export function PipelineEditor({
           pipeLanguage,
           pipeTheme,
           stageNotesField,
+          pipeAutocomplete(() => handlers.current.hints),
+          pipeHover,
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
             const outside = update.transactions.some((t) =>

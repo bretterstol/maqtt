@@ -124,6 +124,13 @@ Status: done on the `processing` branch. Checked over WebDriver: a mistake is un
 
 Status: done on the `processing` branch. The draft runs over the newest 100 messages that pass `from` and the leading `filter topic` Stages (looking back up to 50,000 per Connection), replayed on their own timestamps so `throttle` behaves as it did live. Nothing is sent anywhere. After each Stage the editor shows how many values passed and the latest one, or the number of errors and the first. The output panel switches between Preview and the running Pipeline. It runs 300 ms after typing stops and every 3 s after that. Checked over WebDriver: a `map` change shows in about half a second.
 
+### Help while writing
+
+Added after P3, at your request. One file, `src/processing/reference.json`, describes every Stage, variable, piece of syntax and a set of everyday jq functions. It feeds three things: autocomplete, hover help and a searchable Reference panel. A Rust test parses every example in it and checks every function example's output, so the reference can't drift from the language.
+
+- Autocomplete offers Stages after `|>` (with placeholders to fill in), `all` and Broker names after `from`, `$` variables, jq functions, and, after `.`, the field names found in recent real data at that point in the Pipeline.
+- Hovering a Stage, variable or function explains it.
+
 ### P4: Stateful Stages
 
 - `scan`, `debounce`, `take`

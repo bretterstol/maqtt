@@ -78,6 +78,8 @@ export interface Preview {
   /** When not empty, nothing ran. */
   problems: Diagnostic[];
   messages: number;
+  /** The newest sample's payload as JSON. */
+  payload: string | null;
   /** Where `from` and then each Stage end in the source (UTF-8 byte offsets). */
   ends: number[];
   stages: StageTrace[];
@@ -88,3 +90,9 @@ export interface Preview {
 /** Runs a draft over recent messages without starting it. */
 export const previewPipeline = (source: string): Promise<Preview> =>
   invoke("preview_pipeline", { source });
+
+/** The Brokers' names, for suggestions after `from`. */
+export const brokerNames = (): Promise<string[]> =>
+  invoke<{ name: string }[]>("list_profiles").then((profiles) =>
+    profiles.map((p) => p.name),
+  );

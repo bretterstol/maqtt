@@ -7,6 +7,8 @@
 pub mod jq;
 pub mod lang;
 pub mod preview;
+#[cfg(test)]
+mod reference_tests;
 pub mod runner;
 pub mod stages;
 pub mod store;

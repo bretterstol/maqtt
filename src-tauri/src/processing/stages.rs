@@ -404,7 +404,7 @@ fn derived_topic(topic: &str) -> Result<String, String> {
 }
 
 /// JSON when the payload is JSON, text when it's text, bytes otherwise.
-fn payload_value(payload: &[u8]) -> Val {
+pub fn payload_value(payload: &[u8]) -> Val {
     if let Ok(value) = jaq_json::read::parse_single(payload) {
         return value;
     }

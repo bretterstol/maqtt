@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::lang::{self, Diagnostic};
 use super::runner::PIPELINES;
-use super::stages::{Effect, Origin, Runtime, StageTrace};
+use super::stages::{self, Effect, Origin, Runtime, StageTrace};
 use crate::message::{ConnectionId, ReceivedMessage};
 
 /// How many recent matching messages a Preview runs over.
@@ -34,6 +34,8 @@ pub struct Preview {
     pub problems: Vec<Diagnostic>,
     /// The sample messages that went in.
     pub messages: usize,
+    /// The newest sample's payload as JSON, for suggesting field names.
+    pub payload: Option<String>,
     /// Where the `from` line and each Stage end in the source (byte offsets).
     pub ends: Vec<usize>,
     /// One per Stage, after `from`.
@@ -59,6 +61,7 @@ pub fn preview(
     let mut preview = Preview {
         problems: Vec::new(),
         messages: 0,
+        payload: None,
         ends: Vec::new(),
         stages: Vec::new(),
         results: Vec::new(),
@@ -93,6 +96,9 @@ pub fn preview(
         SCAN,
     );
     preview.messages = sample.len();
+    preview.payload = sample
+        .last()
+        .map(|m| stages::payload_value(&m.payload).to_string());
 
     // Replay on the messages' own clock, so `throttle` behaves as it did live.
     let start = Instant::now();

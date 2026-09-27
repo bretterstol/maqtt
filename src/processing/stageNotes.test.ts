@@ -5,6 +5,7 @@ import { stageNotes } from "./stageNotes";
 const base: Preview = {
   problems: [],
   messages: 2,
+  payload: null,
   ends: [],
   stages: [],
   results: [],
