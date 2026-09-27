@@ -41,7 +41,7 @@ from "Dev Broker"
 | `take` _(later)_     | `take 10`                                                                          | Stops after N messages.                                                                  |
 | windows _(later)_    | to be designed                                                                     | Aggregates over time, such as an average per minute.                                     |
 
-Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `throttle`, `scan`, `debounce`) is kept **per topic**, so rooms don't mix.
+Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `throttle`, `scan`, `debounce`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`.
 
 ### Values and variables
 

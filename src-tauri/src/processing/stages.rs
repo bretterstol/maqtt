@@ -84,10 +84,14 @@ enum Running {
     },
     Filter(jq::Filter),
     Map(jq::Filter),
-    Changes(HashMap<String, Val>),
+    Changes {
+        key: Option<jq::Filter>,
+        last: HashMap<String, Val>,
+    },
     Throttle {
         interval: Duration,
-        topics: HashMap<String, Throttled>,
+        key: Option<jq::Filter>,
+        keys: HashMap<String, Throttled>,
     },
     Inspect(Option<String>),
     ToApp(jq::Filter),
@@ -119,10 +123,14 @@ impl Runtime {
                     },
                     Stage::Filter(code) => Running::Filter(compile(code)?),
                     Stage::Map(code) => Running::Map(compile(code)?),
-                    Stage::Changes => Running::Changes(HashMap::new()),
-                    Stage::Throttle(interval) => Running::Throttle {
+                    Stage::Changes(key) => Running::Changes {
+                        key: key.as_deref().map(compile).transpose()?,
+                        last: HashMap::new(),
+                    },
+                    Stage::Throttle(interval, key) => Running::Throttle {
                         interval: *interval,
-                        topics: HashMap::new(),
+                        key: key.as_deref().map(compile).transpose()?,
+                        keys: HashMap::new(),
                     },
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
@@ -156,9 +164,9 @@ impl Runtime {
     pub fn tick(&mut self, now: Instant, out: &mut Vec<Effect>) {
         for i in 0..self.stages.len() {
             let released = match &mut self.stages[i] {
-                Running::Throttle { interval, topics } => {
+                Running::Throttle { interval, keys, .. } => {
                     let mut released = Vec::new();
-                    for state in topics.values_mut() {
+                    for state in keys.values_mut() {
                         if now >= state.open_at
                             && let Some(item) = state.pending.take()
                         {
@@ -225,20 +233,27 @@ fn apply(
             })),
             Err(err) => out.push(error(&item, "map", err)),
         },
-        Running::Changes(last) => {
-            let topic = item.origin.topic();
-            if last.get(topic) != Some(&item.value) {
-                last.insert(topic.to_string(), item.value.clone());
+        Running::Changes { key, last } => {
+            let Some(key) = state_key(key.as_ref(), &item, "changes", out) else {
+                return;
+            };
+            if last.get(&key) != Some(&item.value) {
+                last.insert(key, item.value.clone());
                 next.push(item);
             }
         }
-        Running::Throttle { interval, topics } => {
-            let state = topics
-                .entry(item.origin.topic().to_string())
-                .or_insert(Throttled {
-                    open_at: now,
-                    pending: None,
-                });
+        Running::Throttle {
+            interval,
+            key,
+            keys,
+        } => {
+            let Some(key) = state_key(key.as_ref(), &item, "throttle", out) else {
+                return;
+            };
+            let state = keys.entry(key).or_insert(Throttled {
+                open_at: now,
+                pending: None,
+            });
             if now >= state.open_at {
                 state.open_at = now + *interval;
                 state.pending = None;
@@ -280,6 +295,33 @@ fn apply(
                 Err(err) => out.push(error(&item, "to app", err)),
             }
             next.push(item);
+        }
+    }
+}
+
+/// Which state a stateful Stage keeps for this item: its `by` key, or else its incoming topic.
+/// `None` (after reporting an error) when the key can't be worked out.
+fn state_key(
+    key: Option<&jq::Filter>,
+    item: &Item,
+    stage: &str,
+    out: &mut Vec<Effect>,
+) -> Option<String> {
+    let Some(key) = key else {
+        return Some(item.origin.topic().to_string());
+    };
+    match jq::run(key, item.value.clone(), &item.origin.vars) {
+        Ok(results) => match results.into_iter().next() {
+            Some(Val::TStr(text)) => Some(String::from_utf8_lossy(&text).into_owned()),
+            Some(value) => Some(value.to_string()),
+            None => {
+                out.push(error(item, stage, "the `by` key gave no value".into()));
+                None
+            }
+        },
+        Err(err) => {
+            out.push(error(item, stage, err));
+            None
         }
     }
 }
@@ -461,6 +503,45 @@ mod tests {
         assert_eq!(out[2..], [derived("a", "3")]);
         rt.tick(t0 + Duration::from_millis(3000), &mut out);
         assert_eq!(out.len(), 3, "nothing pending, nothing released");
+    }
+
+    #[test]
+    fn by_keys_share_state_across_topics() {
+        // Two sensors in one room: keyed by room, they count as one.
+        let mut rt = runtime(r#"from all |> changes by $levels[1] |> to app "{$levels[1]}""#);
+        let out = run(
+            &mut rt,
+            &[("r/bed/s1", "20"), ("r/bed/s2", "20"), ("r/bed/s2", "21")],
+        );
+        assert_eq!(out, [derived("bed", "20"), derived("bed", "21")]);
+
+        let mut rt = runtime(r#"from all |> throttle 1s by .room |> to app "{.room}""#);
+        let t0 = Instant::now();
+        let mut out = Vec::new();
+        rt.push(origin("a/1", r#"{"room":"bed","t":1}"#), t0, &mut out);
+        rt.push(
+            origin("a/2", r#"{"room":"bed","t":2}"#),
+            t0 + Duration::from_millis(10),
+            &mut out,
+        );
+        rt.push(
+            origin("a/3", r#"{"room":"hall","t":3}"#),
+            t0 + Duration::from_millis(20),
+            &mut out,
+        );
+        assert_eq!(out.len(), 2, "bed once, hall once");
+        rt.tick(t0 + Duration::from_secs(1), &mut out);
+        assert_eq!(out[2], derived("bed", r#"{"room":"bed","t":2}"#));
+    }
+
+    #[test]
+    fn a_key_that_fails_skips_the_message() {
+        let mut rt = runtime(r#"from all |> changes by .a.b |> to app "x""#);
+        let out = run(&mut rt, &[("t", r#"{"a": 5}"#)]);
+        assert!(
+            matches!(&out[0], Effect::Error(e) if e.starts_with("changes on t:")),
+            "{out:?}"
+        );
     }
 
     #[test]

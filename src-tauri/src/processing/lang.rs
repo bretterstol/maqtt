@@ -38,8 +38,9 @@ pub enum Stage {
     },
     Filter(String),
     Map(String),
-    Changes,
-    Throttle(Duration),
+    /// With an optional key (a jq expression); without one, state is per incoming topic.
+    Changes(Option<String>),
+    Throttle(Duration, Option<String>),
     Inspect(Option<String>),
     /// The Derived Topic, as a jq expression that yields a string.
     ToApp(String),
@@ -198,13 +199,6 @@ fn parse_from(code: &str, arg: Span, problems: &mut Problems) -> Option<Connecti
 fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Option<Stage> {
     let arg_text = code[arg.start..arg.end].trim();
     let arg_start = arg.end - code[arg.start..arg.end].trim_start().len();
-    let none_expected = |problems: &mut Problems, name: &str| {
-        problems.at(
-            arg_start,
-            arg.end,
-            format!("`{name}` takes nothing after it"),
-        );
-    };
     match word.text {
         "filter" => {
             let (negate, rest) = match arg_text.strip_prefix("not") {
@@ -252,23 +246,29 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
         }
         "map" => expression(code, arg, problems, "map").map(Stage::Map),
         "changes" => {
-            if !arg_text.is_empty() {
-                none_expected(problems, "changes");
-                return None;
-            }
-            Some(Stage::Changes)
+            let rest = Span {
+                start: arg_start,
+                end: arg.end,
+            };
+            key_clause(code, rest, problems, "changes by .room").map(Stage::Changes)
         }
-        "throttle" => match parse_duration(arg_text) {
-            Some(interval) => Some(Stage::Throttle(interval)),
-            None => {
+        "throttle" => {
+            let duration_len = arg_text.find(char::is_whitespace).unwrap_or(arg_text.len());
+            let Some(interval) = parse_duration(&arg_text[..duration_len]) else {
                 problems.at(
                     arg_start,
-                    arg.end.max(arg_start + 1),
+                    (arg_start + duration_len).max(arg_start + 1),
                     "`throttle` takes a duration such as `500ms`, `5s`, `1m` or `1h`",
                 );
-                None
-            }
-        },
+                return None;
+            };
+            let rest = Span {
+                start: arg_start + duration_len,
+                end: arg.end,
+            };
+            key_clause(code, rest, problems, "throttle 5s by .room")
+                .map(|key| Stage::Throttle(interval, key))
+        }
         "inspect" => {
             if arg_text.is_empty() {
                 return Some(Stage::Inspect(None));
@@ -330,6 +330,37 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                 word.span.start,
                 word.span.end,
                 format!("Unknown Stage `{other}`. Stages are: {STAGES}"),
+            );
+            None
+        }
+    }
+}
+
+/// An optional `by <key>` after a Stage: `Some(None)` when absent, `None` when it's wrong.
+fn key_clause(
+    code: &str,
+    rest: Span,
+    problems: &mut Problems,
+    example: &str,
+) -> Option<Option<String>> {
+    let text = code[rest.start..rest.end].trim();
+    if text.is_empty() {
+        return Some(None);
+    }
+    let start = rest.end - code[rest.start..rest.end].trim_start().len();
+    match text.strip_prefix("by") {
+        Some(key) if key.is_empty() || key.starts_with(char::is_whitespace) => {
+            let key_span = Span {
+                start: start + 2,
+                end: rest.end,
+            };
+            expression(code, key_span, problems, "by").map(Some)
+        }
+        _ => {
+            problems.at(
+                start,
+                rest.end,
+                format!("Expected nothing more here, or a key with `by`, for example `{example}`"),
             );
             None
         }
@@ -621,8 +652,8 @@ from "Dev Broker"
                 },
                 Stage::Map("{ temp: .temperature, room: $levels[2] }".into()),
                 Stage::Filter(".temp > 22".into()),
-                Stage::Changes,
-                Stage::Throttle(Duration::from_secs(10)),
+                Stage::Changes(None),
+                Stage::Throttle(Duration::from_secs(10), None),
                 Stage::ToApp(r#""hot/\(.room)""#.into()),
             ]
         );
@@ -687,7 +718,7 @@ from "Dev Broker"
         ] {
             assert_eq!(
                 stages(&format!("from all |> throttle {text}")),
-                vec![Stage::Throttle(Duration::from_millis(ms))]
+                vec![Stage::Throttle(Duration::from_millis(ms), None)]
             );
         }
         assert!(parse("from all |> throttle 0s").is_err());
@@ -755,8 +786,31 @@ from "Dev Broker"
                     filter: "a/#".into(),
                     negate: false
                 },
-                Stage::Changes
+                Stage::Changes(None)
             ]
+        );
+    }
+
+    #[test]
+    fn keys_for_changes_and_throttle() {
+        assert_eq!(
+            stages("from all |> changes by .room |> throttle 5s by $levels[2]"),
+            vec![
+                Stage::Changes(Some(".room".into())),
+                Stage::Throttle(Duration::from_secs(5), Some("$levels[2]".into())),
+            ]
+        );
+        assert_eq!(
+            first_problem("from all |> changes .room").2,
+            "Expected nothing more here, or a key with `by`, for example `changes by .room`"
+        );
+        assert_eq!(
+            first_problem("from all |> throttle 5s by").2,
+            "`by` needs an expression"
+        );
+        assert_eq!(
+            first_problem("from all |> throttle 5s by .a +").2,
+            "expected term at the end"
         );
     }
 
