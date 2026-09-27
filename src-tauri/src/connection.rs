@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bytes::Bytes;
 use rumqttc::v5::mqttbytes::QoS;
 use rumqttc::v5::mqttbytes::v5::Packet;
 use rumqttc::v5::{AsyncClient, Event, MqttOptions};
@@ -80,9 +81,12 @@ async fn run(id: ConnectionId, settings: ConnectionSettings, bus: Bus, connectio
             }
             Ok(Event::Incoming(Packet::Publish(publish))) => {
                 let message = ReceivedMessage {
+                    seq: bus.next_seq(),
                     connection_id: id,
                     topic: String::from_utf8_lossy(&publish.topic).into_owned(),
-                    payload: publish.payload,
+                    // `rumqttc` payloads are slices of its network read buffer; holding them in
+                    // the History Store would pin those whole buffers, so copy them out.
+                    payload: Bytes::copy_from_slice(&publish.payload),
                     qos: publish.qos as u8,
                     retain: publish.retain,
                     received_at_ms: now_ms(),

@@ -4,14 +4,22 @@ import {
   type ConnectionId,
   type ConnectionStatus,
 } from "./bridge";
+import { MessageLogController } from "./messageLog/controller";
 import { MessageLog } from "./messageLog/MessageLog";
 import { MessageLogStore } from "./messageLog/store";
 import "./App.css";
 
-const LOG_CAPACITY = 20_000;
+const LIVE_CAPACITY = 5_000;
+const MAX_SCROLLBACK = 100_000;
 
 function App() {
-  const [logStore] = useState(() => new MessageLogStore(LOG_CAPACITY));
+  const [controller] = useState(
+    () =>
+      new MessageLogController(
+        new MessageLogStore(LIVE_CAPACITY, MAX_SCROLLBACK),
+      ),
+  );
+  const { store } = controller;
   const [connections, setConnections] = useState<
     Map<ConnectionId, ConnectionStatus>
   >(new Map());
@@ -19,7 +27,7 @@ function App() {
 
   useEffect(() => {
     streamMessages((batch) => {
-      logStore.append(batch.messages, batch.dropped);
+      store.applyBatch(batch);
       if (batch.connectionStates.length > 0) {
         setConnections((previous) => {
           const next = new Map(previous);
@@ -28,17 +36,20 @@ function App() {
           return next;
         });
       }
-    }).catch((err) => console.error("stream_messages failed", err));
-  }, [logStore]);
+    })
+      // Backfill from the History Store, e.g. after a reload of the frontend.
+      .then((generation) => controller.resetForStream(generation))
+      .catch((err) => console.error("stream_messages failed", err));
+  }, [controller, store]);
 
   useEffect(() => {
-    let last = logStore.totalReceived;
+    let last = store.totalReceived;
     const timer = setInterval(() => {
-      setRate(logStore.totalReceived - last);
-      last = logStore.totalReceived;
+      setRate(store.totalReceived - last);
+      last = store.totalReceived;
     }, 1000);
     return () => clearInterval(timer);
-  }, [logStore]);
+  }, [store]);
 
   const connectionNames = useMemo(
     () => new Map([...connections].map(([id, status]) => [id, status.name])),
@@ -53,12 +64,13 @@ function App() {
           <ConnectionBadge key={status.connectionId} status={status} />
         ))}
         <span className="app__stats">
-          {rate} msg/s · {logStore.totalReceived.toLocaleString()} received
-          {logStore.dropped > 0 &&
-            ` · ${logStore.dropped.toLocaleString()} dropped`}
+          {rate.toLocaleString()} msg/s · {store.totalReceived.toLocaleString()}{" "}
+          received
+          {store.dropped > 0 &&
+            ` · ${store.dropped.toLocaleString()} not shown live`}
         </span>
       </header>
-      <MessageLog store={logStore} connectionNames={connectionNames} />
+      <MessageLog controller={controller} connectionNames={connectionNames} />
     </div>
   );
 }

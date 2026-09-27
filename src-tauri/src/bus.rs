@@ -1,7 +1,8 @@
 //! The Message Bus: every Connection publishes onto it, and everything downstream
-//! (UI Bridge, later the History Store and processing) consumes from it. See ADR 0002.
+//! (UI Bridge, History Store, later processing) consumes from it. See ADR 0002.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -36,12 +37,21 @@ pub enum ConnectionState {
 #[derive(Clone)]
 pub struct Bus {
     tx: broadcast::Sender<BusEvent>,
+    next_seq: Arc<AtomicU64>,
 }
 
 impl Bus {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(CAPACITY);
-        Self { tx }
+        Self {
+            tx,
+            next_seq: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    /// The seq for the next message a Connection puts on the bus.
+    pub fn next_seq(&self) -> u64 {
+        self.next_seq.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn publish(&self, event: BusEvent) {

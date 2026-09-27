@@ -1,22 +1,31 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ConnectionId, LogEntry } from "../bridge";
-import type { MessageLogStore } from "./store";
+import type { MessageLogController } from "./controller";
 import "./MessageLog.css";
 
 const ROW_HEIGHT = 24;
 /** How close to the bottom (in px) still counts as "at the bottom" for following. */
 const FOLLOW_SLACK = ROW_HEIGHT * 2;
+/** How close to the top (in px) starts loading the previous page. */
+const LOAD_OLDER_SLACK = ROW_HEIGHT * 20;
+const FILTER_DEBOUNCE_MS = 250;
 
 interface Props {
-  store: MessageLogStore;
+  controller: MessageLogController;
   connectionNames: Map<ConnectionId, string>;
 }
 
-export function MessageLog({ store, connectionNames }: Props) {
+export function MessageLog({ controller, connectionNames }: Props) {
+  const { store } = controller;
   const version = useSyncExternalStore(store.subscribe, store.getVersion);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [following, setFollowing] = useState(true);
 
   // Not using the React Compiler, so its memoization caveat for TanStack Virtual does not apply.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -28,21 +37,34 @@ export function MessageLog({ store, connectionNames }: Props) {
   });
 
   useLayoutEffect(() => {
-    if (following && store.length > 0) {
+    const el = scrollRef.current;
+    if (!el) return;
+    const prepended = store.takeScrollAdjustment();
+    if (prepended > 0) {
+      // Keep the rows the reader was looking at in place.
+      el.scrollTop += prepended * ROW_HEIGHT;
+    } else if (store.following && store.length > 0) {
       virtualizer.scrollToIndex(store.length - 1, { align: "end" });
     }
-  }, [version, following, store, virtualizer]);
+  }, [version, store, virtualizer]);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const atBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLACK;
-    if (atBottom !== following) setFollowing(atBottom);
+    if (store.following) {
+      if (!atBottom) store.pause();
+    } else if (atBottom) {
+      if (!controller.isLoadingLatest) void controller.showLatest();
+    } else if (el.scrollTop < LOAD_OLDER_SLACK) {
+      void controller.loadOlder();
+    }
   };
 
   return (
     <section className="message-log">
+      <FilterBar controller={controller} connectionNames={connectionNames} />
       <div className="message-log__header message-log__row">
         <span>Time</span>
         <span>Connection</span>
@@ -60,7 +82,7 @@ export function MessageLog({ store, connectionNames }: Props) {
             if (!entry) return null;
             return (
               <Row
-                key={item.key}
+                key={entry.seq}
                 entry={entry}
                 connectionName={
                   connectionNames.get(entry.connectionId) ??
@@ -72,15 +94,53 @@ export function MessageLog({ store, connectionNames }: Props) {
           })}
         </div>
       </div>
-      {!following && (
+      {!store.following && (
         <button
           className="message-log__follow"
-          onClick={() => setFollowing(true)}
+          onClick={() => void controller.showLatest()}
         >
           Jump to latest
+          {store.newWhilePaused > 0 &&
+            ` (${store.newWhilePaused.toLocaleString()} new)`}
         </button>
       )}
     </section>
+  );
+}
+
+function FilterBar({ controller, connectionNames }: Props) {
+  const [connectionId, setConnectionId] = useState<ConnectionId | null>(null);
+  const [text, setText] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void controller.setFilter({ connectionId, text: text || null });
+    }, FILTER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [controller, connectionId, text]);
+
+  return (
+    <div className="message-log__filters">
+      <select
+        value={connectionId ?? ""}
+        onChange={(e) =>
+          setConnectionId(e.target.value ? Number(e.target.value) : null)
+        }
+      >
+        <option value="">All Connections</option>
+        {[...connectionNames].map(([id, name]) => (
+          <option key={id} value={id}>
+            {name}
+          </option>
+        ))}
+      </select>
+      <input
+        type="search"
+        placeholder="Filter topic or payload…"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+    </div>
   );
 }
 

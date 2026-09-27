@@ -3,13 +3,15 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ConnectionId(pub u32);
 
 #[derive(Debug, Clone)]
 pub struct ReceivedMessage {
+    /// Unique and increasing across all Connections, in the order messages entered the bus.
+    pub seq: u64,
     pub connection_id: ConnectionId,
     pub topic: String,
     pub payload: Bytes,

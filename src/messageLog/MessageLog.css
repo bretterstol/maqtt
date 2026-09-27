@@ -65,3 +65,15 @@
   right: 1.5rem;
   bottom: 1rem;
 }
+
+.message-log__filters {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.message-log__filters input {
+  flex: 1;
+  max-width: 32rem;
+}

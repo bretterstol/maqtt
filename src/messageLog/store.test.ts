@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LogEntry } from "../bridge";
+import type { Batch, LogEntry, LogPage } from "../bridge";
 import { MessageLogStore } from "./store";
 
-const entry = (topic: string): LogEntry => ({
+const entry = (seq: number): LogEntry => ({
+  seq,
   connectionId: 1,
-  topic,
+  topic: `t/${seq}`,
   preview: "",
   binary: false,
   payloadSize: 0,
@@ -13,55 +14,139 @@ const entry = (topic: string): LogEntry => ({
   receivedAtMs: 0,
 });
 
-const topics = (store: MessageLogStore) =>
-  Array.from({ length: store.length }, (_, i) => store.at(i)?.topic);
+const batch = (seqs: number[], extra: Partial<Batch> = {}): Batch => ({
+  messages: seqs.map(entry),
+  filterGeneration: 0,
+  connectionStates: [],
+  received: seqs.length,
+  dropped: 0,
+  ...extra,
+});
 
-describe("MessageLogStore", () => {
-  it("keeps entries oldest first", () => {
-    const store = new MessageLogStore(5);
-    store.append([entry("a"), entry("b")]);
-    store.append([entry("c")]);
-    expect(topics(store)).toEqual(["a", "b", "c"]);
+const page = (seqs: number[], hasMore = false): LogPage => ({
+  entries: seqs.map(entry),
+  hasMore,
+});
+
+const seqs = (store: MessageLogStore) =>
+  Array.from({ length: store.length }, (_, i) => store.at(i)?.seq);
+
+const newStore = (liveCapacity = 5, maxScrollback = 100) =>
+  new MessageLogStore(liveCapacity, maxScrollback);
+
+describe("MessageLogStore while following", () => {
+  it("appends live entries in order", () => {
+    const store = newStore();
+    store.applyBatch(batch([1, 2]));
+    store.applyBatch(batch([3]));
+    expect(seqs(store)).toEqual([1, 2, 3]);
   });
 
-  it("evicts the oldest entries once full", () => {
-    const store = new MessageLogStore(3);
-    store.append(["a", "b", "c", "d", "e"].map(entry));
-    expect(topics(store)).toEqual(["c", "d", "e"]);
-    store.append([entry("f")]);
-    expect(topics(store)).toEqual(["d", "e", "f"]);
-    expect(store.totalReceived).toBe(6);
+  it("trims the oldest beyond the live capacity and marks older as available", () => {
+    const store = newStore(3);
+    store.applyBatch(batch([1, 2, 3, 4, 5]));
+    expect(seqs(store)).toEqual([3, 4, 5]);
+    expect(store.hasOlder).toBe(true);
   });
 
-  it("returns undefined outside the held range", () => {
-    const store = new MessageLogStore(3);
-    store.append([entry("a")]);
-    expect(store.at(-1)).toBeUndefined();
-    expect(store.at(1)).toBeUndefined();
+  it("skips entries it already holds", () => {
+    const store = newStore();
+    store.showLatest(page([1, 2, 3]));
+    store.applyBatch(batch([3, 4]));
+    expect(seqs(store)).toEqual([1, 2, 3, 4]);
   });
 
-  it("notifies subscribers once per append and bumps the version", () => {
-    const store = new MessageLogStore(3);
+  it("ignores entries from another filter generation but still counts traffic", () => {
+    const store = newStore();
+    store.applyBatch(batch([1, 2], { filterGeneration: 7, dropped: 3 }));
+    expect(store.length).toBe(0);
+    expect(store.totalReceived).toBe(2);
+    expect(store.dropped).toBe(3);
+  });
+
+  it("notifies subscribers once per batch", () => {
+    const store = newStore();
     const listener = vi.fn();
-    const unsubscribe = store.subscribe(listener);
-    store.append([entry("a"), entry("b")]);
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(store.getVersion()).toBe(1);
-    unsubscribe();
-    store.append([entry("c")]);
+    store.subscribe(listener);
+    store.applyBatch(batch([1, 2]));
     expect(listener).toHaveBeenCalledTimes(1);
   });
+});
 
-  it("counts dropped messages, even in an otherwise empty batch", () => {
-    const store = new MessageLogStore(3);
-    store.append([], 7);
-    expect(store.dropped).toBe(7);
-    expect(store.getVersion()).toBe(1);
+describe("MessageLogStore while paused", () => {
+  it("freezes the entries and counts what arrives", () => {
+    const store = newStore(3);
+    store.applyBatch(batch([1, 2, 3]));
+    store.pause();
+    store.applyBatch(batch([4, 5]));
+    expect(seqs(store)).toEqual([1, 2, 3]);
+    expect(store.newWhilePaused).toBe(2);
   });
 
-  it("ignores empty batches with nothing dropped", () => {
-    const store = new MessageLogStore(3);
-    store.append([]);
-    expect(store.getVersion()).toBe(0);
+  it("prepends older pages beyond the live capacity and reports the scroll adjustment", () => {
+    const store = newStore(3);
+    store.showLatest(page([4, 5, 6], true));
+    store.pause();
+    expect(store.prependOlder(page([1, 2, 3], false))).toBe(3);
+    expect(seqs(store)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(store.hasOlder).toBe(false);
+    expect(store.takeScrollAdjustment()).toBe(3);
+    expect(store.takeScrollAdjustment()).toBe(0);
+  });
+
+  it("does not prepend entries that overlap what it holds", () => {
+    const store = newStore();
+    store.showLatest(page([3, 4]));
+    expect(store.prependOlder(page([2, 3]))).toBe(1);
+    expect(seqs(store)).toEqual([2, 3, 4]);
+  });
+
+  it("stops offering older pages at the scrollback limit", () => {
+    const store = newStore(2, 4);
+    store.showLatest(page([5, 6], true));
+    expect(store.canLoadOlder).toBe(true);
+    store.prependOlder(page([3, 4], true));
+    expect(store.canLoadOlder).toBe(false);
+  });
+});
+
+describe("MessageLogStore.showLatest", () => {
+  it("replaces a paused view and resumes following", () => {
+    const store = newStore();
+    store.applyBatch(batch([1, 2]));
+    store.pause();
+    store.applyBatch(batch([3]));
+    store.showLatest(page([8, 9], true));
+    expect(seqs(store)).toEqual([8, 9]);
+    expect(store.following).toBe(true);
+    expect(store.newWhilePaused).toBe(0);
+    expect(store.hasOlder).toBe(true);
+  });
+
+  it("keeps live entries newer than the page that arrived while it was fetched", () => {
+    const store = newStore();
+    store.applyBatch(batch([10, 11]));
+    store.showLatest(page([8, 9, 10]));
+    expect(seqs(store)).toEqual([8, 9, 10, 11]);
+  });
+});
+
+describe("MessageLogStore.resetForFilter", () => {
+  it("clears the view for a newer generation", () => {
+    const store = newStore();
+    store.applyBatch(batch([1]));
+    store.pause();
+    expect(store.resetForFilter(1)).toBe(true);
+    expect(store.length).toBe(0);
+    expect(store.following).toBe(true);
+    store.applyBatch(batch([2], { filterGeneration: 1 }));
+    expect(seqs(store)).toEqual([2]);
+  });
+
+  it("refuses a generation that is not newer", () => {
+    const store = newStore();
+    store.resetForFilter(2);
+    expect(store.resetForFilter(1)).toBe(false);
+    expect(store.generation).toBe(2);
   });
 });

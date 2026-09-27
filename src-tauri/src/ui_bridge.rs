@@ -2,14 +2,17 @@
 //! webview gets a steady ~20 updates per second no matter how busy the Brokers are.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, watch};
 
 use crate::bus::{Bus, BusEvent, ConnectionStatus};
 use crate::connection::Connections;
+use crate::history::LogFilter;
 use crate::message::{ConnectionId, ReceivedMessage};
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
@@ -22,15 +25,28 @@ const PREVIEW_BYTES_BINARY: usize = 32;
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Batch {
+    /// New Message Log entries matching the filter of `filter_generation`, oldest first.
     pub messages: Vec<LogEntry>,
+    pub filter_generation: u64,
     pub connection_states: Vec<ConnectionStatus>,
-    /// Messages that never reached the frontend since the previous batch.
+    /// Every message received since the previous batch, matching the filter or not.
+    pub received: u64,
+    /// Matching messages that never reached the frontend since the previous batch.
     pub dropped: u64,
+}
+
+/// The Message Log filter the live stream applies. Each change gets a new generation so the
+/// frontend can tell batches filtered the old way from those filtered the new way.
+#[derive(Debug, Clone, Default)]
+pub struct LiveFilter {
+    pub generation: u64,
+    pub filter: LogFilter,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogEntry {
+    pub seq: u64,
     pub connection_id: ConnectionId,
     pub topic: String,
     pub preview: String,
@@ -45,6 +61,7 @@ impl From<&ReceivedMessage> for LogEntry {
     fn from(m: &ReceivedMessage) -> Self {
         let (preview, binary) = preview(&m.payload);
         Self {
+            seq: m.seq,
             connection_id: m.connection_id,
             topic: m.topic.clone(),
             preview,
@@ -89,21 +106,26 @@ fn preview(payload: &[u8]) -> (String, bool) {
 pub fn spawn(
     bus: &Bus,
     connections: &Connections,
+    filter: watch::Receiver<LiveFilter>,
     channel: Channel<Batch>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     // Subscribe before taking the snapshot so no state change falls between the two.
     let rx = bus.subscribe();
     let initial = connections.snapshot();
-    tauri::async_runtime::spawn(run(rx, initial, channel))
+    tauri::async_runtime::spawn(run(rx, initial, filter, channel))
 }
 
 async fn run(
-    mut rx: tokio::sync::broadcast::Receiver<BusEvent>,
+    mut rx: broadcast::Receiver<BusEvent>,
     initial: Vec<ConnectionStatus>,
+    mut filter: watch::Receiver<LiveFilter>,
     channel: Channel<Batch>,
 ) {
-    let mut messages: VecDeque<LogEntry> = VecDeque::new();
+    let mut live = filter.borrow_and_update().clone();
+    // Kept as messages and only turned into entries on flush, so dropped ones cost nothing.
+    let mut pending: VecDeque<Arc<ReceivedMessage>> = VecDeque::new();
     let mut connection_states = initial;
+    let mut received = 0u64;
     let mut dropped = 0u64;
     let mut tick = tokio::time::interval(FLUSH_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -112,23 +134,37 @@ async fn run(
         tokio::select! {
             event = rx.recv() => match event {
                 Ok(BusEvent::Message(m)) => {
-                    if messages.len() == MAX_BATCH {
-                        messages.pop_front();
+                    received += 1;
+                    if !live.filter.matches(&m) {
+                        continue;
+                    }
+                    if pending.len() == MAX_BATCH {
+                        pending.pop_front();
                         dropped += 1;
                     }
-                    messages.push_back(LogEntry::from(m.as_ref()));
+                    pending.push_back(m);
                 }
                 Ok(BusEvent::ConnectionState(status)) => connection_states.push(status),
-                Err(RecvError::Lagged(n)) => dropped += n,
+                Err(RecvError::Lagged(n)) => {
+                    received += n;
+                    dropped += n;
+                }
                 Err(RecvError::Closed) => return,
             },
+            Ok(()) = filter.changed() => {
+                live = filter.borrow_and_update().clone();
+                // Filtered the old way; the frontend reloads from the History Store instead.
+                pending.clear();
+            },
             _ = tick.tick() => {
-                if messages.is_empty() && connection_states.is_empty() && dropped == 0 {
+                if pending.is_empty() && connection_states.is_empty() && received == 0 {
                     continue;
                 }
                 let batch = Batch {
-                    messages: messages.drain(..).collect(),
+                    messages: pending.drain(..).map(|m| LogEntry::from(m.as_ref())).collect(),
+                    filter_generation: live.generation,
                     connection_states: std::mem::take(&mut connection_states),
+                    received: std::mem::take(&mut received),
                     dropped: std::mem::take(&mut dropped),
                 };
                 if channel.send(batch).is_err() {

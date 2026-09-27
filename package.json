@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "lint": "eslint . && prettier --check . && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "lint": "tsc && eslint . && prettier --check . && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
     "format": "prettier --write . && cargo fmt --all",
     "dev:env": "dev/env.sh up",
     "test": "vitest run && cargo test --workspace"
