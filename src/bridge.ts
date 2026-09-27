@@ -77,6 +77,28 @@ export interface LogEntry {
   receivedAtMs: number;
 }
 
+/** Text when the bytes are UTF-8, base64 otherwise. */
+export type PayloadData =
+  { kind: "text"; text: string } | { kind: "binary"; base64: string };
+
+export interface MessageProperties {
+  payloadFormatIndicator?: number | null;
+  messageExpiryInterval?: number | null;
+  contentType?: string | null;
+  responseTopic?: string | null;
+  correlationData?: PayloadData | null;
+  userProperties: [string, string][];
+}
+
+/** One message in full, for the topic detail panel. */
+export interface MessageDetail extends LogEntry {
+  payload: PayloadData;
+  /** The payload was cut for display. */
+  truncated: boolean;
+  /** Present only for messages received over MQTT 5. */
+  properties?: MessageProperties | null;
+}
+
 /** A topic's full current state; the update with the newest `latest.seq` wins. */
 export interface TopicUpdate {
   connectionId: ConnectionId;
@@ -193,4 +215,12 @@ export function unsubscribe(
 /** Every topic in the Topic Tree, for starting from scratch. */
 export function topicSnapshot(): Promise<TopicUpdate[]> {
   return invoke("topic_snapshot");
+}
+
+/** One message in full, or null once it has left the History Store. */
+export function messageDetail(
+  connectionId: ConnectionId,
+  seq: number,
+): Promise<MessageDetail | null> {
+  return invoke("message_detail", { connectionId, seq });
 }

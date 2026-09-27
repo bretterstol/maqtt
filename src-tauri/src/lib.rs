@@ -22,7 +22,7 @@ use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
 use profile_store::{KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
-use ui_bridge::{LiveFilter, LogEntry, TopicUpdate};
+use ui_bridge::{LiveFilter, LogEntry, MessageDetail, TopicUpdate};
 
 /// Upper bound for one `query_log` page, so a careless caller can't serialize the whole store.
 const MAX_PAGE: usize = 5_000;
@@ -94,6 +94,17 @@ fn topic_history(
         .iter()
         .map(|m| LogEntry::from(m.as_ref()))
         .collect()
+}
+
+/// One message in full: payload, metadata and MQTT 5 properties.
+#[tauri::command]
+fn message_detail(
+    state: State<'_, AppState>,
+    connection_id: ConnectionId,
+    seq: u64,
+) -> Option<MessageDetail> {
+    let message = state.history.lock().unwrap().get(connection_id, seq)?;
+    Some(MessageDetail::from(message.as_ref()))
 }
 
 /// Every topic in the Topic Tree, for a frontend starting from scratch.
@@ -255,6 +266,7 @@ pub fn run() {
             query_log,
             topic_history,
             topic_snapshot,
+            message_detail,
             list_profiles,
             new_profile,
             save_profile,

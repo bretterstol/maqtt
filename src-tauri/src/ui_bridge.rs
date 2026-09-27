@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tokio::sync::broadcast::error::RecvError;
@@ -97,6 +98,75 @@ impl From<&ReceivedMessage> for LogEntry {
             qos: m.qos,
             retain: m.retain,
             received_at_ms: m.received_at_ms,
+        }
+    }
+}
+
+/// Payloads larger than this are cut for display.
+const MAX_DETAIL_PAYLOAD: usize = 4 * 1024 * 1024;
+
+/// One message in full, for the topic detail panel.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageDetail {
+    #[serde(flatten)]
+    pub entry: LogEntry,
+    pub payload: PayloadData,
+    /// The payload was longer than `MAX_DETAIL_PAYLOAD` and was cut.
+    pub truncated: bool,
+    pub properties: Option<PropertiesView>,
+}
+
+/// Text when the bytes are UTF-8, base64 otherwise.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PayloadData {
+    Text { text: String },
+    Binary { base64: String },
+}
+
+impl PayloadData {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => Self::Text { text: text.into() },
+            // A cut in the middle of a character still reads as text.
+            Err(err) if err.error_len().is_none() && err.valid_up_to() > 0 => Self::Text {
+                text: String::from_utf8_lossy(&bytes[..err.valid_up_to()]).into_owned(),
+            },
+            Err(_) => Self::Binary {
+                base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PropertiesView {
+    pub payload_format_indicator: Option<u8>,
+    pub message_expiry_interval: Option<u32>,
+    pub content_type: Option<String>,
+    pub response_topic: Option<String>,
+    pub correlation_data: Option<PayloadData>,
+    pub user_properties: Vec<(String, String)>,
+}
+
+impl From<&ReceivedMessage> for MessageDetail {
+    fn from(m: &ReceivedMessage) -> Self {
+        let truncated = m.payload.len() > MAX_DETAIL_PAYLOAD;
+        let shown = &m.payload[..m.payload.len().min(MAX_DETAIL_PAYLOAD)];
+        Self {
+            entry: LogEntry::from(m),
+            payload: PayloadData::from_bytes(shown),
+            truncated,
+            properties: m.properties.as_ref().map(|p| PropertiesView {
+                payload_format_indicator: p.payload_format_indicator,
+                message_expiry_interval: p.message_expiry_interval,
+                content_type: p.content_type.clone(),
+                response_topic: p.response_topic.clone(),
+                correlation_data: p.correlation_data.as_deref().map(PayloadData::from_bytes),
+                user_properties: p.user_properties.clone(),
+            }),
         }
     }
 }
@@ -239,6 +309,23 @@ mod tests {
     fn text_at_exact_limit_is_not_marked_truncated() {
         let text = "x".repeat(PREVIEW_CHARS);
         assert_eq!(preview(text.as_bytes()).0, text);
+    }
+
+    #[test]
+    fn detail_payload_is_text_or_base64() {
+        assert!(
+            matches!(PayloadData::from_bytes(b"hi"), PayloadData::Text { text } if text == "hi")
+        );
+        assert!(matches!(
+            PayloadData::from_bytes(&[0xff, 0x00]),
+            PayloadData::Binary { base64 } if base64 == "/wA="
+        ));
+    }
+
+    #[test]
+    fn a_text_payload_cut_mid_character_stays_text() {
+        let cut = &"aå".as_bytes()[..2];
+        assert!(matches!(PayloadData::from_bytes(cut), PayloadData::Text { text } if text == "a"));
     }
 
     #[test]

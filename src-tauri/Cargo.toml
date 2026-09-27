@@ -26,6 +26,7 @@ uuid = { version = "1.26.1", features = ["v4"] }
 rustls = "0.23"
 rustls-native-certs = "0.8"
 tauri-plugin-dialog = "2"
+base64 = "0.23.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

@@ -12,6 +12,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 
+use crate::message::MessageProperties;
 use crate::profile::{Profile, Protocol, TlsSettings};
 
 /// The largest packet MQTT allows. `rumqttc` defaults to 10 KiB and drops the Connection on
@@ -29,6 +30,7 @@ pub enum Incoming {
         payload: Bytes,
         qos: u8,
         retain: bool,
+        properties: Option<MessageProperties>,
     },
     /// A Subscribe request left for the Broker with this packet id, in request order.
     SubscribeSent {
@@ -146,6 +148,7 @@ impl EventLoop {
                         payload: p.payload,
                         qos: p.qos as u8,
                         retain: p.retain,
+                        properties: None,
                     },
                     Event::Incoming(Packet::SubAck(ack)) => Incoming::SubAck {
                         pkid: ack.pkid,
@@ -172,6 +175,7 @@ impl EventLoop {
                         payload: p.payload,
                         qos: p.qos as u8,
                         retain: p.retain,
+                        properties: p.properties.map(Into::into),
                     },
                     Event::Incoming(Packet::SubAck(ack)) => Incoming::SubAck {
                         pkid: ack.pkid,

@@ -57,6 +57,12 @@ body,
   flex-direction: column;
 }
 
+.app__split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .app__stats {
   margin-left: auto;
   color: var(--text-muted);

@@ -286,6 +286,7 @@ async fn run(mut eventloop: mqtt::EventLoop, client: mqtt::Client, cx: Context) 
                 payload,
                 qos,
                 retain,
+                properties,
             }) => {
                 let message = ReceivedMessage {
                     seq: cx.bus.next_seq(),
@@ -297,6 +298,7 @@ async fn run(mut eventloop: mqtt::EventLoop, client: mqtt::Client, cx: Context) 
                     qos,
                     retain,
                     received_at_ms: now_ms(),
+                    properties,
                 };
                 cx.bus.publish(BusEvent::Message(Arc::new(message)));
             }
@@ -540,5 +542,74 @@ mod dev_broker_tests {
             );
             manager.disconnect(&profile.id);
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn mqtt5_publish_properties_reach_the_message_detail() {
+        let topic = format!("maqtt/it/props/{}", std::process::id());
+        let mut profile = Profile::new("props test", "localhost", 21883);
+        profile.subscriptions = vec![Subscription {
+            filter: topic.clone(),
+            qos: 0,
+        }];
+        let bus = Bus::new();
+        let mut rx = bus.subscribe();
+        let statuses = ConnectionStatuses::default();
+        let mut manager = ConnectionManager::default();
+        manager.connect(&profile, None, &bus, &statuses).unwrap();
+        wait_until("subscribed", || {
+            statuses.snapshot().iter().all(|s| {
+                s.subscriptions
+                    .iter()
+                    .all(|sub| matches!(sub.state, SubscriptionState::Active { .. }))
+            })
+        })
+        .await;
+
+        let status = std::process::Command::new("mosquitto_pub")
+            .args([
+                "-V",
+                "5",
+                "-h",
+                "localhost",
+                "-p",
+                "21883",
+                "-t",
+                &topic,
+                "-m",
+                "{}",
+            ])
+            .args(["-D", "publish", "content-type", "application/json"])
+            .args(["-D", "publish", "user-property", "unit", "celsius"])
+            .args(["-D", "publish", "response-topic", "reply/here"])
+            .args(["-D", "publish", "correlation-data", "req-1"])
+            .args(["-D", "publish", "message-expiry-interval", "60"])
+            .status()
+            .expect("mosquitto_pub");
+        assert!(status.success());
+
+        let message = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(BusEvent::Message(m)) = rx.recv().await
+                    && m.topic == topic
+                {
+                    return m;
+                }
+            }
+        })
+        .await
+        .expect("the message arrives");
+
+        let detail =
+            serde_json::to_value(crate::ui_bridge::MessageDetail::from(message.as_ref())).unwrap();
+        let properties = &detail["properties"];
+        assert_eq!(properties["contentType"], "application/json");
+        assert_eq!(properties["responseTopic"], "reply/here");
+        assert_eq!(properties["correlationData"]["text"], "req-1");
+        assert_eq!(properties["userProperties"][0][1], "celsius");
+        assert!(properties["messageExpiryInterval"].as_u64().unwrap() <= 60);
+        assert_eq!(detail["payload"]["text"], "{}");
+        manager.disconnect(&profile.id);
     }
 }

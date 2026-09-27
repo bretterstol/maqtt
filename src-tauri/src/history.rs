@@ -159,6 +159,14 @@ impl HistoryStore {
         }
     }
 
+    /// One message by seq, if it is still in history or is its topic's latest.
+    pub fn get(&self, connection_id: ConnectionId, seq: u64) -> Option<Arc<ReceivedMessage>> {
+        self.connections
+            .get(&connection_id)
+            .and_then(|history| history.messages.get(&seq).cloned())
+            .or_else(|| self.topics.latest_with_seq(connection_id, seq))
+    }
+
     /// The topic's retained history on one Connection, oldest first.
     pub fn topic_history(
         &self,
@@ -272,6 +280,7 @@ mod tests {
             qos: 0,
             retain: false,
             received_at_ms: 0,
+            properties: None,
         })
     }
 
@@ -344,6 +353,22 @@ mod tests {
         s.insert(message(6, 1, "t", ""));
         assert_eq!(seqs(&s.topic_history(ConnectionId(1), "t")), [5, 6]);
         assert_eq!(seqs(&latest(&s, LogFilter::default(), 10).entries), [5, 6]);
+    }
+
+    #[test]
+    fn get_finds_a_message_by_seq_even_after_eviction_if_it_is_the_latest() {
+        let mut s = store(1, 100);
+        s.insert(message(1, 1, "a", "x"));
+        s.insert(message(2, 1, "b", "y"));
+        s.insert(message(3, 1, "a", "z"));
+        assert_eq!(s.get(ConnectionId(1), 2).map(|m| m.seq), Some(2));
+        assert!(s.get(ConnectionId(1), 1).is_none());
+        assert!(s.get(ConnectionId(2), 2).is_none());
+
+        let mut tiny = store(100, 1);
+        tiny.insert(message(1, 1, "a", "x"));
+        tiny.insert(message(2, 1, "b", "y"));
+        assert_eq!(tiny.get(ConnectionId(1), 1).map(|m| m.seq), Some(1));
     }
 
     #[test]

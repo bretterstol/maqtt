@@ -16,6 +16,7 @@ import { ProfileEditor } from "./profiles/ProfileEditor";
 import { ProfileList } from "./profiles/ProfileList";
 import { TopicTreeStore, type TreeNode } from "./topicTree/store";
 import { TopicTree } from "./topicTree/TopicTree";
+import { TopicDetail } from "./topicDetail/TopicDetail";
 import "./App.css";
 
 const LIVE_CAPACITY = 5_000;
@@ -138,13 +139,24 @@ function App() {
             </button>
           </nav>
           {tab === "topics" ? (
-            <TopicTree
-              store={tree}
-              connectionNames={connectionNames}
-              connectionStates={connectionStates}
-              selectedKey={selected?.key ?? null}
-              onSelect={setSelected}
-            />
+            <div className="app__split">
+              <TopicTree
+                store={tree}
+                connectionNames={connectionNames}
+                connectionStates={connectionStates}
+                selectedKey={selected?.key ?? null}
+                onSelect={setSelected}
+              />
+              {selected && (
+                <TopicDetail
+                  // A fresh panel per topic, so its history, pin and rate start over.
+                  key={selected.key}
+                  node={selected}
+                  tree={tree}
+                  connectionName={connectionNames.get(selected.connectionId)}
+                />
+              )}
+            </div>
           ) : (
             <MessageLog
               controller={controller}

@@ -61,6 +61,19 @@ impl TopicIndex {
         }
     }
 
+    /// The latest message of some topic, if it has this seq.
+    pub fn latest_with_seq(
+        &self,
+        connection_id: ConnectionId,
+        seq: u64,
+    ) -> Option<Arc<ReceivedMessage>> {
+        self.connections
+            .get(&connection_id)?
+            .values()
+            .find(|stats| stats.latest.seq == seq)
+            .map(|stats| stats.latest.clone())
+    }
+
     /// Every topic changed since the previous call.
     pub fn take_changed(&mut self) -> Vec<TopicSnapshot<'_>> {
         let changed = std::mem::take(&mut self.changed);
@@ -108,6 +121,7 @@ mod tests {
             qos: 0,
             retain,
             received_at_ms: 0,
+            properties: None,
         })
     }
 

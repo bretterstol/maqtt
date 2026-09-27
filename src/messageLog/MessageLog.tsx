@@ -5,8 +5,11 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type KeyboardEvent,
+  type WheelEvent,
 } from "react";
 import type { ConnectionId, LogEntry } from "../bridge";
+import { formatSize, formatTime } from "../format";
 import type { MessageLogController } from "./controller";
 import "./MessageLog.css";
 
@@ -48,6 +51,18 @@ export function MessageLog({ controller, connectionNames }: Props) {
     }
   }, [version, store, virtualizer]);
 
+  // While following, the view is re-pinned to the bottom on every batch, which can undo a
+  // scroll before its `scroll` event is handled. So pause on what the user does, not only on
+  // where the scroll position ends up.
+  const onWheel = (e: WheelEvent) => {
+    if (e.deltaY < 0) store.pause();
+  };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (["ArrowUp", "PageUp", "Home"].includes(e.key)) store.pause();
+  };
+  // Also lets the reader select text without it moving away.
+  const onMouseDown = () => store.pause();
+
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -73,7 +88,15 @@ export function MessageLog({ controller, connectionNames }: Props) {
         <span className="message-log__num">Size</span>
         <span>Flags</span>
       </div>
-      <div className="message-log__scroll" ref={scrollRef} onScroll={onScroll}>
+      <div
+        className="message-log__scroll"
+        ref={scrollRef}
+        tabIndex={0}
+        onScroll={onScroll}
+        onWheel={onWheel}
+        onKeyDown={onKeyDown}
+        onMouseDown={onMouseDown}
+      >
         <div
           style={{ height: virtualizer.getTotalSize(), position: "relative" }}
         >
@@ -173,16 +196,4 @@ function Row({
       </span>
     </div>
   );
-}
-
-function formatTime(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }

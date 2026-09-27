@@ -78,6 +78,11 @@ async fn main() -> Result<()> {
     tokio::spawn(sensors(client.clone(), args.clone(), sent.clone()));
     tokio::spawn(status_flips(client.clone(), args.clone(), sent.clone()));
     tokio::spawn(raw_binary(client.clone(), args.clone(), sent.clone()));
+    tokio::spawn(mqtt5_properties(
+        connect_v5(&args),
+        args.clone(),
+        sent.clone(),
+    ));
     if args.burst_every > 0 {
         tokio::spawn(bursts(client.clone(), args.clone(), sent.clone()));
     }
@@ -118,6 +123,29 @@ fn connect(args: &Args) -> AsyncClient {
                     eprintln!("trafficgen: connection error: {err}, retrying in 2s");
                     sleep(Duration::from_secs(2)).await;
                 }
+            }
+        }
+    });
+    client
+}
+
+/// A second, MQTT 5 client, for messages that carry properties.
+fn connect_v5(args: &Args) -> rumqttc::v5::AsyncClient {
+    let mut options = rumqttc::v5::MqttOptions::new(
+        format!("maqtt-trafficgen-v5-{}", std::process::id()),
+        &args.host,
+        args.port,
+    );
+    options.set_keep_alive(Duration::from_secs(10));
+    if let (Some(user), Some(pass)) = (&args.username, &args.password) {
+        options.set_credentials(user, pass);
+    }
+    let (client, mut eventloop) = rumqttc::v5::AsyncClient::new(options, 64);
+    tokio::spawn(async move {
+        loop {
+            if let Err(err) = eventloop.poll().await {
+                eprintln!("trafficgen: MQTT 5 connection error: {err}, retrying in 2s");
+                sleep(Duration::from_secs(2)).await;
             }
         }
     });
@@ -261,6 +289,55 @@ async fn raw_binary(client: AsyncClient, args: Args, sent: Arc<AtomicU64>) -> Re
         let topic = format!("{}/raw/modem-{}", args.prefix, rng.random_range(1..=3));
         client
             .publish(topic, QoS::AtMostOnce, false, payload)
+            .await?;
+        sent.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// A thermostat speaking MQTT 5, with every kind of publish property set.
+async fn mqtt5_properties(
+    client: rumqttc::v5::AsyncClient,
+    args: Args,
+    sent: Arc<AtomicU64>,
+) -> Result<()> {
+    use rumqttc::v5::mqttbytes::QoS as QoS5;
+    use rumqttc::v5::mqttbytes::v5::PublishProperties;
+
+    let mut rng = StdRng::seed_from_u64(args.seed ^ 0x5555);
+    let topic = format!("{}/v5/thermostat", args.prefix);
+    let mut request = 0u64;
+    let mut setpoint = 21.0f64;
+    loop {
+        sleep(Duration::from_secs(2)).await;
+        request += 1;
+        if rng.random_bool(0.2) {
+            setpoint += if rng.random_bool(0.5) { 0.5 } else { -0.5 };
+        }
+        let payload = json!({
+            "setpoint": setpoint,
+            "mode": if setpoint > 21.0 { "heat" } else { "eco" },
+            "request": request,
+        });
+        let properties = PublishProperties {
+            payload_format_indicator: Some(1),
+            message_expiry_interval: Some(60),
+            content_type: Some("application/json".into()),
+            response_topic: Some(format!("{topic}/reply")),
+            correlation_data: Some(format!("req-{request}").into_bytes().into()),
+            user_properties: vec![
+                ("source".into(), "trafficgen".into()),
+                ("unit".into(), "celsius".into()),
+            ],
+            ..PublishProperties::default()
+        };
+        client
+            .publish_with_properties(
+                &topic,
+                QoS5::AtLeastOnce,
+                false,
+                payload.to_string(),
+                properties,
+            )
             .await?;
         sent.fetch_add(1, Ordering::Relaxed);
     }
