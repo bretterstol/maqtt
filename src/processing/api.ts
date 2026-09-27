@@ -3,6 +3,9 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+/** The pseudo-Connection Derived Topics arrive on (`PIPELINES` in runner.rs). */
+export const PIPELINES_CONNECTION = 0;
+
 /** A problem in a Pipeline's source; `start` and `end` are UTF-8 byte offsets. */
 export interface Diagnostic {
   message: string;

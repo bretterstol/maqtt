@@ -4,7 +4,8 @@
 //! counts them, instead of holding anyone else up.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -22,6 +23,8 @@ use crate::profile::ProfileId;
 pub const PIPELINES: ConnectionId = ConnectionId(0);
 const TICK: Duration = Duration::from_millis(50);
 const INSPECTED_KEPT: usize = 50;
+/// How long stopping waits for a Pipeline's thread before giving up on it.
+const STOP_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,7 +54,11 @@ pub struct Inspected {
 
 struct Handle {
     stop: Arc<Notify>,
+    /// Set on stop; the thread sends nothing once it's set.
+    halted: Arc<AtomicBool>,
     status: Arc<Mutex<PipelineStatus>>,
+    /// Disconnects when the thread ends.
+    done: mpsc::Receiver<()>,
 }
 
 pub struct Runner {
@@ -86,8 +93,12 @@ impl Runner {
             running: true,
             ..PipelineStatus::default()
         }));
+        let halted = Arc::new(AtomicBool::new(false));
+        let (done_tx, done) = mpsc::channel();
         let job = Job {
             name: name.to_string(),
+            halted: halted.clone(),
+            _done: done_tx,
             pipeline,
             bus: self.bus.clone(),
             names: self
@@ -104,19 +115,38 @@ impl Runner {
             .name(format!("pipeline {name}"))
             .spawn(move || job.run())
             .map_err(|e| format!("Couldn't start {name}: {e}"))?;
-        self.running
-            .lock()
-            .unwrap()
-            .insert(name.to_string(), Handle { stop, status });
+        self.running.lock().unwrap().insert(
+            name.to_string(),
+            Handle {
+                stop,
+                halted,
+                status,
+                done,
+            },
+        );
         self.stopped.lock().unwrap().remove(name);
         Ok(())
     }
 
+    /// Stops a Pipeline: nothing it sends arrives after this. Waits briefly for its thread; one
+    /// stuck in an endless expression is left to finish on its own, sending nothing.
     pub fn stop(&self, name: &str) {
-        if let Some(handle) = self.running.lock().unwrap().remove(name) {
+        let handle = self.running.lock().unwrap().remove(name);
+        if let Some(handle) = handle {
+            handle.halted.store(true, Ordering::SeqCst);
             handle.stop.notify_one();
+            let stuck = matches!(
+                handle.done.recv_timeout(STOP_WAIT),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
             let mut status = handle.status.lock().unwrap().clone();
             status.running = false;
+            if stuck {
+                status.last_error = Some(format!(
+                    "It didn't stop within {} s, most likely stuck in an expression that never ends. It sends nothing more.",
+                    STOP_WAIT.as_secs()
+                ));
+            }
             self.stopped
                 .lock()
                 .unwrap()
@@ -170,7 +200,10 @@ struct Job {
     names: HashMap<ConnectionId, String>,
     rx: tokio::sync::broadcast::Receiver<BusEvent>,
     stop: Arc<Notify>,
+    halted: Arc<AtomicBool>,
     status: Arc<Mutex<PipelineStatus>>,
+    /// Dropped when the thread ends, which tells `stop` it has.
+    _done: mpsc::Sender<()>,
 }
 
 impl Job {
@@ -224,12 +257,19 @@ impl Job {
                 _ = tick.tick() => pipeline.tick(Instant::now(), &mut effects),
             }
             self.handle(&mut effects);
+            if self.halted.load(Ordering::SeqCst) {
+                break;
+            }
         }
         self.status.lock().unwrap().running = false;
     }
 
     fn handle(&self, effects: &mut Vec<Effect>) {
         if effects.is_empty() {
+            return;
+        }
+        if self.halted.load(Ordering::SeqCst) {
+            effects.clear();
             return;
         }
         let mut status = self.status.lock().unwrap();
@@ -391,5 +431,32 @@ mod tests {
             runner.status("slow").unwrap().missed > 0
         });
         runner.stop("slow");
+    }
+    #[test]
+    fn a_stuck_pipeline_stops_quickly_and_sends_nothing_more() {
+        let (bus, runner) = setup();
+        let mut rx = bus.subscribe();
+        runner
+            .start(
+                "stuck",
+                parse(r#"from all |> map last(range(1; infinite)) |> to app "x""#).unwrap(),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bus.publish(message(&bus, 1, "t", "1"));
+        std::thread::sleep(Duration::from_millis(100));
+
+        let asked = Instant::now();
+        runner.stop("stuck");
+        assert!(asked.elapsed() < STOP_WAIT + Duration::from_millis(500));
+        let status = runner.status("stuck").unwrap();
+        assert!(!status.running);
+        assert!(status.last_error.unwrap().contains("didn't stop"));
+        while let Ok(event) = rx.try_recv() {
+            assert!(
+                !matches!(event, BusEvent::Message(m) if m.connection_id == PIPELINES),
+                "nothing from the stuck Pipeline"
+            );
+        }
     }
 }

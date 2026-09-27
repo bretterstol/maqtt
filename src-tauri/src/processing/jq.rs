@@ -96,13 +96,22 @@ pub fn compile(code: &str) -> Result<Filter, CompileError> {
 /// Runs a compiled expression on `input` with the message variables; every output, or the first error.
 pub fn run(filter: &Filter, input: Val, vars: &[Val; 8]) -> Result<Vec<Val>, String> {
     let ctx = Ctx::<data::JustLut<Val>>::new(&filter.lut, Vars::new(vars.iter().cloned()));
-    filter
+    let results: Vec<Val> = filter
         .id
         .run((ctx, input))
         .map(unwrap_valr)
         .map(|r| r.map_err(|err| err.to_string()))
-        .collect()
+        // One past the limit is enough to know it's over, and stops an endless stream.
+        .take(MAX_RESULTS + 1)
+        .collect::<Result<_, _>>()?;
+    if results.len() > MAX_RESULTS {
+        return Err(format!("it gave more than {MAX_RESULTS} results"));
+    }
+    Ok(results)
 }
+
+/// The most results one expression may give for one value.
+pub const MAX_RESULTS: usize = 10_000;
 
 #[cfg(test)]
 mod tests {
@@ -163,5 +172,12 @@ mod tests {
         );
         let bad = compile(".a + 1").unwrap();
         assert!(run(&bad, json(r#"{"a":"x"}"#), &vars("t")).is_err());
+    }
+
+    #[test]
+    fn an_endless_stream_stops_at_the_limit() {
+        let endless = compile("range(1; infinite)").unwrap();
+        let err = run(&endless, Val::Null, &vars("a")).unwrap_err();
+        assert!(err.contains("more than 10000 results"), "{err}");
     }
 }

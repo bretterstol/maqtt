@@ -6,6 +6,8 @@ interface Props {
   status: PipelineStatus;
   /** Null while the draft has problems or hasn't been previewed yet. */
   preview: Preview | null;
+  /** Why the latest Preview couldn't run, if it couldn't. */
+  previewError: string | null;
   view: OutputView;
   onView: (view: OutputView) => void;
 }
@@ -17,7 +19,13 @@ function clock(atMs: number): string {
 }
 
 /** What a Pipeline does: a Preview of the draft on recent messages, or the running Pipeline. */
-export function OutputPanel({ status, preview, view, onView }: Props) {
+export function OutputPanel({
+  status,
+  preview,
+  previewError,
+  view,
+  onView,
+}: Props) {
   return (
     <section className="pipeline-output" aria-label="Pipeline output">
       <div className="pipeline-output__bar">
@@ -44,7 +52,7 @@ export function OutputPanel({ status, preview, view, onView }: Props) {
         )}
       </div>
       {view === "preview" ? (
-        <PreviewOutput preview={preview} />
+        <PreviewOutput preview={preview} error={previewError} />
       ) : (
         <LiveOutput status={status} />
       )}
@@ -68,7 +76,14 @@ function PreviewCounts({ preview }: { preview: Preview | null }) {
   );
 }
 
-function PreviewOutput({ preview }: { preview: Preview | null }) {
+function PreviewOutput({
+  preview,
+  error,
+}: {
+  preview: Preview | null;
+  error: string | null;
+}) {
+  if (error) return <p className="pipeline-output__error">{error}</p>;
   if (!preview) {
     return (
       <p className="pipeline-output__hint">

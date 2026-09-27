@@ -15,17 +15,13 @@ use crate::message::{ConnectionId, ReceivedMessage};
 /// How many recent matching messages a Preview runs over.
 pub const SAMPLE: usize = 100;
 /// How far back to look per Connection for them.
-const SCAN: usize = 50_000;
+const SCAN: usize = 20_000;
 /// How many results and inspected values to send back.
 const SHOWN: usize = 50;
 
-/// Hands out recent messages (oldest first): up to `limit` that the filter accepts, looking at
-/// no more than `scan` per Connection. `lib.rs` backs it with the History Store.
-pub type RecentMessages = Arc<
-    dyn Fn(&dyn Fn(&ReceivedMessage) -> bool, usize, usize) -> Vec<Arc<ReceivedMessage>>
-        + Send
-        + Sync,
->;
+/// Hands out the newest `n` messages of each Connection. `lib.rs` backs it with the History
+/// Store.
+pub type RecentMessages = Arc<dyn Fn(usize) -> Vec<Arc<ReceivedMessage>> + Send + Sync>;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,11 +86,13 @@ pub fn preview(
     };
     let name = |id: ConnectionId| names.get(&id).map_or("", String::as_str);
 
-    let sample = recent(
-        &|m| m.connection_id != PIPELINES && runtime.wants(name(m.connection_id), &m.topic),
-        SAMPLE,
-        SCAN,
-    );
+    let mut sample: Vec<_> = recent(SCAN)
+        .into_iter()
+        .filter(|m| m.connection_id != PIPELINES && runtime.wants(name(m.connection_id), &m.topic))
+        .collect();
+    sample.sort_by_key(|m| m.seq);
+    let excess = sample.len().saturating_sub(SAMPLE);
+    sample.drain(..excess);
     preview.messages = sample.len();
     preview.payload = sample
         .last()
@@ -170,12 +168,7 @@ mod tests {
     }
 
     fn history(messages: Vec<Arc<ReceivedMessage>>) -> RecentMessages {
-        Arc::new(move |keep, limit, _scan| {
-            let mut found: Vec<_> = messages.iter().filter(|m| keep(m)).cloned().collect();
-            let excess = found.len().saturating_sub(limit);
-            found.drain(..excess);
-            found
-        })
+        Arc::new(move |_| messages.clone())
     }
 
     fn names() -> HashMap<ConnectionId, String> {

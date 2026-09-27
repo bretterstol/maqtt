@@ -227,33 +227,23 @@ impl HistoryStore {
             .collect()
     }
 
-    /// Up to `limit` of the newest messages that `keep` accepts, oldest first, looking at no more
-    /// than `scan` messages per Connection.
-    pub fn recent(
-        &self,
-        keep: &dyn Fn(&ReceivedMessage) -> bool,
-        limit: usize,
-        scan: usize,
-    ) -> Vec<Arc<ReceivedMessage>> {
-        // The newest `limit` overall are among the newest `limit` of each Connection.
-        let mut found: Vec<Arc<ReceivedMessage>> = self
-            .connections
+    /// The newest `per_connection` messages of each Connection, oldest first within each. Cheap
+    /// (it only clones pointers), so callers can do their filtering without holding the lock.
+    pub fn newest(&self, per_connection: usize) -> Vec<Arc<ReceivedMessage>> {
+        self.connections
             .values()
             .flat_map(|history| {
-                history
+                let mut newest: Vec<_> = history
                     .messages
                     .values()
                     .rev()
-                    .take(scan)
-                    .filter(|m| keep(m))
-                    .take(limit)
+                    .take(per_connection)
                     .cloned()
+                    .collect();
+                newest.reverse();
+                newest
             })
-            .collect();
-        found.sort_by_key(|m| std::cmp::Reverse(m.seq));
-        found.truncate(limit);
-        found.reverse();
-        found
+            .collect()
     }
 
     /// A page of the Message Log across all Connections, messages and markers merged by seq.
@@ -584,23 +574,13 @@ mod tests {
     }
 
     #[test]
-    fn recent_takes_the_newest_accepted_messages_across_connections() {
+    fn newest_takes_the_latest_of_each_connection() {
         let mut store = HistoryStore::new(HistoryLimits::default());
         for seq in 1..=10 {
-            let topic = if seq % 2 == 0 { "even" } else { "odd" };
-            store.insert(message(seq, (seq % 3) as u32, topic, ""));
+            store.insert(message(seq, (seq % 3) as u32, "t", ""));
         }
-        let seqs =
-            |found: Vec<Arc<ReceivedMessage>>| found.iter().map(|m| m.seq).collect::<Vec<_>>();
-        assert_eq!(
-            seqs(store.recent(&|m| m.topic == "even", 3, 100)),
-            vec![6, 8, 10]
-        );
-        assert_eq!(
-            seqs(store.recent(&|_| true, 100, 100)),
-            (1..=10).collect::<Vec<_>>()
-        );
-        // Each Connection looks at only its newest message.
-        assert_eq!(seqs(store.recent(&|_| true, 100, 1)), vec![8, 9, 10]);
+        let mut seqs: Vec<u64> = store.newest(2).iter().map(|m| m.seq).collect();
+        seqs.sort();
+        assert_eq!(seqs, vec![5, 6, 7, 8, 9, 10]);
     }
 }

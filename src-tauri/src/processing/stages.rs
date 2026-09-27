@@ -2,7 +2,6 @@
 //! whatever reaches a Sink, an `inspect` or an error becomes an [`Effect`] for the runner.
 //! No threads or clocks here; the caller passes the time, which keeps it easy to test.
 
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,6 +9,7 @@ use std::time::{Duration, Instant};
 use jaq_json::Val;
 
 use super::jq;
+use super::keyed::Keyed;
 use super::lang::{Connections, Pipeline, Stage};
 use crate::message::ReceivedMessage;
 use crate::profile::topic_matches;
@@ -98,12 +98,12 @@ enum Running {
     Map(jq::Filter),
     Changes {
         key: Option<jq::Filter>,
-        last: HashMap<String, Val>,
+        last: Keyed<Val>,
     },
     Throttle {
         interval: Duration,
         key: Option<jq::Filter>,
-        keys: HashMap<String, Throttled>,
+        keys: Keyed<Throttled>,
     },
     Inspect(Option<String>),
     ToApp(jq::Filter),
@@ -138,12 +138,12 @@ impl Runtime {
                     Stage::Map(code) => Running::Map(compile(code)?),
                     Stage::Changes(key) => Running::Changes {
                         key: key.as_deref().map(compile).transpose()?,
-                        last: HashMap::new(),
+                        last: Keyed::default(),
                     },
                     Stage::Throttle(interval, key) => Running::Throttle {
                         interval: *interval,
                         key: key.as_deref().map(compile).transpose()?,
-                        keys: HashMap::new(),
+                        keys: Keyed::default(),
                     },
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
@@ -308,7 +308,7 @@ fn apply(
             let Some(key) = state_key(key.as_ref(), &item, "throttle", out) else {
                 return;
             };
-            let state = keys.entry(key).or_insert(Throttled {
+            let state = keys.entry(key, || Throttled {
                 open_at: now,
                 pending: None,
             });
@@ -403,15 +403,49 @@ fn derived_topic(topic: &str) -> Result<String, String> {
     Ok(topic.to_string())
 }
 
+/// Deeper JSON than this is taken as text: parsing (and later printing or dropping) nests once
+/// per level, and a payload deep enough would overflow the stack and take the app down.
+const MAX_JSON_DEPTH: usize = 256;
+
 /// JSON when the payload is JSON, text when it's text, bytes otherwise.
 pub fn payload_value(payload: &[u8]) -> Val {
-    if let Ok(value) = jaq_json::read::parse_single(payload) {
+    if nesting_at_most(payload, MAX_JSON_DEPTH)
+        && let Ok(value) = jaq_json::read::parse_single(payload)
+    {
         return value;
     }
     match std::str::from_utf8(payload) {
         Ok(text) => Val::from(text.to_string()),
         Err(_) => Val::byte_str(bytes::Bytes::copy_from_slice(payload)),
     }
+}
+
+/// Whether brackets in `json` (outside strings) nest no deeper than `max`.
+fn nesting_at_most(json: &[u8], max: usize) -> bool {
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for &b in json {
+        if in_string {
+            match b {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > max {
+                    return false;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Strings are sent as their text; everything else as JSON.
@@ -737,5 +771,17 @@ mod tests {
         rt.tick(start + Duration::from_secs(2), &mut out);
         assert_eq!(rt.trace()[0].passed, 2);
         assert_eq!(rt.trace()[1].passed, 2);
+    }
+    #[test]
+    fn a_deeply_nested_payload_is_text_not_a_crash() {
+        let deep = "[".repeat(200_000) + &"]".repeat(200_000);
+        let value = payload_value(deep.as_bytes());
+        assert!(matches!(value, Val::TStr(_)));
+        assert!(nesting_at_most(br#"{"a": [1, {"b": "[[[[["}]}"#, 3));
+        assert!(!nesting_at_most(b"[[[[]]]]", 3));
+        assert!(
+            nesting_at_most(br#""\"[[[[""#, 1),
+            "escaped quotes stay in the string"
+        );
     }
 }

@@ -5,6 +5,7 @@
 //! commands below, which `lib.rs` registers.
 
 pub mod jq;
+pub mod keyed;
 pub mod lang;
 pub mod preview;
 #[cfg(test)]
@@ -14,6 +15,9 @@ pub mod stages;
 pub mod store;
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::State;
@@ -30,6 +34,9 @@ pub struct Processing {
     files: PipelineFiles,
     statuses: ConnectionStatuses,
     recent: RecentMessages,
+    /// Set while a Preview runs; one at a time, so one stuck on an endless expression can't
+    /// pile up more.
+    previewing: Arc<AtomicBool>,
 }
 
 impl Processing {
@@ -44,6 +51,7 @@ impl Processing {
             files: PipelineFiles::new(dir),
             statuses,
             recent,
+            previewing: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -147,19 +155,53 @@ pub fn stop_pipeline(state: State<'_, Processing>, name: String) {
 }
 
 /// Where the `.pipe` files live, for showing it to the user.
-/// Runs a draft over recent messages without starting it; see [`preview::preview`].
+/// Clears a busy flag when dropped.
+struct Busy(Arc<AtomicBool>);
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// How long a Preview may take before it's given up on.
+const PREVIEW_LIMIT: Duration = Duration::from_secs(3);
+
+/// Runs a draft over recent messages without starting it; see [`preview::preview`]. It runs on
+/// its own thread, so an expression that never ends can't hold up the app.
 #[tauri::command]
 pub async fn preview_pipeline(
     state: State<'_, Processing>,
     source: String,
 ) -> Result<Preview, String> {
+    if state.previewing.swap(true, Ordering::SeqCst) {
+        return Err("The previous Preview is still busy, most likely on an expression that never ends. Change it; Preview picks up again once that one gives up.".into());
+    }
     let names = state
         .statuses
         .snapshot()
         .into_iter()
         .map(|s| (s.connection_id, s.name))
         .collect();
-    Ok(preview::preview(&source, &names, &state.recent))
+    let recent = state.recent.clone();
+    let previewing = state.previewing.clone();
+    let (done, result) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("pipeline preview".into())
+        .spawn(move || {
+            // Cleared however the thread ends, even by a panic.
+            let _busy = Busy(previewing);
+            let _ = done.send(preview::preview(&source, &names, &recent));
+        })
+        .map_err(|e| format!("Couldn't run the Preview: {e}"))?;
+    match tokio::time::timeout(PREVIEW_LIMIT, result).await {
+        Ok(Ok(preview)) => Ok(preview),
+        Ok(Err(_)) => Err("The Preview stopped unexpectedly".into()),
+        Err(_) => Err(format!(
+            "The Preview didn't finish within {} s: an expression in it may never end",
+            PREVIEW_LIMIT.as_secs()
+        )),
+    }
 }
 
 #[tauri::command]

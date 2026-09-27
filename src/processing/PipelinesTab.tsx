@@ -80,6 +80,10 @@ export default function PipelinesTab() {
     preview: Preview;
     notes: StageNote[];
   } | null>(null);
+  const [previewError, setPreviewError] = useState<{
+    name: string;
+    message: string;
+  } | null>(null);
   // Preview or live output; unset follows whether the Pipeline runs.
   const [outputView, setOutputView] = useState<OutputView | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -152,15 +156,16 @@ export default function PipelinesTab() {
     const run = () =>
       void previewPipeline(text).then(
         (result) => {
-          if (!stale)
-            setPreviewed({
-              name,
-              preview: result,
-              notes: stageNotes(text, result),
-            });
+          if (stale) return;
+          setPreviewError(null);
+          setPreviewed({
+            name,
+            preview: result,
+            notes: stageNotes(text, result),
+          });
         },
         (error) => {
-          if (!stale) toast(`Preview failed: ${String(error)}`, true);
+          if (!stale) setPreviewError({ name, message: String(error) });
         },
       );
     let every: ReturnType<typeof setInterval> | undefined;
@@ -438,6 +443,9 @@ export default function PipelinesTab() {
           <OutputPanel
             status={current.status}
             preview={problems.length > 0 ? null : (preview?.preview ?? null)}
+            previewError={
+              previewError?.name === current.name ? previewError.message : null
+            }
             view={outputView ?? (current.status.running ? "live" : "preview")}
             onView={setOutputView}
           />

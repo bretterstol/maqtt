@@ -343,6 +343,51 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
     }
 }
 
+/// The first jq construct in `text` that can recurse without end, which would overflow the
+/// stack and abort the app: `def`, and `recurse`, `repeat`, `while` and `until` with arguments.
+/// Plain `recurse` (into the data) is fine. Returns its offset and name.
+fn endless_construct(text: &str) -> Option<(usize, &'static str)> {
+    const WITH_ARGUMENTS: [&str; 4] = ["recurse", "repeat", "while", "until"];
+    let mut found = None;
+    let mut modes = vec![Mode::Code { depth: 0 }];
+    let mut iter = text.char_indices().peekable();
+    let mut previous = ' ';
+    while let Some((i, c)) = iter.next() {
+        let top = *modes.last().unwrap();
+        let word_start = top != Mode::Str
+            && found.is_none()
+            && c.is_ascii_alphabetic()
+            && !(previous.is_alphanumeric() || matches!(previous, '_' | '$' | '.'));
+        if word_start {
+            let rest = &text[i..];
+            let len = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(rest.len());
+            let after = rest[len..].trim_start();
+            let word = &rest[..len];
+            if word == "def" && !after.starts_with(':') {
+                found = Some((i, "def"));
+            } else if let Some(name) = WITH_ARGUMENTS.iter().find(|&&w| w == word)
+                && after.starts_with('(')
+            {
+                found = Some((i, *name));
+            }
+        }
+        previous = c;
+        if top == Mode::Str && c == '\\' {
+            iter.next();
+            continue;
+        }
+        let mut chars = iter.clone().map(|(_, c)| c).peekable();
+        let before = modes.len();
+        step(&mut modes, c, &mut chars);
+        if top == Mode::Str && c == '{' && modes.len() == before {
+            iter.next();
+        }
+    }
+    found
+}
+
 /// An optional `by <key>` after a Stage: `Some(None)` when absent, `None` when it's wrong.
 fn key_clause(
     code: &str,
@@ -391,6 +436,17 @@ fn expression(code: &str, arg: Span, problems: &mut Problems, stage: &str) -> Op
             start,
             format!("`{stage}` needs an expression"),
         );
+        return None;
+    }
+    if let Some((at, word)) = endless_construct(text) {
+        let message = if word == "def" {
+            "Defining functions with `def` isn't available in Pipelines: one that calls itself without end would take måqtt down with it".to_string()
+        } else {
+            format!(
+                "`{word}(…)` isn't available in Pipelines: it can loop without end, which would take måqtt down with it"
+            )
+        };
+        problems.at(start + at, start + at + word.len(), message);
         return None;
     }
     let (jq_code, original_offsets) = to_jq(text);
@@ -523,7 +579,11 @@ fn step(
         (Mode::Fill { depth: 0 }, '}') => {
             modes.pop();
         }
-        (Mode::Fill { depth }, ')' | ']' | '}') => *top = Mode::Fill { depth: depth - 1 },
+        (Mode::Fill { depth }, ')' | ']' | '}') => {
+            *top = Mode::Fill {
+                depth: depth.saturating_sub(1),
+            }
+        }
         (Mode::Str, '"') => {
             modes.pop();
         }
@@ -836,5 +896,34 @@ from "Dev Broker"
         assert!(text[1].ends_with("map .a"), "{text:?}");
         assert!(text[2].ends_with("inspect \"x\""), "{text:?}");
         assert_eq!(ends.len(), 3);
+    }
+    #[test]
+    fn constructs_that_can_recurse_forever_are_refused() {
+        for source in [
+            "from all |> map (def f: 1 + f; f)",
+            "from all |> map [recurse(. + 1)]",
+            "from all |> filter repeat(.) | . > 1",
+            "from all |> map [.[] | while(. < 10; . + 1)]",
+            "from all |> map until(. > 100; . * 2)",
+            r#"from all |> to app "x/{recurse(.a) | .b}""#,
+        ] {
+            let (_, _, message) = first_problem(source);
+            assert!(
+                message.contains("isn't available in Pipelines"),
+                "{source}: {message}"
+            );
+        }
+        // Plain recurse, fields and keys with those names, and strings are fine.
+        stages(r#"from all |> map [recurse | numbers] |> map { def: .while, until: "repeat(" }"#);
+    }
+
+    #[test]
+    fn an_unmatched_bracket_in_a_string_fill_is_a_problem_not_a_panic() {
+        for source in [
+            r#"from all |> map "{)}""#,
+            r#"from all |> map "{.tags(0]}""#,
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
     }
 }

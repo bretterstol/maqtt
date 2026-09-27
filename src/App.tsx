@@ -33,6 +33,7 @@ import { TopicTreeStore, type TreeNode } from "./topicTree/store";
 import { savedExpandMode } from "./topicTree/expandPreference";
 import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
+import { PIPELINES_CONNECTION } from "./processing/api";
 import "./App.css";
 
 // Pipelines live in their own folder and load only when their tab opens (ADR 0004).
@@ -127,7 +128,10 @@ function App() {
     [statuses],
   );
 
+  // Whether a topic's Connection can publish: connected, and a real Broker rather than the
+  // Pipelines pseudo-Connection that Derived Topics come from.
   const isOnline = (node: TreeNode) =>
+    node.connectionId !== PIPELINES_CONNECTION &&
     statuses.get(node.connectionId)?.state.kind === "connected";
 
   const publishTo = (node: TreeNode) => {

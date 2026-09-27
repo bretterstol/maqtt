@@ -415,7 +415,7 @@ pub fn run() {
     let (live_filter, _) = watch::channel(LiveFilter::default());
     let recent_messages: processing::preview::RecentMessages = {
         let history = history.clone();
-        Arc::new(move |keep, limit, scan| history.lock().unwrap().recent(keep, limit, scan))
+        Arc::new(move |per_connection| history.lock().unwrap().newest(per_connection))
     };
 
     tauri::Builder::default()
