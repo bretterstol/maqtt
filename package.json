@@ -12,7 +12,7 @@
     "format": "prettier --write . && cargo fmt --all",
     "dev:env": "dev/env.sh up",
     "test": "vitest run && cargo test --workspace",
-    "test:broker": "cargo test -p maqtt -- --ignored"
+    "test:broker": "cargo test -p maqtt -- --ignored --test-threads=1"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",

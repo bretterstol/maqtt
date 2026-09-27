@@ -1,4 +1,4 @@
-import type { Batch, LogEntry, LogPage } from "../bridge";
+import type { Batch, LogPage, LogRow } from "../bridge";
 
 /**
  * What the Message Log view shows: a contiguous, seq-ordered slice of the backend's History
@@ -9,7 +9,7 @@ import type { Batch, LogEntry, LogPage } from "../bridge";
  * under the reader: live entries are only counted, and older pages can be prepended.
  */
 export class MessageLogStore {
-  private entries: LogEntry[] = [];
+  private entries: LogRow[] = [];
   private version = 0;
   private readonly listeners = new Set<() => void>();
   private scrollAdjustment = 0;
@@ -36,7 +36,7 @@ export class MessageLogStore {
   }
 
   /** The entry at `index`, where 0 is the oldest one held. */
-  at(index: number): LogEntry | undefined {
+  at(index: number): LogRow | undefined {
     return this.entries[index];
   }
 
@@ -119,7 +119,7 @@ export class MessageLogStore {
 
   getVersion = (): number => this.version;
 
-  private appendLive(entries: LogEntry[]): void {
+  private appendLive(entries: LogRow[]): void {
     let newest = this.entries.at(-1)?.seq ?? 0;
     for (const entry of entries) {
       if (entry.seq > newest) {

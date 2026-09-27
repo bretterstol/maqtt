@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
 use crate::connection::ConnectionStatus;
-use crate::message::ReceivedMessage;
+use crate::message::{ConnectionMarker, ReceivedMessage};
 
 /// Enough headroom to absorb a few seconds of heavy traffic before a slow consumer lags.
 const CAPACITY: usize = 65_536;
@@ -15,6 +15,7 @@ const CAPACITY: usize = 65_536;
 #[derive(Debug, Clone)]
 pub enum BusEvent {
     Message(Arc<ReceivedMessage>),
+    Marker(Arc<ConnectionMarker>),
     ConnectionState(ConnectionStatus),
 }
 

@@ -11,7 +11,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::bus::{Bus, BusEvent};
 use crate::connection::ConnectionState;
-use crate::message::{ConnectionId, ReceivedMessage};
+use crate::message::{ConnectionId, ConnectionMarker, ReceivedMessage};
 use crate::topics::TopicIndex;
 
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +29,25 @@ impl Default for HistoryLimits {
     }
 }
 
+/// One row of the Message Log: a message, or a marker for a change in a Connection's link.
+#[derive(Debug, Clone)]
+pub enum LogItem {
+    Message(Arc<ReceivedMessage>),
+    Marker(Arc<ConnectionMarker>),
+}
+
+impl LogItem {
+    pub fn seq(&self) -> u64 {
+        match self {
+            LogItem::Message(m) => m.seq,
+            LogItem::Marker(m) => m.seq,
+        }
+    }
+}
+
+/// Markers kept per Connection; they are rare, so this is plenty.
+const MAX_MARKERS: usize = 1_000;
+
 /// Which messages the Message Log shows.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +58,16 @@ pub struct LogFilter {
 }
 
 impl LogFilter {
+    /// Markers follow the Connection filter only: they explain gaps whatever the text filter.
+    pub fn matches_item(&self, item: &LogItem) -> bool {
+        match item {
+            LogItem::Message(message) => self.matches(message),
+            LogItem::Marker(marker) => self
+                .connection_id
+                .is_none_or(|id| id == marker.connection_id),
+        }
+    }
+
     pub fn matches(&self, message: &ReceivedMessage) -> bool {
         if self
             .connection_id
@@ -105,6 +134,7 @@ struct ConnectionHistory {
     messages: BTreeMap<u64, Arc<ReceivedMessage>>,
     /// Each topic's messages by seq, oldest first.
     topics: HashMap<String, VecDeque<u64>>,
+    markers: BTreeMap<u64, Arc<ConnectionMarker>>,
 }
 
 impl HistoryStore {
@@ -159,6 +189,18 @@ impl HistoryStore {
         }
     }
 
+    pub fn insert_marker(&mut self, marker: Arc<ConnectionMarker>) {
+        let markers = &mut self
+            .connections
+            .entry(marker.connection_id)
+            .or_default()
+            .markers;
+        markers.insert(marker.seq, marker);
+        if markers.len() > MAX_MARKERS {
+            markers.pop_first();
+        }
+    }
+
     /// One message by seq, if it is still in history or is its topic's latest.
     pub fn get(&self, connection_id: ConnectionId, seq: u64) -> Option<Arc<ReceivedMessage>> {
         self.connections
@@ -185,42 +227,53 @@ impl HistoryStore {
             .collect()
     }
 
-    /// A page of the Message Log across all Connections, merged by seq.
-    pub fn query(&self, query: &LogQuery) -> LogPage<Arc<ReceivedMessage>> {
+    /// A page of the Message Log across all Connections, messages and markers merged by seq.
+    pub fn query(&self, query: &LogQuery) -> LogPage<LogItem> {
         let before = query.before_seq.unwrap_or(u64::MAX);
-        let mut sources: Vec<Peekable<_>> = self
-            .connections
-            .iter()
-            .filter(|(id, _)| {
-                query
-                    .filter
-                    .connection_id
-                    .is_none_or(|wanted| wanted == **id)
-            })
-            .map(|(_, history)| history.messages.range(..before).rev().peekable())
-            .collect();
+        let mut sources: Vec<Peekable<Box<dyn Iterator<Item = LogItem> + '_>>> = Vec::new();
+        for (id, history) in &self.connections {
+            if query
+                .filter
+                .connection_id
+                .is_some_and(|wanted| wanted != *id)
+            {
+                continue;
+            }
+            let messages = history.messages.range(..before).rev();
+            let markers = history.markers.range(..before).rev();
+            sources.push(
+                (Box::new(messages.map(|(_, m)| LogItem::Message(m.clone())))
+                    as Box<dyn Iterator<Item = LogItem>>)
+                    .peekable(),
+            );
+            sources.push(
+                (Box::new(markers.map(|(_, m)| LogItem::Marker(m.clone())))
+                    as Box<dyn Iterator<Item = LogItem>>)
+                    .peekable(),
+            );
+        }
 
         let mut newest_first = Vec::with_capacity(query.limit.min(1024));
         let mut has_more = false;
         loop {
-            // Take the newest head among the Connections; there are only ever a handful.
+            // Take the newest head among the sources; there are only ever a handful.
             let Some(source) = sources
                 .iter_mut()
-                .filter_map(|source| source.peek().map(|(seq, _)| **seq).zip(Some(source)))
+                .filter_map(|source| source.peek().map(LogItem::seq).zip(Some(source)))
                 .max_by_key(|(seq, _)| *seq)
                 .map(|(_, source)| source)
             else {
                 break;
             };
-            let (_, message) = source.next().expect("peeked");
-            if !query.filter.matches(message) {
+            let item = source.next().expect("peeked");
+            if !query.filter.matches_item(&item) {
                 continue;
             }
             if newest_first.len() == query.limit {
                 has_more = true;
                 break;
             }
-            newest_first.push(message.clone());
+            newest_first.push(item);
         }
 
         newest_first.reverse();
@@ -258,6 +311,7 @@ impl HistoryStore {
     fn record(&mut self, event: BusEvent) {
         match event {
             BusEvent::Message(message) => self.insert(message),
+            BusEvent::Marker(marker) => self.insert_marker(marker),
             BusEvent::ConnectionState(status) if status.state == ConnectionState::Connected => {
                 self.topics.on_connected(status.connection_id);
             }
@@ -288,6 +342,19 @@ mod tests {
         messages.iter().map(|m| m.seq).collect()
     }
 
+    fn item_seqs(items: &[LogItem]) -> Vec<u64> {
+        items.iter().map(LogItem::seq).collect()
+    }
+
+    fn marker(seq: u64, connection: u32) -> Arc<ConnectionMarker> {
+        Arc::new(ConnectionMarker {
+            seq,
+            connection_id: ConnectionId(connection),
+            at_ms: 0,
+            event: crate::message::MarkerEvent::Connected,
+        })
+    }
+
     fn store(per_topic: usize, per_connection: usize) -> HistoryStore {
         HistoryStore::new(HistoryLimits {
             per_topic,
@@ -295,11 +362,7 @@ mod tests {
         })
     }
 
-    fn latest(
-        store: &HistoryStore,
-        filter: LogFilter,
-        limit: usize,
-    ) -> LogPage<Arc<ReceivedMessage>> {
+    fn latest(store: &HistoryStore, filter: LogFilter, limit: usize) -> LogPage<LogItem> {
         store.query(&LogQuery {
             filter,
             before_seq: None,
@@ -316,7 +379,7 @@ mod tests {
         assert_eq!(seqs(&s.topic_history(ConnectionId(1), "a")), [3, 4]);
         assert_eq!(seqs(&s.topic_history(ConnectionId(1), "b")), [2]);
         assert_eq!(
-            seqs(&latest(&s, LogFilter::default(), 10).entries),
+            item_seqs(&latest(&s, LogFilter::default(), 10).entries),
             [2, 3, 4]
         );
     }
@@ -328,7 +391,7 @@ mod tests {
             s.insert(message(seq, 1, topic, ""));
         }
         assert_eq!(
-            seqs(&latest(&s, LogFilter::default(), 10).entries),
+            item_seqs(&latest(&s, LogFilter::default(), 10).entries),
             [2, 3, 4]
         );
         assert_eq!(seqs(&s.topic_history(ConnectionId(1), "a")), [3]);
@@ -352,7 +415,10 @@ mod tests {
         s.set_per_topic_limit(ConnectionId(1), 2);
         s.insert(message(6, 1, "t", ""));
         assert_eq!(seqs(&s.topic_history(ConnectionId(1), "t")), [5, 6]);
-        assert_eq!(seqs(&latest(&s, LogFilter::default(), 10).entries), [5, 6]);
+        assert_eq!(
+            item_seqs(&latest(&s, LogFilter::default(), 10).entries),
+            [5, 6]
+        );
     }
 
     #[test]
@@ -379,7 +445,7 @@ mod tests {
         }
         s.insert(message(5, 2, "t", ""));
         assert_eq!(
-            seqs(&latest(&s, LogFilter::default(), 10).entries),
+            item_seqs(&latest(&s, LogFilter::default(), 10).entries),
             [3, 4, 5]
         );
     }
@@ -391,7 +457,7 @@ mod tests {
             s.insert(message(seq, connection, "t", ""));
         }
         let page = latest(&s, LogFilter::default(), 4);
-        assert_eq!(seqs(&page.entries), [3, 4, 5, 6]);
+        assert_eq!(item_seqs(&page.entries), [3, 4, 5, 6]);
         assert!(page.has_more);
 
         let older = s.query(&LogQuery {
@@ -399,8 +465,38 @@ mod tests {
             before_seq: Some(3),
             limit: 4,
         });
-        assert_eq!(seqs(&older.entries), [1, 2]);
+        assert_eq!(item_seqs(&older.entries), [1, 2]);
         assert!(!older.has_more);
+    }
+
+    #[test]
+    fn markers_merge_with_messages_and_ignore_the_text_filter() {
+        let mut s = store(100, 100);
+        s.insert(message(1, 1, "kitchen", ""));
+        s.insert_marker(marker(2, 1));
+        s.insert(message(3, 1, "office", ""));
+        s.insert_marker(marker(4, 2));
+        assert_eq!(
+            item_seqs(&latest(&s, LogFilter::default(), 10).entries),
+            [1, 2, 3, 4]
+        );
+
+        let kitchen_on_1 = LogFilter {
+            connection_id: Some(ConnectionId(1)),
+            text: Some("kitchen".into()),
+        };
+        assert_eq!(item_seqs(&latest(&s, kitchen_on_1, 10).entries), [1, 2]);
+    }
+
+    #[test]
+    fn markers_are_capped_per_connection() {
+        let mut s = store(100, 100);
+        for seq in 1..=(MAX_MARKERS as u64 + 5) {
+            s.insert_marker(marker(seq, 1));
+        }
+        let page = latest(&s, LogFilter::default(), MAX_MARKERS * 2);
+        assert_eq!(page.entries.len(), MAX_MARKERS);
+        assert_eq!(page.entries[0].seq(), 6);
     }
 
     #[test]
@@ -422,7 +518,7 @@ mod tests {
             connection_id: Some(ConnectionId(1)),
             text: None,
         };
-        assert_eq!(seqs(&latest(&s, filter, 10).entries), [1, 3]);
+        assert_eq!(item_seqs(&latest(&s, filter, 10).entries), [1, 3]);
     }
 
     #[test]
@@ -435,7 +531,7 @@ mod tests {
             connection_id: None,
             text: Some("KITCHEN".into()),
         };
-        assert_eq!(seqs(&latest(&s, filter, 10).entries), [1, 2]);
+        assert_eq!(item_seqs(&latest(&s, filter, 10).entries), [1, 2]);
     }
 
     #[test]

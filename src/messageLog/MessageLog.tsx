@@ -8,9 +8,10 @@ import {
   type KeyboardEvent,
   type WheelEvent,
 } from "react";
-import type { ConnectionId, LogEntry } from "../bridge";
+import type { ConnectionId, LogEntry, MarkerEntry } from "../bridge";
 import { formatSize, formatTime } from "../format";
 import type { MessageLogController } from "./controller";
+import { describeMarker } from "./markers";
 import "./MessageLog.css";
 
 const ROW_HEIGHT = 24;
@@ -101,16 +102,22 @@ export function MessageLog({ controller, connectionNames }: Props) {
           style={{ height: virtualizer.getTotalSize(), position: "relative" }}
         >
           {virtualizer.getVirtualItems().map((item) => {
-            const entry = store.at(item.index);
-            if (!entry) return null;
-            return (
+            const row = store.at(item.index);
+            if (!row) return null;
+            const connectionName =
+              connectionNames.get(row.connectionId) ?? `#${row.connectionId}`;
+            return row.kind === "marker" ? (
+              <MarkerRow
+                key={row.seq}
+                marker={row}
+                connectionName={connectionName}
+                top={item.start}
+              />
+            ) : (
               <Row
-                key={entry.seq}
-                entry={entry}
-                connectionName={
-                  connectionNames.get(entry.connectionId) ??
-                  `#${entry.connectionId}`
-                }
+                key={row.seq}
+                entry={row}
+                connectionName={connectionName}
                 top={item.start}
               />
             );
@@ -128,6 +135,29 @@ export function MessageLog({ controller, connectionNames }: Props) {
         </button>
       )}
     </section>
+  );
+}
+
+function MarkerRow({
+  marker,
+  connectionName,
+  top,
+}: {
+  marker: MarkerEntry;
+  connectionName: string;
+  top: number;
+}) {
+  const { text, tone } = describeMarker(marker.event);
+  return (
+    <div
+      className={`message-log__marker message-log__marker--${tone}`}
+      style={{ transform: `translateY(${top}px)` }}
+    >
+      <span className="message-log__time">{formatTime(marker.atMs)}</span>
+      <span className="message-log__marker-text">
+        <strong>{connectionName}</strong> {text}
+      </span>
+    </div>
   );
 }
 

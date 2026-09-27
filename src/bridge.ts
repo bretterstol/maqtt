@@ -9,7 +9,7 @@ export type ProfileId = string;
 export type ConnectionState =
   | { kind: "connecting" }
   | { kind: "connected" }
-  | { kind: "disconnected"; reason: string }
+  | { kind: "disconnected"; reason: string; retryAtMs: number }
   | { kind: "closed" };
 
 export type SubscriptionState =
@@ -77,6 +77,25 @@ export interface LogEntry {
   receivedAtMs: number;
 }
 
+/** A change in a Connection's link, shown as a row in the Message Log. */
+export type MarkerEvent =
+  | { kind: "connected" }
+  | { kind: "reconnected"; offlineMs: number }
+  | { kind: "lost"; reason: string }
+  | { kind: "failed"; reason: string }
+  | { kind: "closed" };
+
+export interface MarkerEntry {
+  kind: "marker";
+  seq: number;
+  connectionId: ConnectionId;
+  atMs: number;
+  event: MarkerEvent;
+}
+
+/** One Message Log row: a message or a marker. */
+export type LogRow = ({ kind: "message" } & LogEntry) | MarkerEntry;
+
 /** Text when the bytes are UTF-8, base64 otherwise. */
 export type PayloadData =
   { kind: "text"; text: string } | { kind: "binary"; base64: string };
@@ -109,8 +128,8 @@ export interface TopicUpdate {
 }
 
 export interface Batch {
-  /** New entries matching the filter of `filterGeneration`, oldest first. */
-  messages: LogEntry[];
+  /** New rows matching the filter of `filterGeneration`, oldest first. */
+  messages: LogRow[];
   filterGeneration: number;
   connectionStates: ConnectionStatus[];
   /** Topics that changed since the previous batch, each with its full current stats. */
@@ -136,7 +155,7 @@ export interface LogQuery {
 
 export interface LogPage {
   /** Oldest first. */
-  entries: LogEntry[];
+  entries: LogRow[];
   hasMore: boolean;
 }
 
@@ -190,6 +209,11 @@ export function deleteProfile(profileId: ProfileId): Promise<ProfileView[]> {
 
 export function connect(profileId: ProfileId): Promise<void> {
   return invoke("connect", { profileId });
+}
+
+/** Ends the backoff wait of a disconnected Profile and tries again now. */
+export function retryNow(profileId: ProfileId): Promise<void> {
+  return invoke("retry_now", { profileId });
 }
 
 export function disconnect(profileId: ProfileId): Promise<void> {

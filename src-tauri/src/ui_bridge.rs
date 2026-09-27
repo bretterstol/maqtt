@@ -13,8 +13,8 @@ use tokio::sync::{broadcast, watch};
 
 use crate::bus::{Bus, BusEvent};
 use crate::connection::{ConnectionStatus, ConnectionStatuses};
-use crate::history::{HistoryStore, LogFilter};
-use crate::message::{ConnectionId, ReceivedMessage};
+use crate::history::{HistoryStore, LogFilter, LogItem};
+use crate::message::{ConnectionId, MarkerEvent, ReceivedMessage};
 use crate::topics::TopicSnapshot;
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
@@ -27,8 +27,8 @@ const PREVIEW_BYTES_BINARY: usize = 32;
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Batch {
-    /// New Message Log entries matching the filter of `filter_generation`, oldest first.
-    pub messages: Vec<LogEntry>,
+    /// New Message Log rows matching the filter of `filter_generation`, oldest first.
+    pub messages: Vec<LogRow>,
     pub filter_generation: u64,
     pub connection_states: Vec<ConnectionStatus>,
     /// Topics that changed since the previous batch, each with its full current stats.
@@ -59,6 +59,37 @@ pub struct LogEntry {
     pub qos: u8,
     pub retain: bool,
     pub received_at_ms: u64,
+}
+
+/// One Message Log row, tagged by `kind`.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LogRow {
+    Message(LogEntry),
+    Marker(MarkerEntry),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkerEntry {
+    pub seq: u64,
+    pub connection_id: ConnectionId,
+    pub at_ms: u64,
+    pub event: MarkerEvent,
+}
+
+impl From<&LogItem> for LogRow {
+    fn from(item: &LogItem) -> Self {
+        match item {
+            LogItem::Message(m) => LogRow::Message(LogEntry::from(m.as_ref())),
+            LogItem::Marker(m) => LogRow::Marker(MarkerEntry {
+                seq: m.seq,
+                connection_id: m.connection_id,
+                at_ms: m.at_ms,
+                event: m.event.clone(),
+            }),
+        }
+    }
 }
 
 /// A topic's full current state for the Topic Tree. Absolute, not a delta, so updates can be
@@ -119,7 +150,12 @@ pub struct MessageDetail {
 
 /// Text when the bytes are UTF-8, base64 otherwise.
 #[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+// `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum PayloadData {
     Text { text: String },
     Binary { base64: String },
@@ -222,7 +258,7 @@ async fn run(
 ) {
     let mut live = filter.borrow_and_update().clone();
     // Kept as messages and only turned into entries on flush, so dropped ones cost nothing.
-    let mut pending: VecDeque<Arc<ReceivedMessage>> = VecDeque::new();
+    let mut pending: VecDeque<LogItem> = VecDeque::new();
     let mut connection_states = initial;
     let mut received = 0u64;
     let mut dropped = 0u64;
@@ -234,14 +270,16 @@ async fn run(
             event = rx.recv() => match event {
                 Ok(BusEvent::Message(m)) => {
                     received += 1;
-                    if !live.filter.matches(&m) {
-                        continue;
+                    let item = LogItem::Message(m);
+                    if live.filter.matches_item(&item) {
+                        push_capped(&mut pending, item, &mut dropped);
                     }
-                    if pending.len() == MAX_BATCH {
-                        pending.pop_front();
-                        dropped += 1;
+                }
+                Ok(BusEvent::Marker(m)) => {
+                    let item = LogItem::Marker(m);
+                    if live.filter.matches_item(&item) {
+                        push_capped(&mut pending, item, &mut dropped);
                     }
-                    pending.push_back(m);
                 }
                 Ok(BusEvent::ConnectionState(status)) => connection_states.push(status),
                 Err(RecvError::Lagged(n)) => {
@@ -271,8 +309,9 @@ async fn run(
                 if idle {
                     continue;
                 }
+                let messages: Vec<LogRow> = pending.drain(..).map(|item| LogRow::from(&item)).collect();
                 let batch = Batch {
-                    messages: pending.drain(..).map(|m| LogEntry::from(m.as_ref())).collect(),
+                    messages,
                     filter_generation: live.generation,
                     connection_states: std::mem::take(&mut connection_states),
                     topics,
@@ -285,6 +324,14 @@ async fn run(
             }
         }
     }
+}
+
+fn push_capped(pending: &mut VecDeque<LogItem>, item: LogItem, dropped: &mut u64) {
+    if pending.len() == MAX_BATCH {
+        pending.pop_front();
+        *dropped += 1;
+    }
+    pending.push_back(item);
 }
 
 #[cfg(test)]

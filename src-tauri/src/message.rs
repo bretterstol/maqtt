@@ -45,6 +45,40 @@ impl From<rumqttc::v5::mqttbytes::v5::PublishProperties> for MessageProperties {
     }
 }
 
+/// A change in a Connection's link to its Broker, shown as a row in the Message Log.
+#[derive(Debug, Clone)]
+pub struct ConnectionMarker {
+    /// From the same sequence as messages, so markers sort among them.
+    pub seq: u64,
+    pub connection_id: ConnectionId,
+    pub at_ms: u64,
+    pub event: MarkerEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+// `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MarkerEvent {
+    Connected,
+    Reconnected {
+        offline_ms: u64,
+    },
+    /// An established connection dropped.
+    Lost {
+        reason: String,
+    },
+    /// The first failed attempt while never having been connected; later failures are quiet.
+    Failed {
+        reason: String,
+    },
+    /// Disconnected on request.
+    Closed,
+}
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

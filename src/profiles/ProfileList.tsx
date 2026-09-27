@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   connect,
   disconnect,
+  retryNow,
   subscribe,
   unsubscribe,
   type ConnectionState,
@@ -90,13 +91,31 @@ function ProfileItem({
         <button onClick={toggle}>{live ? "Disconnect" : "Connect"}</button>
       </div>
       {status?.state.kind === "disconnected" && (
-        <p className="profile__error">{status.state.reason}</p>
+        <div className="profile__retry">
+          <p className="profile__error">{status.state.reason}</p>
+          <RetryCountdown retryAtMs={status.state.retryAtMs} />
+          <button onClick={() => void retryNow(profile.id)}>Retry now</button>
+        </div>
       )}
       {error && <p className="profile__error">{error}</p>}
       {live && status && (
         <Subscriptions profileId={profile.id} status={status} />
       )}
     </li>
+  );
+}
+
+function RetryCountdown({ retryAtMs }: { retryAtMs: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.ceil((retryAtMs - now) / 1000));
+  return (
+    <span className="profile__countdown">
+      {seconds > 0 ? `Retrying in ${seconds} s` : "Retrying…"}
+    </span>
   );
 }
 

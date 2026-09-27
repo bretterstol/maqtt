@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Batch, LogEntry, LogPage } from "../bridge";
+import type { Batch, LogPage, LogRow } from "../bridge";
 import { MessageLogStore } from "./store";
 
-const entry = (seq: number): LogEntry => ({
+const entry = (seq: number): LogRow => ({
+  kind: "message",
   seq,
   connectionId: 1,
   topic: `t/${seq}`,

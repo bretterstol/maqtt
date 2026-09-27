@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LogEntry, LogPage, LogQuery } from "../bridge";
+import type { LogPage, LogQuery, LogRow } from "../bridge";
 import { queryLog, setLogFilter } from "../bridge";
 import { MessageLogController } from "./controller";
 import { MessageLogStore } from "./store";
@@ -9,7 +9,8 @@ vi.mock("../bridge", () => ({
   setLogFilter: vi.fn(),
 }));
 
-const entry = (seq: number): LogEntry => ({
+const entry = (seq: number): LogRow => ({
+  kind: "message",
   seq,
   connectionId: 1,
   topic: "t",

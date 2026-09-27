@@ -10,11 +10,12 @@ use serde::Serialize;
 use tokio::sync::Notify;
 
 use crate::bus::{Bus, BusEvent};
-use crate::message::{ConnectionId, ReceivedMessage, now_ms};
+use crate::message::{ConnectionId, ConnectionMarker, MarkerEvent, ReceivedMessage, now_ms};
 use crate::mqtt::{self, Incoming};
 use crate::profile::{Profile, ProfileId, Subscription};
 
-const RETRY_DELAY: Duration = Duration::from_secs(2);
+const BACKOFF_FIRST: Duration = Duration::from_secs(1);
+const BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// How long a closing Connection waits for its DISCONNECT to go out.
 const DISCONNECT_GRACE: Duration = Duration::from_secs(2);
 
@@ -29,13 +30,19 @@ pub struct ConnectionStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+// `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ConnectionState {
     Connecting,
     Connected,
-    /// Lost or refused; retrying.
+    /// Lost or refused; retrying at `retry_at_ms`.
     Disconnected {
         reason: String,
+        retry_at_ms: u64,
     },
     /// Closed on request; no longer retrying.
     Closed,
@@ -50,7 +57,12 @@ pub struct SubscriptionStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+// `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum SubscriptionState {
     Pending,
     Active { granted_qos: u8 },
@@ -146,6 +158,10 @@ struct Context {
     session: Arc<Mutex<Session>>,
     /// Signalled by `Connection::close`.
     closing: Arc<Notify>,
+    /// Signalled by `Connection::reset`: drop the network connection and reconnect now.
+    reset: Arc<Notify>,
+    /// Signalled by `Connection::retry_now`: skip the rest of the backoff wait.
+    retry: Arc<Notify>,
 }
 
 impl Context {
@@ -156,6 +172,16 @@ impl Context {
             session.status.clone()
         };
         self.statuses.publish(&self.bus, status);
+    }
+
+    fn marker(&self, event: MarkerEvent) {
+        self.bus
+            .publish(BusEvent::Marker(Arc::new(ConnectionMarker {
+                seq: self.bus.next_seq(),
+                connection_id: self.id,
+                at_ms: now_ms(),
+                event,
+            })));
     }
 }
 
@@ -200,6 +226,8 @@ impl Connection {
             statuses,
             session: Arc::new(Mutex::new(session)),
             closing: Arc::new(Notify::new()),
+            reset: Arc::new(Notify::new()),
+            retry: Arc::new(Notify::new()),
         };
         context.update(|_| {});
         let task = tauri::async_runtime::spawn(run(eventloop, client.clone(), context.clone()));
@@ -246,6 +274,16 @@ impl Connection {
         });
     }
 
+    /// Reconnects straight away, e.g. after the computer woke from sleep.
+    pub fn reset(&self) {
+        self.context.reset.notify_waiters();
+    }
+
+    /// Ends the backoff wait and tries again now.
+    pub fn retry_now(&self) {
+        self.context.retry.notify_waiters();
+    }
+
     /// Disconnects gracefully and stops retrying; the task ends shortly after.
     pub fn close(&self) {
         if self.context.session.lock().unwrap().connected {
@@ -255,39 +293,136 @@ impl Connection {
     }
 }
 
+/// Exponential backoff between reconnect attempts, with jitter so many Connections to one
+/// Broker don't retry in lockstep.
+#[derive(Default)]
+struct Backoff {
+    attempt: u32,
+}
+
+impl Backoff {
+    /// The next wait; `jitter` in 0..1 scales it by 0.8 to 1.2.
+    fn next(&mut self, jitter: f64) -> Duration {
+        let base = BACKOFF_FIRST
+            .saturating_mul(1 << self.attempt.min(16))
+            .min(BACKOFF_MAX);
+        self.attempt += 1;
+        base.mul_f64(0.8 + 0.4 * jitter.clamp(0.0, 1.0))
+    }
+
+    fn reset(&mut self) {
+        self.attempt = 0;
+    }
+}
+
+fn jitter() -> f64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    f64::from(nanos % 1000) / 1000.0
+}
+
+/// Decides which link changes become Message Log markers, so a Broker that stays down for an
+/// hour leaves one marker, not one per retry.
+#[derive(Default)]
+struct Link {
+    online: bool,
+    offline_since_ms: Option<u64>,
+    failure_reported: bool,
+}
+
+impl Link {
+    fn connected(&mut self, now_ms: u64) -> MarkerEvent {
+        self.online = true;
+        self.failure_reported = false;
+        match self.offline_since_ms.take() {
+            Some(since) => MarkerEvent::Reconnected {
+                offline_ms: now_ms.saturating_sub(since),
+            },
+            None => MarkerEvent::Connected,
+        }
+    }
+
+    fn failed(&mut self, reason: &str, now_ms: u64) -> Option<MarkerEvent> {
+        if self.online {
+            self.online = false;
+            self.offline_since_ms = Some(now_ms);
+            self.failure_reported = true;
+            Some(MarkerEvent::Lost {
+                reason: reason.into(),
+            })
+        } else if !self.failure_reported {
+            self.failure_reported = true;
+            Some(MarkerEvent::Failed {
+                reason: reason.into(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// What woke the Connection's task.
+enum Wake {
+    Event(Result<Incoming, String>),
+    Reset,
+    Closing,
+}
+
 async fn run(mut eventloop: mqtt::EventLoop, client: mqtt::Client, cx: Context) {
+    let mut backoff = Backoff::default();
+    let mut link = Link::default();
+
     loop {
-        let event = tokio::select! {
+        let wake = tokio::select! {
             biased;
-            // Abandoning `poll` mid-way is fine here: the event loop is about to be dropped.
-            _ = cx.closing.notified() => break,
-            event = eventloop.poll() => event,
+            // Abandoning `poll` mid-way is fine for these two: the network connection is
+            // dropped straight after.
+            _ = cx.closing.notified() => Wake::Closing,
+            _ = cx.reset.notified() => Wake::Reset,
+            event = eventloop.poll() => Wake::Event(event),
         };
-        match event {
-            Ok(Incoming::ConnAck) => cx.update(|session| {
-                session.connected = true;
-                session.status.state = ConnectionState::Connected;
-                session.awaiting_pkid.clear();
-                session.awaiting_suback.clear();
-                // A clean start forgets our Subscriptions, and a resumed session may have
-                // been changed while we were away, so (re)apply them all.
-                let filters: Vec<String> = session
-                    .status
-                    .subscriptions
-                    .iter()
-                    .map(|s| s.filter.clone())
-                    .collect();
-                for filter in filters {
-                    session.request_subscription(&client, &filter);
+        match wake {
+            Wake::Closing => break,
+            Wake::Reset => {
+                eventloop.reset();
+                backoff.reset();
+                if let Some(event) =
+                    link.failed("Reconnecting after the computer woke up", now_ms())
+                {
+                    cx.marker(event);
                 }
-            }),
-            Ok(Incoming::Publish {
+                cx.update(|session| session.mark_offline(ConnectionState::Connecting));
+            }
+            Wake::Event(Ok(Incoming::ConnAck)) => {
+                backoff.reset();
+                cx.marker(link.connected(now_ms()));
+                cx.update(|session| {
+                    session.connected = true;
+                    session.status.state = ConnectionState::Connected;
+                    session.awaiting_pkid.clear();
+                    session.awaiting_suback.clear();
+                    // A clean start forgets our Subscriptions, and a resumed session may have
+                    // been changed while we were away, so (re)apply them all.
+                    let filters: Vec<String> = session
+                        .status
+                        .subscriptions
+                        .iter()
+                        .map(|s| s.filter.clone())
+                        .collect();
+                    for filter in filters {
+                        session.request_subscription(&client, &filter);
+                    }
+                });
+            }
+            Wake::Event(Ok(Incoming::Publish {
                 topic,
                 payload,
                 qos,
                 retain,
                 properties,
-            }) => {
+            })) => {
                 let message = ReceivedMessage {
                     seq: cx.bus.next_seq(),
                     connection_id: cx.id,
@@ -302,22 +437,34 @@ async fn run(mut eventloop: mqtt::EventLoop, client: mqtt::Client, cx: Context) 
                 };
                 cx.bus.publish(BusEvent::Message(Arc::new(message)));
             }
-            Ok(Incoming::SubscribeSent { pkid }) => {
+            Wake::Event(Ok(Incoming::SubscribeSent { pkid })) => {
                 let mut session = cx.session.lock().unwrap();
                 if let Some(filter) = session.awaiting_pkid.pop_front() {
                     session.awaiting_suback.insert(pkid, filter);
                 }
             }
-            Ok(Incoming::SubAck { pkid, results }) => {
+            Wake::Event(Ok(Incoming::SubAck { pkid, results })) => {
                 cx.update(|session| session.on_suback(pkid, results));
             }
-            Ok(Incoming::DisconnectSent | Incoming::Other) => {}
-            Err(reason) => {
-                cx.update(|session| session.mark_offline(ConnectionState::Disconnected { reason }));
-                // Polling again reconnects; proper backoff arrives in M6.
+            Wake::Event(Ok(Incoming::DisconnectSent | Incoming::Other)) => {}
+            Wake::Event(Err(reason)) => {
+                if let Some(event) = link.failed(&reason, now_ms()) {
+                    cx.marker(event);
+                }
+                let delay = backoff.next(jitter());
+                let retry_at_ms = now_ms() + delay.as_millis() as u64;
+                cx.update(|session| {
+                    session.mark_offline(ConnectionState::Disconnected {
+                        reason,
+                        retry_at_ms,
+                    })
+                });
+                // Polling again reconnects.
                 tokio::select! {
                     _ = cx.closing.notified() => break,
-                    _ = tokio::time::sleep(RETRY_DELAY) => {}
+                    _ = cx.retry.notified() => {}
+                    _ = cx.reset.notified() => backoff.reset(),
+                    _ = tokio::time::sleep(delay) => {}
                 }
                 cx.update(|session| session.status.state = ConnectionState::Connecting);
             }
@@ -336,7 +483,14 @@ async fn run(mut eventloop: mqtt::EventLoop, client: mqtt::Client, cx: Context) 
         })
         .await;
     }
+    cx.marker(MarkerEvent::Closed);
     cx.update(|session| session.mark_offline(ConnectionState::Closed));
+}
+
+/// Whether the computer slept between two readings: the monotonic clock stands still during
+/// sleep on Linux and macOS, while wall-clock time keeps going.
+pub fn slept(monotonic: Duration, wall: Duration) -> bool {
+    wall > monotonic + Duration::from_secs(10)
 }
 
 /// The live Connections, at most one per Broker Profile. A Profile keeps its ConnectionId for
@@ -373,10 +527,102 @@ impl ConnectionManager {
         self.live.get(profile_id).filter(|c| !c.is_finished())
     }
 
+    pub fn reset_all(&self) {
+        for connection in self.live.values().filter(|c| !c.is_finished()) {
+            connection.reset();
+        }
+    }
+
     pub fn disconnect(&mut self, profile_id: &ProfileId) {
         if let Some(connection) = self.live.remove(profile_id) {
             connection.close();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn states_serialize_with_camel_case_fields_for_the_frontend() {
+        use serde_json::{json, to_value};
+        let disconnected = ConnectionState::Disconnected {
+            reason: "x".into(),
+            retry_at_ms: 5,
+        };
+        assert_eq!(
+            to_value(disconnected).unwrap(),
+            json!({"kind": "disconnected", "reason": "x", "retryAtMs": 5})
+        );
+        assert_eq!(
+            to_value(SubscriptionState::Active { granted_qos: 1 }).unwrap(),
+            json!({"kind": "active", "grantedQos": 1})
+        );
+        assert_eq!(
+            to_value(MarkerEvent::Reconnected { offline_ms: 7 }).unwrap(),
+            json!({"kind": "reconnected", "offlineMs": 7})
+        );
+    }
+
+    #[test]
+    fn backoff_doubles_from_one_second_up_to_thirty() {
+        let mut backoff = Backoff::default();
+        let waits: Vec<u64> = (0..8).map(|_| backoff.next(0.5).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30, 30]);
+        backoff.reset();
+        assert_eq!(backoff.next(0.5), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn backoff_jitter_stays_within_twenty_percent() {
+        let mut low = Backoff { attempt: 3 };
+        let mut high = Backoff { attempt: 3 };
+        assert_eq!(low.next(0.0), Duration::from_millis(6_400));
+        assert_eq!(high.next(1.0), Duration::from_millis(9_600));
+    }
+
+    #[test]
+    fn a_broker_that_stays_down_leaves_one_marker() {
+        let mut link = Link::default();
+        assert_eq!(
+            link.failed("refused", 0),
+            Some(MarkerEvent::Failed {
+                reason: "refused".into()
+            })
+        );
+        assert_eq!(link.failed("refused", 1_000), None);
+        assert_eq!(link.connected(2_000), MarkerEvent::Connected);
+    }
+
+    #[test]
+    fn a_lost_connection_reports_how_long_it_was_offline() {
+        let mut link = Link::default();
+        link.connected(0);
+        assert_eq!(
+            link.failed("timeout", 10_000),
+            Some(MarkerEvent::Lost {
+                reason: "timeout".into()
+            })
+        );
+        assert_eq!(link.failed("refused", 11_000), None);
+        assert_eq!(
+            link.connected(25_000),
+            MarkerEvent::Reconnected { offline_ms: 15_000 }
+        );
+        assert_eq!(
+            link.failed("again", 30_000),
+            Some(MarkerEvent::Lost {
+                reason: "again".into()
+            })
+        );
+    }
+
+    #[test]
+    fn sleep_is_detected_when_wall_time_outruns_monotonic_time() {
+        let five = Duration::from_secs(5);
+        assert!(!slept(five, five + Duration::from_millis(300)));
+        assert!(slept(five, Duration::from_secs(600)));
     }
 }
 
@@ -610,6 +856,129 @@ mod dev_broker_tests {
         assert_eq!(properties["userProperties"][0][1], "celsius");
         assert!(properties["messageExpiryInterval"].as_u64().unwrap() <= 60);
         assert_eq!(detail["payload"]["text"], "{}");
+        manager.disconnect(&profile.id);
+    }
+
+    /// The markers seen on the bus, until `until` matches one.
+    async fn markers_until(
+        rx: &mut tokio::sync::broadcast::Receiver<BusEvent>,
+        timeout: Duration,
+        until: impl Fn(&MarkerEvent) -> bool,
+    ) -> Vec<MarkerEvent> {
+        let mut seen = Vec::new();
+        tokio::time::timeout(timeout, async {
+            loop {
+                if let Ok(BusEvent::Marker(m)) = rx.recv().await {
+                    let done = until(&m.event);
+                    seen.push(m.event.clone());
+                    if done {
+                        return;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out; markers so far: {seen:?}"));
+        seen
+    }
+
+    fn podman(action: &str) {
+        let status = std::process::Command::new("podman")
+            .args([action, "maqtt-dev-broker"])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("podman");
+        assert!(status.success(), "podman {action}");
+    }
+
+    fn all_subscribed(statuses: &ConnectionStatuses) -> bool {
+        statuses.snapshot().iter().all(|s| {
+            s.state == ConnectionState::Connected
+                && s.subscriptions
+                    .iter()
+                    .all(|sub| matches!(sub.state, SubscriptionState::Active { .. }))
+        })
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker; restarts it"]
+    async fn a_broker_restart_is_survived_with_markers() {
+        let profile = Profile::new("restart test", "localhost", 21883);
+        let bus = Bus::new();
+        let mut rx = bus.subscribe();
+        let statuses = ConnectionStatuses::default();
+        let mut manager = ConnectionManager::default();
+        manager.connect(&profile, None, &bus, &statuses).unwrap();
+        let first = markers_until(&mut rx, Duration::from_secs(5), |e| {
+            *e == MarkerEvent::Connected
+        })
+        .await;
+        assert_eq!(first, [MarkerEvent::Connected]);
+
+        podman("stop");
+        let lost = markers_until(&mut rx, Duration::from_secs(10), |e| {
+            matches!(e, MarkerEvent::Lost { .. })
+        })
+        .await;
+        assert_eq!(lost.len(), 1);
+        wait_until("disconnected with a retry time", || {
+            statuses.snapshot().iter().any(|s| {
+                matches!(&s.state, ConnectionState::Disconnected { retry_at_ms, .. } if *retry_at_ms > now_ms())
+            })
+        })
+        .await;
+
+        podman("start");
+        let back = markers_until(&mut rx, Duration::from_secs(40), |e| {
+            matches!(e, MarkerEvent::Reconnected { .. })
+        })
+        .await;
+        // Retries while the Broker was down add no markers.
+        assert_eq!(back.len(), 1, "{back:?}");
+        wait_until("resubscribed", || all_subscribed(&statuses)).await;
+
+        publish("maqtt/it/after-restart", "hello", false);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(BusEvent::Message(m)) = rx.recv().await
+                    && m.topic == "maqtt/it/after-restart"
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("messages flow again");
+
+        manager.disconnect(&profile.id);
+        let closed = markers_until(&mut rx, Duration::from_secs(5), |e| {
+            *e == MarkerEvent::Closed
+        })
+        .await;
+        assert_eq!(closed, [MarkerEvent::Closed]);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn a_reset_reconnects_straight_away() {
+        let profile = Profile::new("reset test", "localhost", 21883);
+        let bus = Bus::new();
+        let mut rx = bus.subscribe();
+        let statuses = ConnectionStatuses::default();
+        let mut manager = ConnectionManager::default();
+        manager.connect(&profile, None, &bus, &statuses).unwrap();
+        wait_until("subscribed", || all_subscribed(&statuses)).await;
+
+        manager.reset_all();
+        let events = markers_until(&mut rx, Duration::from_secs(5), |e| {
+            matches!(e, MarkerEvent::Reconnected { .. })
+        })
+        .await;
+        assert!(
+            matches!(&events[..], [MarkerEvent::Connected, MarkerEvent::Lost { reason }, MarkerEvent::Reconnected { .. }] if reason.contains("woke up")),
+            "{events:?}"
+        );
+        wait_until("resubscribed", || all_subscribed(&statuses)).await;
         manager.disconnect(&profile.id);
     }
 }

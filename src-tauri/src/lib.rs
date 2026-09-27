@@ -22,7 +22,7 @@ use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
 use profile_store::{KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
-use ui_bridge::{LiveFilter, LogEntry, MessageDetail, TopicUpdate};
+use ui_bridge::{LiveFilter, LogEntry, LogRow, MessageDetail, TopicUpdate};
 
 /// Upper bound for one `query_log` page, so a careless caller can't serialize the whole store.
 const MAX_PAGE: usize = 5_000;
@@ -73,10 +73,10 @@ fn replace_live_filter(state: &AppState, filter: LogFilter) -> u64 {
 }
 
 #[tauri::command]
-fn query_log(state: State<'_, AppState>, mut query: LogQuery) -> LogPage<LogEntry> {
+fn query_log(state: State<'_, AppState>, mut query: LogQuery) -> LogPage<LogRow> {
     query.limit = query.limit.min(MAX_PAGE);
     let page = state.history.lock().unwrap().query(&query);
-    page.map(|m| LogEntry::from(m.as_ref()))
+    page.map(|item| LogRow::from(&item))
 }
 
 #[tauri::command]
@@ -195,6 +195,14 @@ fn autoconnect(state: &AppState) {
     }
 }
 
+/// Ends the backoff wait of a disconnected Profile and tries again now.
+#[tauri::command]
+fn retry_now(state: State<'_, AppState>, profile_id: ProfileId) {
+    if let Some(connection) = state.connections.lock().unwrap().get(&profile_id) {
+        connection.retry_now();
+    }
+}
+
 #[tauri::command]
 fn disconnect(state: State<'_, AppState>, profile_id: ProfileId) {
     state.connections.lock().unwrap().disconnect(&profile_id);
@@ -233,6 +241,31 @@ fn load_profiles() -> Result<ProfileStore, String> {
     Ok(store)
 }
 
+/// After the computer sleeps, connections can look alive until their keep-alive times out.
+/// Notice the sleep and make every Connection reconnect straight away instead.
+fn spawn_sleep_watchdog(app: tauri::AppHandle) {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(5);
+    tauri::async_runtime::spawn(async move {
+        let mut monotonic = std::time::Instant::now();
+        let mut wall = std::time::SystemTime::now();
+        loop {
+            tokio::time::sleep(TICK).await;
+            let (now_monotonic, now_wall) =
+                (std::time::Instant::now(), std::time::SystemTime::now());
+            let wall_elapsed = now_wall.duration_since(wall).unwrap_or_default();
+            if connection::slept(now_monotonic - monotonic, wall_elapsed) {
+                eprintln!("maqtt: woke from sleep, reconnecting");
+                app.state::<AppState>()
+                    .connections
+                    .lock()
+                    .unwrap()
+                    .reset_all();
+            }
+            (monotonic, wall) = (now_monotonic, now_wall);
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let profiles = load_profiles().unwrap_or_else(|err| panic!("{err}"));
@@ -248,6 +281,7 @@ pub fn run() {
             move |app| {
                 history::spawn_recorder(&bus, history);
                 autoconnect(&app.state::<AppState>());
+                spawn_sleep_watchdog(app.handle().clone());
                 Ok(())
             }
         })
@@ -272,6 +306,7 @@ pub fn run() {
             save_profile,
             delete_profile,
             connect,
+            retry_now,
             disconnect,
             subscribe,
             unsubscribe

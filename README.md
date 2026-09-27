@@ -51,5 +51,5 @@ On first run, debug builds create Profiles for the dev Broker (plain, TLS and mT
 pnpm lint      # ESLint, Prettier, rustfmt, clippy
 pnpm format    # Prettier + rustfmt
 pnpm test      # Vitest + cargo test
-pnpm test:broker  # integration tests against the dev Broker (needs `dev/env.sh broker`)
+pnpm test:broker  # integration tests against the dev Broker, one at a time (needs `dev/env.sh broker`; restarts it)
 ```

@@ -137,7 +137,44 @@ impl Client {
 }
 
 impl EventLoop {
+    /// Drops the network connection so the next `poll` reconnects, e.g. after the computer
+    /// slept and the old connection may be dead without anyone having noticed yet.
+    pub fn reset(&mut self) {
+        match self {
+            EventLoop::V311(eventloop) => eventloop.clean(),
+            EventLoop::V5(eventloop) => eventloop.clean(),
+        }
+    }
+
     pub async fn poll(&mut self) -> Result<Incoming, String> {
+        let incoming = self.poll_raw().await?;
+        if matches!(incoming, Incoming::ConnAck) {
+            self.drop_replayed_subscriptions();
+        }
+        Ok(incoming)
+    }
+
+    /// After a reconnect, rumqttc replays requests that hadn't gone out. The Connection
+    /// re-applies all its Subscriptions on every ConnAck anyway, and replayed ones would put
+    /// Subscribe packet ids out of step with the filters we track, so drop them.
+    fn drop_replayed_subscriptions(&mut self) {
+        match self {
+            EventLoop::V311(eventloop) => eventloop.pending.retain(|request| {
+                !matches!(
+                    request,
+                    rumqttc::Request::Subscribe(_) | rumqttc::Request::Unsubscribe(_)
+                )
+            }),
+            EventLoop::V5(eventloop) => eventloop.pending.retain(|request| {
+                !matches!(
+                    request,
+                    rumqttc::v5::Request::Subscribe(_) | rumqttc::v5::Request::Unsubscribe(_)
+                )
+            }),
+        }
+    }
+
+    async fn poll_raw(&mut self) -> Result<Incoming, String> {
         match self {
             EventLoop::V311(eventloop) => {
                 use rumqttc::{Event, Packet, SubscribeReasonCode};
