@@ -27,19 +27,19 @@ from "Dev Broker"
 
 ### Stages
 
-| Stage                | Example                                                                            | Does                                                                                     |
-| -------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `from`               | `from "Dev Broker"`, `from "Dev Broker", "Office"`, `from all`                     | Picks the Connections to read. Always first.                                             |
-| `filter`             | `filter .temperature > 22`, `filter topic "home/#"`, `filter not topic "+/status"` | Keeps messages where the jq condition is true, or whose topic matches an MQTT filter.    |
-| `map`                | `map { temp: .temperature / 10 }`                                                  | Replaces the current value with the jq result.                                           |
-| `changes`            | `changes`                                                                          | Passes a message only if its value differs from the previous one on the same topic.      |
-| `throttle`           | `throttle 5s`                                                                      | At most one message per interval per topic; the latest wins.                             |
-| `inspect`            | `inspect`, `inspect "after map"`                                                   | Shows the value in the Pipeline's panel and passes it on unchanged.                      |
-| `to`                 | `to app "hot/{$levels[2]}"`                                                        | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline. |
-| `scan` _(later)_     | `scan { last: null } { last: ., delta: . - .acc.last }`                            | Carries state from message to message and emits it each time.                            |
-| `debounce` _(later)_ | `debounce 2s`                                                                      | Emits once a topic has been quiet for the interval.                                      |
-| `take` _(later)_     | `take 10`                                                                          | Stops after N messages.                                                                  |
-| windows _(later)_    | to be designed                                                                     | Aggregates over time, such as an average per minute.                                     |
+| Stage                | Example                                                                            | Does                                                                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `from`               | `from "Dev Broker"`, `from "Dev Broker", "Office"`, `from all`                     | Picks the Connections to read. Always first.                                                                                    |
+| `filter`             | `filter .temperature > 22`, `filter topic "home/#"`, `filter not topic "+/status"` | Keeps messages where the jq condition is true, or whose topic matches an MQTT filter.                                           |
+| `map`                | `map { temp: .temperature / 10 }`                                                  | Replaces the current value with the jq result.                                                                                  |
+| `changes`            | `changes`, `changes by .room`                                                      | Passes a message only if its value differs from the previous one with the same key (the incoming topic, unless `by` names one). |
+| `throttle`           | `throttle 5s`, `throttle 5s by .room`                                              | At most one message per interval per key (the incoming topic, unless `by` names one); the latest wins.                          |
+| `inspect`            | `inspect`, `inspect "after map"`                                                   | Shows the value in the Pipeline's panel and passes it on unchanged.                                                             |
+| `to`                 | `to app "hot/{$levels[2]}"`                                                        | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline.                                        |
+| `scan` _(later)_     | `scan { last: null } { last: ., delta: . - .acc.last }`                            | Carries state from message to message and emits it each time.                                                                   |
+| `debounce` _(later)_ | `debounce 2s`                                                                      | Emits once a topic has been quiet for the interval.                                                                             |
+| `take` _(later)_     | `take 10`                                                                          | Stops after N messages.                                                                                                         |
+| windows _(later)_    | to be designed                                                                     | Aggregates over time, such as an average per minute.                                                                            |
 
 Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `throttle`, `scan`, `debounce`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`.
 
