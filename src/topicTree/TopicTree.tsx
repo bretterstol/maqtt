@@ -7,14 +7,15 @@ import {
   type MouseEvent,
 } from "react";
 import type { ConnectionId, ConnectionState } from "../bridge";
+import { plural } from "../format";
+import { useNow } from "../ui/useNow";
+import { ActivityMeter } from "./ActivityMeter";
 import type { TopicTreeStore, TreeNode } from "./store";
 import "./TopicTree.css";
 
 const ROW_HEIGHT = 24;
 const INDENT_PX = 16;
 const SEARCH_DEBOUNCE_MS = 150;
-/** How long a changed value stays highlighted. */
-const FRESH_MS = 1_000;
 
 interface Props {
   store: TopicTreeStore;
@@ -36,7 +37,7 @@ export function TopicTree({
   useSyncExternalStore(store.subscribe, store.getVersion);
   const rows = store.rows();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const now = Date.now();
+  const now = useNow();
 
   // Not using the React Compiler, so its memoization caveat for TanStack Virtual does not apply.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -70,7 +71,7 @@ export function TopicTree({
                 top={item.start}
                 expanded={store.isExpanded(node)}
                 selected={node.key === selectedKey}
-                fresh={!!node.topic && now - node.topic.changedAt < FRESH_MS}
+                now={now}
                 rootName={connectionNames.get(node.connectionId)}
                 rootState={connectionStates.get(node.connectionId)}
                 onToggle={() => store.toggle(node)}
@@ -105,7 +106,7 @@ function SearchBar({ store }: { store: TopicTreeStore }) {
         {store.queryError ??
           (query.trim()
             ? `${store.matchCount.toLocaleString()} of ${store.topicCount.toLocaleString()} topics`
-            : `${store.topicCount.toLocaleString()} topics`)}
+            : plural(store.topicCount, "topic"))}
       </span>
     </div>
   );
@@ -116,7 +117,7 @@ interface RowProps {
   top: number;
   expanded: boolean;
   selected: boolean;
-  fresh: boolean;
+  now: number;
   rootName: string | undefined;
   rootState: ConnectionState | undefined;
   onToggle: () => void;
@@ -129,7 +130,7 @@ function Row({
   top,
   expanded,
   selected,
-  fresh,
+  now,
   rootName,
   rootState,
   onToggle,
@@ -145,7 +146,6 @@ function Row({
   const className = [
     "topic-tree__row",
     selected && "topic-tree__row--selected",
-    fresh && "topic-tree__row--fresh",
     isRoot && "topic-tree__row--root",
   ]
     .filter(Boolean)
@@ -192,6 +192,7 @@ function Row({
         </span>
       )}
       <span className="topic-tree__meta">
+        <ActivityMeter node={node} now={now} />
         {node.topic?.retained && (
           <span className="badge" title="The Broker holds a Retained Message">
             R
@@ -199,10 +200,10 @@ function Row({
         )}
         {hasChildren ? (
           <span title={`${node.messageCount.toLocaleString()} messages`}>
-            {node.topicCount.toLocaleString()} topics
+            {plural(node.topicCount, "topic")}
           </span>
         ) : (
-          <span>{node.messageCount.toLocaleString()} msgs</span>
+          <span>{plural(node.messageCount, "msg")}</span>
         )}
       </span>
     </div>

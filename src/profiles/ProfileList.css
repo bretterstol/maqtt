@@ -4,7 +4,7 @@
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
-  background: var(--bg-raised);
+  background: var(--bg-rack);
   overflow-y: auto;
 }
 
@@ -72,24 +72,34 @@
   word-break: break-word;
 }
 
+/* Link health: green up, red down, a pulsing ring while connecting, a hollow ring when off. */
 .status-dot {
   width: 8px;
   height: 8px;
   flex-shrink: 0;
+  box-sizing: border-box;
+  border: 1.5px solid var(--text-muted);
   border-radius: 50%;
-  background: var(--border);
 }
 
 .status-dot--connected {
+  border-color: var(--ok);
   background: var(--ok);
 }
 
 .status-dot--connecting {
-  background: var(--warn);
+  animation: status-pulse 1.2s ease-in-out infinite;
 }
 
 .status-dot--disconnected {
+  border-color: var(--bad);
   background: var(--bad);
+}
+
+@keyframes status-pulse {
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .subscriptions {

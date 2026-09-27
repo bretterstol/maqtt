@@ -64,9 +64,12 @@ export function MessageLog({ controller, connectionNames }: Props) {
       // Keep the rows the reader was looking at in place.
       el.scrollTop += prepended * ROW_HEIGHT;
     } else if (store.following && store.length > 0) {
-      virtualizer.scrollToIndex(store.length - 1, { align: "end" });
+      // Set directly rather than through `virtualizer.scrollToIndex`, which re-applies its
+      // scroll over the next frames and could pull a reader who just scrolled up back down.
+      // Rows have a fixed height, so the full height is already right.
+      el.scrollTop = el.scrollHeight;
     }
-  }, [version, store, virtualizer]);
+  }, [version, store]);
 
   // While following, the view is re-pinned to the bottom on every batch, which can undo a
   // scroll before its `scroll` event is handled. So pause on what the user does, not only on

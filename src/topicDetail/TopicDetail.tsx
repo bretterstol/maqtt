@@ -13,6 +13,8 @@ import {
   type MessageProperties,
   type PayloadData,
 } from "../bridge";
+import { ActivityMeter } from "../topicTree/ActivityMeter";
+import { useNow } from "../ui/useNow";
 import type { TopicTreeStore, TreeNode } from "../topicTree/store";
 import { jsonDiff, lineDiff, type JsonChange } from "./diff";
 import {
@@ -21,7 +23,7 @@ import {
   parseJson,
   type PayloadFormat,
 } from "./format";
-import { formatDateTime, formatSize, formatTime } from "../format";
+import { formatDateTime, formatSize, formatTime, plural } from "../format";
 import { copy } from "../ui/clipboard";
 import "./TopicDetail.css";
 
@@ -57,6 +59,7 @@ export function TopicDetail({
   useSyncExternalStore(tree.subscribe, tree.getVersion);
   const latestSeq = node.topic?.latest.seq;
   const rate = useRate(node);
+  const now = useNow();
 
   return (
     <aside className="topic-detail">
@@ -67,10 +70,11 @@ export function TopicDetail({
         <div className="topic-detail__stats">
           <span>{connectionName}</span>
           {node.topic?.retained && <span className="badge">Retained</span>}
-          <span>{node.messageCount.toLocaleString()} msgs</span>
+          <span>{plural(node.messageCount, "msg")}</span>
+          <ActivityMeter node={node} now={now} />
           {node.topic && <span>{formatRate(rate)} msg/s</span>}
           {node.children.size > 0 && (
-            <span>{node.topicCount.toLocaleString()} topics below</span>
+            <span>{plural(node.topicCount, "topic")} below</span>
           )}
         </div>
         {node.depth > 0 && (

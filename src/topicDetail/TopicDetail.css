@@ -36,7 +36,8 @@
 }
 
 .topic-detail__warning {
-  color: var(--warn);
+  color: var(--text);
+  font-weight: 600;
 }
 
 .topic-detail__section-title {
@@ -73,7 +74,7 @@
 }
 
 .topic-detail__history .topic-detail__history-item--selected {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--select);
 }
 
 .topic-detail__time {
@@ -88,7 +89,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-variation-settings: var(--mono);
 }
 
 .topic-detail__message {
@@ -107,8 +108,8 @@
 }
 
 .topic-detail__toolbar .is-active {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--text);
+  background: var(--select);
 }
 
 .topic-detail__diff-toggle {
@@ -125,7 +126,7 @@
   overflow-x: auto;
   border-radius: 4px;
   background: var(--bg-raised);
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-variation-settings: var(--mono);
   font-size: 12px;
   user-select: text;
 }
@@ -155,24 +156,22 @@
   color: var(--text-muted);
 }
 
+/* Diffs: the new value is what just happened, so it takes the lamp colour; the old one recedes. */
 .change--added td:last-child,
+.change--changed td:last-child,
 .diff-line--added {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  color: var(--lamp);
+}
+
+.diff-line--added {
+  background: color-mix(in srgb, var(--lamp) 10%, transparent);
 }
 
 .change--removed td:nth-child(2),
+.change--changed td:nth-child(2),
 .diff-line--removed {
-  color: var(--bad);
-  background: color-mix(in srgb, var(--bad) 10%, transparent);
-}
-
-.change--changed td:nth-child(2) {
-  color: var(--bad);
-}
-
-.change--changed td:last-child {
-  color: var(--ok);
+  color: var(--text-muted);
+  text-decoration: line-through;
 }
 
 .topic-detail__line-diff .diff-line {

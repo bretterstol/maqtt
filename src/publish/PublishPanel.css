@@ -42,7 +42,7 @@
   border-radius: 4px;
   background: var(--bg);
   color: inherit;
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-variation-settings: var(--mono);
   font-size: 12px;
   resize: none;
 }
@@ -152,5 +152,5 @@
 }
 
 .publish__preview {
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-variation-settings: var(--mono);
 }

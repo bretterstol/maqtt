@@ -6,9 +6,11 @@ export interface TopicInfo {
   count: number;
   retained: boolean;
   latest: LogEntry;
-  /** When this node last changed, for highlighting fresh values. */
-  changedAt: number;
 }
+
+/** The activity meter covers the last 30 s in 12 buckets. */
+export const ACTIVITY_BUCKETS = 12;
+export const ACTIVITY_BUCKET_MS = 2_500;
 
 export interface TreeNode {
   /** Unique across Connections. */
@@ -26,6 +28,11 @@ export interface TreeNode {
   topicCount: number;
   /** Messages received at or below this node. */
   messageCount: number;
+  /** Messages at or below this node per activity bucket, oldest first, ending at `activityEpoch`. */
+  activity: Uint32Array;
+  activityEpoch: number;
+  /** When a message last arrived at or below this node; 0 if none since the app started. */
+  lastActiveAt: number;
 }
 
 const collator = new Intl.Collator(undefined, { numeric: true });
@@ -53,9 +60,13 @@ export class TopicTreeStore {
     return this.topicNodes.length;
   }
 
-  apply(updates: TopicUpdate[], now = Date.now()): void {
+  /**
+   * Applies topic updates. `live` updates count as activity for the meters; a startup snapshot
+   * doesn't, or every topic would show its whole history as one burst.
+   */
+  apply(updates: TopicUpdate[], { now = Date.now(), live = true } = {}): void {
     if (updates.length === 0) return;
-    for (const update of updates) this.applyOne(update, now);
+    for (const update of updates) this.applyOne(update, now, live);
     this.notify();
   }
 
@@ -93,7 +104,7 @@ export class TopicTreeStore {
 
   getVersion = (): number => this.version;
 
-  private applyOne(update: TopicUpdate, now: number): void {
+  private applyOne(update: TopicUpdate, now: number, live: boolean): void {
     const node = this.nodeFor(update.connectionId, update.topic);
     const previous = node.topic;
     if (previous && update.latest.seq < previous.latest.seq) return;
@@ -103,12 +114,12 @@ export class TopicTreeStore {
       count: update.count,
       retained: update.retained,
       latest: update.latest,
-      changedAt: now,
     };
     if (!previous) this.topicNodes.push(node);
     for (let n: TreeNode | null = node; n; n = n.parent) {
       n.messageCount += addedMessages;
       if (!previous) n.topicCount += 1;
+      if (live && addedMessages > 0) recordActivity(n, addedMessages, now);
     }
     // A new topic may add a row, or change which rows a search shows.
     if (!previous) this.structureChanged();
@@ -207,6 +218,37 @@ export class TopicTreeStore {
   }
 }
 
+function bucketOf(now: number): number {
+  return Math.floor(now / ACTIVITY_BUCKET_MS);
+}
+
+/** Moves a node's buckets forward to `epoch`, dropping what fell out of the window. */
+function advance(activity: Uint32Array, from: number, to: number): void {
+  const gap = to - from;
+  if (gap <= 0) return;
+  if (gap >= activity.length) {
+    activity.fill(0);
+  } else {
+    activity.copyWithin(0, gap);
+    activity.fill(0, activity.length - gap);
+  }
+}
+
+function recordActivity(node: TreeNode, count: number, now: number): void {
+  const epoch = bucketOf(now);
+  advance(node.activity, node.activityEpoch, epoch);
+  node.activityEpoch = epoch;
+  node.activity[node.activity.length - 1] += count;
+  node.lastActiveAt = now;
+}
+
+/** Messages per bucket over the last 30 s as of `now`, oldest first. */
+export function activityOf(node: TreeNode, now = Date.now()): Uint32Array {
+  const activity = node.activity.slice();
+  advance(activity, node.activityEpoch, bucketOf(now));
+  return activity;
+}
+
 function newNode(
   connectionId: ConnectionId,
   name: string,
@@ -225,5 +267,8 @@ function newNode(
     topic: null,
     topicCount: 0,
     messageCount: 0,
+    activity: new Uint32Array(ACTIVITY_BUCKETS),
+    activityEpoch: 0,
+    lastActiveAt: 0,
   };
 }

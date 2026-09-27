@@ -84,7 +84,7 @@ function App() {
     })
       // Backfill from the History Store, e.g. after a reload of the frontend.
       .then(async (generation) => {
-        tree.apply(await topicSnapshot());
+        tree.apply(await topicSnapshot(), { live: false });
         await controller.resetForStream(generation);
       })
       .catch((err) => console.error("stream_messages failed", err));

@@ -14,3 +14,8 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
+
+/** `1 topic`, `2 topics`, with the count localized. */
+export function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+}

@@ -7,7 +7,7 @@
   align-items: flex-start;
   padding: 3rem 1rem;
   overflow-y: auto;
-  background: rgb(0 0 0 / 0.45);
+  background: rgb(4 18 23 / 0.6);
 }
 
 .editor {
@@ -19,7 +19,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
-  box-shadow: 0 12px 40px rgb(0 0 0 / 0.3);
+  box-shadow: 0 16px 48px var(--shadow);
 }
 
 .editor h2 {

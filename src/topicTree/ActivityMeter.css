@@ -1,0 +1,37 @@
+.activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.activity svg {
+  display: block;
+}
+
+.activity__bar {
+  fill: var(--lamp);
+  opacity: 0.75;
+}
+
+.activity__bar:last-child {
+  opacity: 1;
+}
+
+.activity__idle {
+  fill: var(--border);
+}
+
+.activity__lamp {
+  width: 6px;
+  height: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.activity__lamp--lit {
+  border-color: var(--lamp);
+  background: var(--lamp);
+  box-shadow: 0 0 6px var(--lamp);
+}

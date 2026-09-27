@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { TopicUpdate } from "../bridge";
-import { TopicTreeStore, type TreeNode } from "./store";
+import {
+  ACTIVITY_BUCKET_MS,
+  activityOf,
+  TopicTreeStore,
+  type TreeNode,
+} from "./store";
 
 const update = (
   topic: string,
@@ -158,5 +163,40 @@ describe("TopicTreeStore", () => {
       store.setQuery("");
       expect(labels(store.rows())).toEqual(["#1", "  garage", "  home"]);
     });
+  });
+});
+
+describe("activity", () => {
+  const T0 = 1_000 * ACTIVITY_BUCKET_MS;
+  const bucket = (n: number) => T0 + n * ACTIVITY_BUCKET_MS;
+  const newest = (node: TreeNode, now: number) =>
+    [...activityOf(node, now)].slice(-3);
+
+  it("counts new messages in the current bucket, up through the ancestors", () => {
+    const store = new TopicTreeStore();
+    store.apply([update("a/b", 1, 1)], { now: bucket(0) });
+    store.apply([update("a/b", 2, 4)], { now: bucket(0) + 10 });
+    store.apply([update("a/c", 3, 2)], { now: bucket(1) });
+    const a = find(store, "a");
+    expect(newest(a, bucket(1))).toEqual([0, 4, 2]);
+    expect(newest(a.parent!, bucket(1))).toEqual([0, 4, 2]);
+    expect(a.lastActiveAt).toBe(bucket(1));
+  });
+
+  it("slides the window forward and forgets what's older than 30 s", () => {
+    const store = new TopicTreeStore();
+    store.apply([update("a", 1, 5)], { now: bucket(0) });
+    const a = find(store, "a");
+    expect(newest(a, bucket(2))).toEqual([5, 0, 0]);
+    expect([...activityOf(a, bucket(12))].every((v) => v === 0)).toBe(true);
+  });
+
+  it("doesn't count a startup snapshot as activity", () => {
+    const store = new TopicTreeStore();
+    store.apply([update("a", 1, 500)], { now: bucket(0), live: false });
+    const a = find(store, "a");
+    expect(a.messageCount).toBe(500);
+    expect([...activityOf(a, bucket(0))].every((v) => v === 0)).toBe(true);
+    expect(a.lastActiveAt).toBe(0);
   });
 });
