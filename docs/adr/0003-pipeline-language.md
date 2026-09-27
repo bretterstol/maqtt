@@ -1,6 +1,6 @@
 # Pipelines use måqtt's own pipe language, with jq expressions, run in the backend
 
-Pipelines are written in a small language of our own: one keyword Stage per step, joined with `|>` (for example `from "home/+/temp" |> where .temperature > 22 |> to app "hot"`). The expressions inside a Stage (conditions and new shapes of data) are jq, evaluated with the `jaq` crate, so we design the Stages but not an expression language. Pipelines run as Rust tasks reading the Message Bus (ADR 0002), which keeps heavy processing off the UI and makes republishing and file Sinks straightforward.
+Pipelines are written in a small language of our own: one keyword Stage per step, joined with `|>` (for example `from "Dev Broker" |> filter topic "home/+/temp" |> filter .temperature > 22 |> to app "hot"`). The expressions inside a Stage (conditions and new shapes of data) are jq, evaluated with the `jaq` crate, so we design the Stages but not an expression language. Pipelines run as Rust tasks reading the Message Bus (ADR 0002), which keeps heavy processing off the UI and makes republishing and file Sinks straightforward.
 
 ## Considered options
 

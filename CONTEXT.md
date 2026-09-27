@@ -47,11 +47,11 @@ A piece of code, written in måqtt's pipeline language, that takes messages from
 _Avoid_: Script, rule, flow, job
 
 **Stage**:
-One step of a Pipeline, named by a keyword and joined to the next with `|>`.
+One step of a Pipeline, named by a keyword (`from`, `filter`, `map`, `changes`, `throttle`, `scan`, `inspect`, `to`) and joined to the next with `|>`.
 _Avoid_: Operator, step, node
 
 **Source**:
-Where a Pipeline's messages come from: the live messages on the Connections, narrowed by Connection and topic filter.
+Where a Pipeline's messages come from: the live messages of the Connections named in its `from` Stage. Topics are narrowed afterwards with `filter topic`.
 _Avoid_: Input, feed
 
 **Sink**:
@@ -59,7 +59,7 @@ Where a Pipeline's results go: the app, a Broker (republishing), a file or a map
 _Avoid_: Output, target, destination
 
 **Derived Topic**:
-A topic created by a Pipeline's app Sink. It appears in the Topic Tree under its own Pipelines root, and can be explored like any received topic.
+A topic created by a Pipeline's app Sink. It appears in the Topic Tree under the Pipelines root, in a branch per Pipeline, and can be explored like any received topic.
 _Avoid_: Virtual topic, computed topic
 
 **Preview**:
