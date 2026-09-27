@@ -19,3 +19,13 @@ serde_json = { workspace = true }
 bytes = { workspace = true }
 rumqttc = { workspace = true, features = ["use-rustls"] }
 tokio = { workspace = true, features = ["sync", "time", "macros"] }
+keyring = "4.2.0"
+directories = "6.0.0"
+toml = "1.1.6"
+uuid = { version = "1.26.1", features = ["v4"] }
+rustls = "0.23"
+rustls-native-certs = "0.8"
+tauri-plugin-dialog = "2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

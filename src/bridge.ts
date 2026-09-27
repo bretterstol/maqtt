@@ -4,16 +4,66 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type ConnectionId = number;
 
+export type ProfileId = string;
+
 export type ConnectionState =
   | { kind: "connecting" }
   | { kind: "connected" }
-  | { kind: "disconnected"; reason: string };
+  | { kind: "disconnected"; reason: string }
+  | { kind: "closed" };
+
+export type SubscriptionState =
+  | { kind: "pending" }
+  | { kind: "active"; grantedQos: number }
+  | { kind: "rejected"; reason: string };
+
+export interface SubscriptionStatus {
+  filter: string;
+  qos: number;
+  state: SubscriptionState;
+}
 
 export interface ConnectionStatus {
   connectionId: ConnectionId;
+  profileId: ProfileId;
   name: string;
   state: ConnectionState;
+  subscriptions: SubscriptionStatus[];
 }
+
+export interface Subscription {
+  filter: string;
+  qos: number;
+}
+
+export interface TlsSettings {
+  caFile?: string | null;
+  clientCertFile?: string | null;
+  clientKeyFile?: string | null;
+  insecureSkipVerify: boolean;
+}
+
+export interface Profile {
+  id: ProfileId;
+  name: string;
+  host: string;
+  port: number;
+  protocol: "mqtt5" | "mqtt311";
+  clientId: string;
+  username?: string | null;
+  tls?: TlsSettings | null;
+  cleanStart: boolean;
+  keepAliveSecs: number;
+  subscriptions: Subscription[];
+  historyPerTopic: number;
+}
+
+export interface ProfileView extends Profile {
+  hasPassword: boolean;
+}
+
+export type PasswordChange =
+  { kind: "keep" } | { kind: "set"; value: string } | { kind: "clear" };
 
 export interface LogEntry {
   seq: number;
@@ -83,4 +133,48 @@ export function topicHistory(
   topic: string,
 ): Promise<LogEntry[]> {
   return invoke("topic_history", { connectionId, topic });
+}
+
+export function listProfiles(): Promise<ProfileView[]> {
+  return invoke("list_profiles");
+}
+
+/** A new, unsaved Profile with defaults filled in by the backend. */
+export function newProfile(): Promise<Profile> {
+  return invoke("new_profile");
+}
+
+export function saveProfile(
+  profile: Profile,
+  password: PasswordChange,
+): Promise<ProfileView[]> {
+  return invoke("save_profile", { profile, password });
+}
+
+export function deleteProfile(profileId: ProfileId): Promise<ProfileView[]> {
+  return invoke("delete_profile", { profileId });
+}
+
+export function connect(profileId: ProfileId): Promise<void> {
+  return invoke("connect", { profileId });
+}
+
+export function disconnect(profileId: ProfileId): Promise<void> {
+  return invoke("disconnect", { profileId });
+}
+
+/** Adds a Subscription to the live Connection, for this session only. */
+export function subscribe(
+  profileId: ProfileId,
+  subscription: Subscription,
+): Promise<void> {
+  return invoke("subscribe", { profileId, subscription });
+}
+
+/** Removes a Subscription from the live Connection, for this session only. */
+export function unsubscribe(
+  profileId: ProfileId,
+  filter: string,
+): Promise<void> {
+  return invoke("unsubscribe", { profileId, filter });
 }

@@ -1,0 +1,142 @@
+.profiles {
+  width: 18rem;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-raised);
+  overflow-y: auto;
+}
+
+.profiles__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.profiles__empty {
+  padding: 0 0.75rem;
+  color: var(--text-muted);
+}
+
+.profiles__list,
+.subscriptions ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.profile {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.profile__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.profile__name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile__name strong,
+.profile__name small {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.profile__name small {
+  color: var(--text-muted);
+}
+
+.profile__error {
+  margin: 0.35rem 0 0;
+  color: var(--bad);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.status-dot--connected {
+  background: var(--ok);
+}
+
+.status-dot--connecting {
+  background: var(--warn);
+}
+
+.status-dot--disconnected {
+  background: var(--bad);
+}
+
+.subscriptions {
+  margin: 0.4rem 0 0 1rem;
+}
+
+.subscription {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 12px;
+}
+
+.subscription code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.subscription__qos {
+  color: var(--text-muted);
+}
+
+.subscription__state {
+  width: 1em;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.subscription__state--active {
+  color: var(--ok);
+}
+
+.subscription__state--rejected {
+  color: var(--bad);
+  font-weight: 700;
+}
+
+.subscriptions__add {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.subscriptions__add input {
+  flex: 1;
+  min-width: 0;
+}

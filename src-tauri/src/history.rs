@@ -91,7 +91,8 @@ impl<T> LogPage<T> {
 
 #[derive(Default)]
 pub struct HistoryStore {
-    limits: HistoryLimits,
+    default_limits: HistoryLimits,
+    limits: HashMap<ConnectionId, HistoryLimits>,
     connections: HashMap<ConnectionId, ConnectionHistory>,
 }
 
@@ -103,27 +104,42 @@ struct ConnectionHistory {
 }
 
 impl HistoryStore {
-    pub fn new(limits: HistoryLimits) -> Self {
+    pub fn new(default_limits: HistoryLimits) -> Self {
         Self {
-            limits,
+            default_limits,
+            limits: HashMap::new(),
             connections: HashMap::new(),
         }
     }
 
+    /// Changes one Connection's per-topic cap; it applies as each topic next receives a message.
+    pub fn set_per_topic_limit(&mut self, connection_id: ConnectionId, per_topic: usize) {
+        let limits = self
+            .limits
+            .entry(connection_id)
+            .or_insert(self.default_limits);
+        limits.per_topic = per_topic.max(1);
+    }
+
     pub fn insert(&mut self, message: Arc<ReceivedMessage>) {
+        let limits = self
+            .limits
+            .get(&message.connection_id)
+            .copied()
+            .unwrap_or(self.default_limits);
         let history = self.connections.entry(message.connection_id).or_default();
         let seq = message.seq;
 
         let topic = history.topics.entry(message.topic.clone()).or_default();
         topic.push_back(seq);
-        if topic.len() > self.limits.per_topic
+        while topic.len() > limits.per_topic
             && let Some(evicted) = topic.pop_front()
         {
             history.messages.remove(&evicted);
         }
         history.messages.insert(seq, message);
 
-        if history.messages.len() > self.limits.per_connection
+        if history.messages.len() > limits.per_connection
             && let Some((evicted_seq, evicted)) = history.messages.pop_first()
             && let Some(topic) = history.topics.get_mut(&evicted.topic)
         {
@@ -301,6 +317,18 @@ mod tests {
         s.insert(message(2, 1, "b", ""));
         assert!(s.topic_history(ConnectionId(1), "a").is_empty());
         assert!(!s.connections[&ConnectionId(1)].topics.contains_key("a"));
+    }
+
+    #[test]
+    fn a_lowered_per_topic_cap_trims_the_topic_on_its_next_message() {
+        let mut s = store(5, 100);
+        for seq in 1..=5 {
+            s.insert(message(seq, 1, "t", ""));
+        }
+        s.set_per_topic_limit(ConnectionId(1), 2);
+        s.insert(message(6, 1, "t", ""));
+        assert_eq!(seqs(&s.topic_history(ConnectionId(1), "t")), [5, 6]);
+        assert_eq!(seqs(&latest(&s, LogFilter::default(), 10).entries), [5, 6]);
     }
 
     #[test]

@@ -1,16 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  listProfiles,
+  newProfile,
   streamMessages,
   type ConnectionId,
   type ConnectionStatus,
+  type Profile,
+  type ProfileView,
 } from "./bridge";
 import { MessageLogController } from "./messageLog/controller";
 import { MessageLog } from "./messageLog/MessageLog";
 import { MessageLogStore } from "./messageLog/store";
+import { ProfileEditor } from "./profiles/ProfileEditor";
+import { ProfileList } from "./profiles/ProfileList";
 import "./App.css";
 
 const LIVE_CAPACITY = 5_000;
 const MAX_SCROLLBACK = 100_000;
+
+interface Editing {
+  profile: Profile;
+  hasPassword: boolean;
+  isNew: boolean;
+}
 
 function App() {
   const [controller] = useState(
@@ -20,16 +32,24 @@ function App() {
       ),
   );
   const { store } = controller;
-  const [connections, setConnections] = useState<
-    Map<ConnectionId, ConnectionStatus>
-  >(new Map());
+  const [statuses, setStatuses] = useState<Map<ConnectionId, ConnectionStatus>>(
+    new Map(),
+  );
+  const [profiles, setProfiles] = useState<ProfileView[]>([]);
+  const [editing, setEditing] = useState<Editing | null>(null);
   const [rate, setRate] = useState(0);
+
+  useEffect(() => {
+    listProfiles()
+      .then(setProfiles)
+      .catch((err) => console.error("list_profiles failed", err));
+  }, []);
 
   useEffect(() => {
     streamMessages((batch) => {
       store.applyBatch(batch);
       if (batch.connectionStates.length > 0) {
-        setConnections((previous) => {
+        setStatuses((previous) => {
           const next = new Map(previous);
           for (const status of batch.connectionStates)
             next.set(status.connectionId, status);
@@ -51,18 +71,27 @@ function App() {
     return () => clearInterval(timer);
   }, [store]);
 
-  const connectionNames = useMemo(
-    () => new Map([...connections].map(([id, status]) => [id, status.name])),
-    [connections],
+  const statusesByProfile = useMemo(
+    () => new Map([...statuses.values()].map((s) => [s.profileId, s])),
+    [statuses],
   );
+  const connectionNames = useMemo(
+    () => new Map([...statuses].map(([id, status]) => [id, status.name])),
+    [statuses],
+  );
+
+  const startNew = useCallback(async () => {
+    setEditing({
+      profile: await newProfile(),
+      hasPassword: false,
+      isNew: true,
+    });
+  }, []);
 
   return (
     <div className="app">
       <header className="app__header">
         <strong>måqtt</strong>
-        {[...connections.values()].map((status) => (
-          <ConnectionBadge key={status.connectionId} status={status} />
-        ))}
         <span className="app__stats">
           {rate.toLocaleString()} msg/s · {store.totalReceived.toLocaleString()}{" "}
           received
@@ -70,21 +99,33 @@ function App() {
             ` · ${store.dropped.toLocaleString()} not shown live`}
         </span>
       </header>
-      <MessageLog controller={controller} connectionNames={connectionNames} />
+      <div className="app__body">
+        <ProfileList
+          profiles={profiles}
+          statuses={statusesByProfile}
+          onNew={() => void startNew()}
+          onEdit={({ hasPassword, ...profile }) =>
+            setEditing({ profile, hasPassword, isNew: false })
+          }
+        />
+        <main className="app__main">
+          <MessageLog
+            controller={controller}
+            connectionNames={connectionNames}
+          />
+        </main>
+      </div>
+      {editing && (
+        <ProfileEditor
+          key={editing.profile.id}
+          profile={editing.profile}
+          hasPassword={editing.hasPassword}
+          isNew={editing.isNew}
+          onSaved={setProfiles}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
-  );
-}
-
-function ConnectionBadge({ status }: { status: ConnectionStatus }) {
-  const { state } = status;
-  const title = state.kind === "disconnected" ? state.reason : state.kind;
-  return (
-    <span className="connection-badge" title={title}>
-      <span
-        className={`connection-badge__dot connection-badge__dot--${state.kind}`}
-      />
-      {status.name}
-    </span>
   );
 }
 

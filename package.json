@@ -11,11 +11,13 @@
     "lint": "tsc && eslint . && prettier --check . && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
     "format": "prettier --write . && cargo fmt --all",
     "dev:env": "dev/env.sh up",
-    "test": "vitest run && cargo test --workspace"
+    "test": "vitest run && cargo test --workspace",
+    "test:broker": "cargo test -p maqtt -- --ignored"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

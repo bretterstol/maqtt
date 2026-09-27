@@ -10,8 +10,8 @@ use tauri::ipc::Channel;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, watch};
 
-use crate::bus::{Bus, BusEvent, ConnectionStatus};
-use crate::connection::Connections;
+use crate::bus::{Bus, BusEvent};
+use crate::connection::{ConnectionStatus, ConnectionStatuses};
 use crate::history::LogFilter;
 use crate::message::{ConnectionId, ReceivedMessage};
 
@@ -105,13 +105,13 @@ fn preview(payload: &[u8]) -> (String, bool) {
 
 pub fn spawn(
     bus: &Bus,
-    connections: &Connections,
+    statuses: &ConnectionStatuses,
     filter: watch::Receiver<LiveFilter>,
     channel: Channel<Batch>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     // Subscribe before taking the snapshot so no state change falls between the two.
     let rx = bus.subscribe();
-    let initial = connections.snapshot();
+    let initial = statuses.snapshot();
     tauri::async_runtime::spawn(run(rx, initial, filter, channel))
 }
 

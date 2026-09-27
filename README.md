@@ -39,9 +39,17 @@ dev/env.sh up --fleet 10000           # 10k extra topics for Topic Tree stress t
 dev/env.sh down                       # stop the Broker
 ```
 
+## Broker Profiles
+
+Profiles are stored in `~/.config/maqtt/profiles.toml` (Linux) or `~/Library/Application Support/maqtt/profiles.toml` (macOS); set `MAQTT_CONFIG_DIR` to use another directory. Passwords are kept in the OS keyring (Secret Service / Keychain), never in the file.
+
+On first run, debug builds create Profiles for the dev Broker (plain, TLS and mTLS) so you can connect straight away.
+
 ## Checks
 
 ```sh
 pnpm lint      # ESLint, Prettier, rustfmt, clippy
 pnpm format    # Prettier + rustfmt
+pnpm test      # Vitest + cargo test
+pnpm test:broker  # integration tests against the dev Broker (needs `dev/env.sh broker`)
 ```
