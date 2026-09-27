@@ -18,7 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
 rumqttc = { workspace = true, features = ["use-rustls"] }
-tokio = { workspace = true, features = ["sync", "time", "macros"] }
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
 keyring = "4.2.0"
 directories = "6.0.0"
 toml = "1.1.6"
@@ -28,6 +28,9 @@ rustls-native-certs = "0.8"
 tauri-plugin-dialog = "2"
 base64 = "0.23.1"
 tauri-plugin-clipboard-manager = "2"
+jaq-core = "3"
+jaq-std = "3"
+jaq-json = "2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

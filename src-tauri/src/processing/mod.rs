@@ -1,0 +1,120 @@
+//! Pipelines: user code that transforms live messages. See docs/processing-plan.md.
+//!
+//! Per ADR 0004 this module is removable: it reaches the rest of måqtt only through the Message
+//! Bus, the Connection names it reads, and the commands below, which `lib.rs` registers.
+
+pub mod jq;
+pub mod lang;
+pub mod runner;
+pub mod stages;
+pub mod store;
+
+use std::path::PathBuf;
+
+use serde::Serialize;
+use tauri::State;
+
+use crate::bus::Bus;
+use crate::connection::ConnectionStatuses;
+use lang::Diagnostic;
+use runner::{PipelineStatus, Runner};
+use store::PipelineFiles;
+
+pub struct Processing {
+    runner: Runner,
+    files: PipelineFiles,
+}
+
+impl Processing {
+    pub fn new(bus: Bus, statuses: ConnectionStatuses, dir: PathBuf) -> Self {
+        Self {
+            runner: Runner::new(bus, statuses),
+            files: PipelineFiles::new(dir),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineView {
+    name: String,
+    source: String,
+    status: PipelineStatus,
+}
+
+/// Every saved Pipeline with its source and status.
+#[tauri::command]
+pub fn list_pipelines(state: State<'_, Processing>) -> Vec<PipelineView> {
+    state
+        .files
+        .list()
+        .into_iter()
+        .map(|(name, source)| PipelineView {
+            status: state
+                .runner
+                .status(&name)
+                .unwrap_or_else(|| PipelineStatus {
+                    name: name.clone(),
+                    ..PipelineStatus::default()
+                }),
+            name,
+            source,
+        })
+        .collect()
+}
+
+/// Problems in a Pipeline's source, for the editor; empty when it's fine.
+#[tauri::command]
+pub fn check_pipeline(source: String) -> Vec<Diagnostic> {
+    lang::parse(&source).err().unwrap_or_default()
+}
+
+/// Saves a Pipeline if it has no problems, and restarts it if it's running. Returns the
+/// problems; when there are any, nothing is saved and a running Pipeline keeps its old code.
+#[tauri::command]
+pub fn save_pipeline(
+    state: State<'_, Processing>,
+    name: String,
+    source: String,
+) -> Result<Vec<Diagnostic>, String> {
+    store::check_name(&name)?;
+    let pipeline = match lang::parse(&source) {
+        Ok(pipeline) => pipeline,
+        Err(problems) => return Ok(problems),
+    };
+    state.files.save(&name, &source)?;
+    if state.runner.is_running(&name) {
+        state.runner.start(&name, pipeline)?;
+    }
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+pub fn delete_pipeline(state: State<'_, Processing>, name: String) -> Result<(), String> {
+    state.runner.forget(&name);
+    state.files.delete(&name)
+}
+
+#[tauri::command]
+pub fn start_pipeline(state: State<'_, Processing>, name: String) -> Result<(), String> {
+    let source = state.files.read(&name)?;
+    let pipeline = lang::parse(&source).map_err(|problems| {
+        let first = &problems[0];
+        format!(
+            "Line {}, column {}: {}",
+            first.line, first.column, first.message
+        )
+    })?;
+    state.runner.start(&name, pipeline)
+}
+
+#[tauri::command]
+pub fn stop_pipeline(state: State<'_, Processing>, name: String) {
+    state.runner.stop(&name);
+}
+
+/// Where the `.pipe` files live, for showing it to the user.
+#[tauri::command]
+pub fn pipelines_folder(state: State<'_, Processing>) -> String {
+    state.files.dir().display().to_string()
+}

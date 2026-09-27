@@ -83,7 +83,7 @@ impl ConnectionStatuses {
         statuses
     }
 
-    fn publish(&self, bus: &Bus, status: ConnectionStatus) {
+    pub fn publish(&self, bus: &Bus, status: ConnectionStatus) {
         self.statuses
             .lock()
             .unwrap()
@@ -1120,6 +1120,67 @@ mod dev_broker_tests {
             ..message
         };
         assert!(client.publish(&plain).await.is_ok());
+        manager.disconnect(&profile.id);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn a_pipeline_turns_live_traffic_into_derived_topics() {
+        use crate::processing::{
+            lang,
+            runner::{PIPELINES, Runner},
+        };
+
+        let base = format!("maqtt/it/pipe/{}", std::process::id());
+        let profile = Profile::new("pipeline test", "localhost", 21883);
+        let bus = Bus::new();
+        let mut rx = bus.subscribe();
+        let statuses = ConnectionStatuses::default();
+        let mut manager = ConnectionManager::default();
+        manager.connect(&profile, None, &bus, &statuses).unwrap();
+        wait_until("subscribed", || all_subscribed(&statuses)).await;
+
+        let runner = Runner::new(bus.clone(), statuses.clone());
+        let source = format!(
+            r#"from "pipeline test"
+            |> filter topic "{base}/+/climate"
+            |> map {{ celsius: .temperature, room: $levels[-2] }}
+            |> filter .celsius > 22
+            |> to app "hot/{{.room}}""#
+        );
+        runner
+            .start("warm rooms", lang::parse(&source).unwrap())
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        publish(
+            &format!("{base}/office/climate"),
+            r#"{"temperature": 19}"#,
+            false,
+        );
+        publish(
+            &format!("{base}/kitchen/climate"),
+            r#"{"temperature": 24}"#,
+            false,
+        );
+
+        let derived = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(BusEvent::Message(m)) = rx.recv().await
+                    && m.connection_id == PIPELINES
+                {
+                    return m;
+                }
+            }
+        })
+        .await
+        .expect("a Derived Topic arrives");
+        assert_eq!(derived.topic, "warm rooms/hot/kitchen");
+        assert_eq!(&derived.payload[..], br#"{"celsius":24,"room":"kitchen"}"#);
+
+        let status = runner.status("warm rooms").unwrap();
+        assert_eq!((status.received, status.emitted, status.errors), (2, 1, 0));
+        runner.stop("warm rooms");
         manager.disconnect(&profile.id);
     }
 }

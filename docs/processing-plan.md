@@ -53,7 +53,7 @@ Expressions inside `filter`, `map` and the other Stages are **jq**, evaluated by
 
 ### Strings
 
-In every string, including strings inside jq expressions, `{…}` fills in the value of a jq expression: `"hot/{$levels[2]}"`, `"{.temp}°C"`. `{{` gives a literal `{`. The parser translates this into jq's own `\(…)` before jq sees it.
+In every string, including strings inside jq expressions, `{…}` fills in the value of a jq expression: `"hot/{$levels[2]}"`, `"{.temp}°C"`. `{{` and `}}` give literal braces, as in Python f-strings. The parser translates this into jq's own `\(…)` before jq sees it.
 
 ### Derived Topics
 
@@ -98,6 +98,8 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
 - A runner task per Pipeline, with a bounded queue, drop counting and errors per message
 - The app Sink: Derived Topics on the bus under the Pipelines pseudo-Connection
 - `.pipe` file storage; start and stop commands; a status stream (in, out, dropped, errors, last error)
+
+Status: done on the `processing` branch. Checked in the app (two `.pipe` files started through the commands put Derived Topics under the Pipelines root) and by a broker integration test.
 
 **Done when:** a `.pipe` file started through the backend puts Derived Topics into the Topic Tree from live dev Broker traffic. Parser, jq and Stage semantics are unit-tested, and a runaway Pipeline (a slow jq expression under heavy traffic) drops messages without slowing the Topic Tree.
 
