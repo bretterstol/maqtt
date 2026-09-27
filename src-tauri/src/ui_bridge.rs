@@ -31,12 +31,22 @@ pub struct Batch {
     pub messages: Vec<LogRow>,
     pub filter_generation: u64,
     pub connection_states: Vec<ConnectionStatus>,
+    /// Topic prefixes cleared since the previous batch; apply these before `topics`.
+    pub cleared: Vec<ClearedTopics>,
     /// Topics that changed since the previous batch, each with its full current stats.
     pub topics: Vec<TopicUpdate>,
     /// Every message received since the previous batch, matching the filter or not.
     pub received: u64,
     /// Matching messages that never reached the frontend since the previous batch.
     pub dropped: u64,
+}
+
+/// The topics at and under `prefix` on a Connection are gone.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearedTopics {
+    pub connection_id: ConnectionId,
+    pub prefix: String,
 }
 
 /// The Message Log filter the live stream applies. Each change gets a new generation so the
@@ -282,6 +292,8 @@ async fn run(
                     }
                 }
                 Ok(BusEvent::ConnectionState(status)) => connection_states.push(status),
+                // The History Store applies these; the tick passes them on in step with it.
+                Ok(BusEvent::TopicsCleared { .. }) => {}
                 Err(RecvError::Lagged(n)) => {
                     received += n;
                     dropped += n;
@@ -294,15 +306,24 @@ async fn run(
                 pending.clear();
             },
             _ = tick.tick() => {
-                let topics: Vec<TopicUpdate> = history
-                    .lock()
-                    .unwrap()
-                    .topics
-                    .take_changed()
-                    .into_iter()
-                    .map(TopicUpdate::from)
-                    .collect();
+                let (cleared, topics) = {
+                    let mut history = history.lock().unwrap();
+                    let cleared: Vec<ClearedTopics> = history
+                        .topics
+                        .take_cleared()
+                        .into_iter()
+                        .map(|(connection_id, prefix)| ClearedTopics { connection_id, prefix })
+                        .collect();
+                    let topics: Vec<TopicUpdate> = history
+                        .topics
+                        .take_changed()
+                        .into_iter()
+                        .map(TopicUpdate::from)
+                        .collect();
+                    (cleared, topics)
+                };
                 let idle = pending.is_empty()
+                    && cleared.is_empty()
                     && connection_states.is_empty()
                     && topics.is_empty()
                     && received == 0;
@@ -314,6 +335,7 @@ async fn run(
                     messages,
                     filter_generation: live.generation,
                     connection_states: std::mem::take(&mut connection_states),
+                    cleared,
                     topics,
                     received: std::mem::take(&mut received),
                     dropped: std::mem::take(&mut dropped),

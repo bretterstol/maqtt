@@ -132,6 +132,8 @@ export interface Batch {
   messages: LogRow[];
   filterGeneration: number;
   connectionStates: ConnectionStatus[];
+  /** Topic prefixes cleared since the previous batch; apply these before `topics`. */
+  cleared: { connectionId: ConnectionId; prefix: string }[];
   /** Topics that changed since the previous batch, each with its full current stats. */
   topics: TopicUpdate[];
   /** Every message received since the previous batch, matching the filter or not. */

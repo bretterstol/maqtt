@@ -34,6 +34,7 @@ import { savedExpandMode } from "./topicTree/expandPreference";
 import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
 import { PIPELINES_CONNECTION } from "./processing/api";
+import { usePipelineBranchLabel } from "./processing/treeBranches";
 import "./App.css";
 
 // Pipelines live in their own folder and load only when their tab opens (ADR 0004).
@@ -88,6 +89,13 @@ function App() {
   useEffect(() => {
     streamMessages((batch) => {
       store.applyBatch(batch);
+      for (const { connectionId, prefix } of batch.cleared) {
+        tree.clear(connectionId, prefix);
+      }
+      if (batch.cleared.length > 0) {
+        // The selected topic may be among those cleared.
+        setSelected((node) => (node && !tree.contains(node) ? null : node));
+      }
       tree.apply(batch.topics);
       if (batch.connectionStates.length > 0) {
         setStatuses((previous) => {
@@ -126,6 +134,10 @@ function App() {
   const connectionNames = useMemo(
     () => new Map([...statuses].map(([id, status]) => [id, status.name])),
     [statuses],
+  );
+
+  const pipelineBranchLabel = usePipelineBranchLabel(
+    statuses.has(PIPELINES_CONNECTION),
   );
 
   // Whether a topic's Connection can publish: connected, and a real Broker rather than the
@@ -264,6 +276,7 @@ function App() {
                 selectedKey={selected?.key ?? null}
                 onSelect={setSelected}
                 onContextMenu={(node, x, y) => setMenu({ node, x, y })}
+                branchLabel={pipelineBranchLabel}
               />
               {selected && (
                 <TopicDetail

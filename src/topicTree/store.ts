@@ -81,6 +81,55 @@ export class TopicTreeStore {
     this.notify();
   }
 
+  /**
+   * Forgets the topics at and under `prefix` on a Connection, removing levels left empty. The
+   * root goes too when nothing is left under it.
+   */
+  clear(connectionId: ConnectionId, prefix: string): void {
+    let node = this.roots.get(connectionId);
+    for (const level of prefix.split("/")) node = node?.children.get(level);
+    if (!node) return;
+
+    const gone = new Set<TreeNode>();
+    const collect = (n: TreeNode) => {
+      if (n.topic) gone.add(n);
+      n.children.forEach(collect);
+    };
+    collect(node);
+    const removed = this.topicNodes.filter((n) => gone.has(n));
+    this.topicNodes.splice(
+      0,
+      this.topicNodes.length,
+      ...this.topicNodes.filter((n) => !gone.has(n)),
+    );
+    for (let n = node.parent; n; n = n.parent) {
+      n.topicCount -= removed.length;
+      n.messageCount -= node.messageCount;
+    }
+
+    // Detach it, then any ancestor it leaves empty.
+    let child: TreeNode = node;
+    for (let parent = child.parent; parent; parent = parent.parent) {
+      parent.children.delete(child.name);
+      this.sortedChildren.delete(parent);
+      if (parent.children.size > 0 || parent.topic) break;
+      child = parent;
+      if (!parent.parent) this.roots.delete(connectionId);
+    }
+    this.structureChanged();
+    this.notify();
+  }
+
+  /** Whether a node is still in the tree, rather than cleared away. */
+  contains(node: TreeNode): boolean {
+    let n = node;
+    while (n.parent) {
+      if (n.parent.children.get(n.name) !== n) return false;
+      n = n.parent;
+    }
+    return this.roots.get(n.connectionId) === n;
+  }
+
   /** The rows to show: expanded nodes, or while searching, matches and their ancestors. */
   rows(): TreeNode[] {
     this.cachedRows ??= this.query ? this.searchRows() : this.expandedRows();

@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::bus::under_prefix;
 use crate::message::{ConnectionId, ReceivedMessage};
 
 pub struct TopicStats {
@@ -25,6 +26,8 @@ pub struct TopicIndex {
     connections: HashMap<ConnectionId, HashMap<String, TopicStats>>,
     /// Topics changed since the last `take_changed`.
     changed: HashSet<(ConnectionId, String)>,
+    /// Prefixes cleared since the last `take_cleared`, in order.
+    cleared: Vec<(ConnectionId, String)>,
 }
 
 impl TopicIndex {
@@ -59,6 +62,22 @@ impl TopicIndex {
             stats.retained = false;
             self.changed.insert((connection_id, topic.clone()));
         }
+    }
+
+    /// Forgets the topics at and under `prefix`, and remembers that it did for `take_cleared`.
+    pub fn clear(&mut self, connection_id: ConnectionId, prefix: &str) {
+        if let Some(topics) = self.connections.get_mut(&connection_id) {
+            topics.retain(|topic, _| !under_prefix(topic, prefix));
+        }
+        self.changed
+            .retain(|(id, topic)| *id != connection_id || !under_prefix(topic, prefix));
+        self.cleared.push((connection_id, prefix.to_string()));
+    }
+
+    /// Prefixes cleared since the previous call. Take these before `take_changed`: the changes
+    /// that follow are newer.
+    pub fn take_cleared(&mut self) -> Vec<(ConnectionId, String)> {
+        std::mem::take(&mut self.cleared)
     }
 
     /// The latest message of some topic, if it has this seq.

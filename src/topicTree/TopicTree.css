@@ -56,6 +56,11 @@
   background: var(--select);
 }
 
+.topic-tree__row--quiet .topic-tree__name,
+.topic-tree__row--quiet .topic-tree__value {
+  opacity: 0.55;
+}
+
 .topic-tree__row--root {
   font-weight: 600;
 }
