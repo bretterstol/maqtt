@@ -8,7 +8,18 @@ import {
   type KeyboardEvent,
   type WheelEvent,
 } from "react";
-import type { ConnectionId, LogEntry, MarkerEntry } from "../bridge";
+import {
+  exportLog,
+  messageDetail,
+  type ConnectionId,
+  type LogEntry,
+  type MarkerEntry,
+} from "../bridge";
+import { payloadAsText } from "../topicDetail/format";
+import { copy } from "../ui/clipboard";
+import { ContextMenu } from "../ui/ContextMenu";
+import { chooseSavePath } from "../ui/dialogs";
+import { toast } from "../ui/toast";
 import { formatSize, formatTime } from "../format";
 import type { MessageLogController } from "./controller";
 import { describeMarker } from "./markers";
@@ -30,6 +41,11 @@ export function MessageLog({ controller, connectionNames }: Props) {
   const { store } = controller;
   const version = useSyncExternalStore(store.subscribe, store.getVersion);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{
+    entry: LogEntry;
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Not using the React Compiler, so its memoization caveat for TanStack Virtual does not apply.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -119,11 +135,33 @@ export function MessageLog({ controller, connectionNames }: Props) {
                 entry={row}
                 connectionName={connectionName}
                 top={item.start}
+                onContextMenu={(x, y) => {
+                  // Keep the row where it is while its menu is open.
+                  store.pause();
+                  setMenu({ entry: row, x, y });
+                }}
               />
             );
           })}
         </div>
       </div>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "Copy topic",
+              onSelect: () => void copy(menu.entry.topic, "topic"),
+            },
+            {
+              label: "Copy payload",
+              onSelect: () => void copyPayload(menu.entry),
+            },
+          ]}
+        />
+      )}
       {!store.following && (
         <button
           className="message-log__follow"
@@ -161,6 +199,28 @@ function MarkerRow({
   );
 }
 
+/** `maqtt-log-2026-09-27-1253.jsonl` in local time. */
+function defaultExportName(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `maqtt-log-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.jsonl`;
+}
+
+async function exportFiltered(controller: MessageLogController) {
+  const path = await chooseSavePath({
+    title: "Export the Message Log",
+    defaultPath: defaultExportName(),
+    filters: [{ name: "JSON Lines", extensions: ["jsonl"] }],
+  });
+  if (!path) return;
+  try {
+    const count = await exportLog(controller.currentFilter, path);
+    toast(`Exported ${count.toLocaleString()} rows to ${path}`);
+  } catch (err) {
+    toast(`Couldn't export: ${err}`, true);
+  }
+}
+
 function FilterBar({ controller, connectionNames }: Props) {
   const [connectionId, setConnectionId] = useState<ConnectionId | null>(null);
   const [text, setText] = useState("");
@@ -193,23 +253,42 @@ function FilterBar({ controller, connectionNames }: Props) {
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
+      <button
+        className="message-log__export"
+        onClick={() => void exportFiltered(controller)}
+        title="Everything the filter matches in the history, as JSON Lines"
+      >
+        Export…
+      </button>
     </div>
   );
+}
+
+async function copyPayload(entry: LogEntry) {
+  const detail = await messageDetail(entry.connectionId, entry.seq);
+  if (detail) await copy(payloadAsText(detail.payload), "payload");
+  else toast("That message has left the history", true);
 }
 
 function Row({
   entry,
   connectionName,
   top,
+  onContextMenu,
 }: {
   entry: LogEntry;
   connectionName: string;
   top: number;
+  onContextMenu: (x: number, y: number) => void;
 }) {
   return (
     <div
       className="message-log__row"
       style={{ transform: `translateY(${top}px)` }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(e.clientX, e.clientY);
+      }}
     >
       <span className="message-log__time">
         {formatTime(entry.receivedAtMs)}

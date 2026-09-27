@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   clearRetained,
   listProfiles,
+  messageDetail,
   newProfile,
   streamMessages,
   topicSnapshot,
@@ -17,7 +18,10 @@ import { ProfileEditor } from "./profiles/ProfileEditor";
 import { ProfileList } from "./profiles/ProfileList";
 import { emptyDraft, type PublishDraft } from "./publish/draft";
 import { PublishPanel } from "./publish/PublishPanel";
-import { ContextMenu } from "./topicTree/ContextMenu";
+import { payloadAsText } from "./topicDetail/format";
+import { copy } from "./ui/clipboard";
+import { ContextMenu } from "./ui/ContextMenu";
+import { Toasts } from "./ui/Toasts";
 import { TopicTreeStore, type TreeNode } from "./topicTree/store";
 import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
@@ -128,8 +132,33 @@ function App() {
     }
   };
 
+  const copyLatestPayload = async (node: TreeNode) => {
+    if (!node.topic) return;
+    const detail = await messageDetail(
+      node.connectionId,
+      node.topic.latest.seq,
+    );
+    if (detail) await copy(payloadAsText(detail.payload), "payload");
+  };
+
   const menuItems = menu
     ? [
+        ...(menu.node.depth > 0
+          ? [
+              {
+                label: "Copy topic",
+                onSelect: () => void copy(menu.node.path, "topic"),
+              },
+            ]
+          : []),
+        ...(menu.node.topic
+          ? [
+              {
+                label: "Copy latest payload",
+                onSelect: () => void copyLatestPayload(menu.node),
+              },
+            ]
+          : []),
         ...(menu.node.depth > 0 && isOnline(menu.node)
           ? [
               {
@@ -184,6 +213,7 @@ function App() {
           onEdit={({ hasPassword, ...profile }) =>
             setEditing({ profile, hasPassword, isNew: false })
           }
+          onImported={setProfiles}
         />
         <main className="app__main">
           <nav className="tabs">
@@ -251,6 +281,7 @@ function App() {
           items={menuItems}
         />
       )}
+      <Toasts />
       {editing && (
         <ProfileEditor
           key={editing.profile.id}

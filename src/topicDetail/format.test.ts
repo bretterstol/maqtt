@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { detectFormat, formatPayload, hexDump, payloadBytes } from "./format";
+import {
+  detectFormat,
+  formatPayload,
+  hexDump,
+  payloadAsText,
+  payloadBytes,
+} from "./format";
 
 const text = (t: string) => ({ kind: "text" as const, text: t });
 const binary = (bytes: number[]) => ({
@@ -49,5 +55,12 @@ describe("hexDump", () => {
 
   it("dumps text payloads by their UTF-8 bytes", () => {
     expect(payloadBytes(text("å"))).toEqual(new Uint8Array([0xc3, 0xa5]));
+  });
+});
+
+describe("payloadAsText", () => {
+  it("copies text as is and binary as hex bytes", () => {
+    expect(payloadAsText(text("on"))).toBe("on");
+    expect(payloadAsText(binary([0xff, 0x00, 0x10]))).toBe("ff 00 10");
   });
 });

@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "dialog:allow-ask"
+    "dialog:allow-save",
+    "dialog:allow-ask",
+    "clipboard-manager:allow-write-text"
   ]
 }

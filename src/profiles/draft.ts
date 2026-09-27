@@ -1,4 +1,9 @@
-import type { PasswordChange, Profile, TlsSettings } from "../bridge";
+import type {
+  ImportReport,
+  PasswordChange,
+  Profile,
+  TlsSettings,
+} from "../bridge";
 
 /** What the password field means for the stored password. */
 export function passwordChange(
@@ -37,4 +42,20 @@ export function cleanDraft(draft: Profile): Profile {
       .map((s) => ({ ...s, filter: s.filter.trim() }))
       .filter((s) => s.filter),
   };
+}
+
+/** One sentence on what an import did. */
+export function describeImport(report: ImportReport): string {
+  const parts = [
+    `Imported ${report.added.length} Profiles`,
+    report.skipped.length > 0 &&
+      `skipped ${report.skipped.length} already here`,
+    report.invalid.length > 0 &&
+      `left out ${report.invalid.length} invalid (${report.invalid.join("; ")})`,
+  ].filter(Boolean);
+  const tail =
+    report.added.length > 0
+      ? ". Add passwords where the Broker needs one."
+      : ".";
+  return parts.join(", ") + tail;
 }

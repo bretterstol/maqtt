@@ -159,3 +159,9 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+
+.profiles__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}

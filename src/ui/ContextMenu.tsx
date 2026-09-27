@@ -14,7 +14,11 @@ interface Props {
   onClose: () => void;
 }
 
-/** A small menu at the pointer; closes on a pick, a click elsewhere, Escape or scrolling. */
+/**
+ * A small menu at the pointer; closes on a pick, a click elsewhere, Escape, or the user
+ * scrolling. Listens for wheel rather than scroll, so views that scroll themselves (a
+ * following Message Log) don't close it.
+ */
 export function ContextMenu({ x, y, items, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -26,12 +30,12 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("mousedown", close);
-    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("wheel", onClose, true);
     window.addEventListener("keydown", onKey);
     ref.current?.querySelector("button")?.focus();
     return () => {
       window.removeEventListener("mousedown", close);
-      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("wheel", onClose, true);
       window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);

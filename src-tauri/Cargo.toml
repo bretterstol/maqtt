@@ -27,6 +27,7 @@ rustls = "0.23"
 rustls-native-certs = "0.8"
 tauri-plugin-dialog = "2"
 base64 = "0.23.1"
+tauri-plugin-clipboard-manager = "2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

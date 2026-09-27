@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "../bridge";
-import { cleanDraft, passwordChange } from "./draft";
+import { cleanDraft, describeImport, passwordChange } from "./draft";
 
 const profile: Profile = {
   id: "p1",
@@ -65,5 +65,25 @@ describe("cleanDraft", () => {
 
   it("leaves TLS off when it is off", () => {
     expect(cleanDraft({ ...profile, tls: null }).tls).toBeNull();
+  });
+});
+
+describe("describeImport", () => {
+  it("reports what was added and asks for passwords", () => {
+    expect(
+      describeImport({ added: ["A", "B"], skipped: [], invalid: [] }),
+    ).toBe("Imported 2 Profiles. Add passwords where the Broker needs one.");
+  });
+
+  it("mentions skipped and invalid Profiles", () => {
+    expect(
+      describeImport({
+        added: [],
+        skipped: ["A"],
+        invalid: ["B: Host is required"],
+      }),
+    ).toBe(
+      "Imported 0 Profiles, skipped 1 already here, left out 1 invalid (B: Host is required).",
+    );
   });
 });

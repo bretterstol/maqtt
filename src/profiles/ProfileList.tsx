@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   connect,
   disconnect,
+  exportProfiles,
+  importProfiles,
   retryNow,
   subscribe,
   unsubscribe,
@@ -10,6 +12,10 @@ import {
   type ProfileView,
   type SubscriptionStatus,
 } from "../bridge";
+import { ContextMenu } from "../ui/ContextMenu";
+import { chooseFile, chooseSavePath } from "../ui/dialogs";
+import { describeImport } from "./draft";
+import { toast } from "../ui/toast";
 import "./ProfileList.css";
 
 interface Props {
@@ -17,17 +23,84 @@ interface Props {
   statuses: Map<string, ConnectionStatus>;
   onNew: () => void;
   onEdit: (profile: ProfileView) => void;
+  onImported: (profiles: ProfileView[]) => void;
 }
 
-export function ProfileList({ profiles, statuses, onNew, onEdit }: Props) {
+const PROFILE_FILE_FILTER = [{ name: "måqtt Profiles", extensions: ["toml"] }];
+
+async function exportAll() {
+  const path = await chooseSavePath({
+    title: "Export Broker Profiles",
+    defaultPath: "maqtt-profiles.toml",
+    filters: PROFILE_FILE_FILTER,
+  });
+  if (!path) return;
+  try {
+    const count = await exportProfiles(path);
+    toast(`Exported ${count} Profiles to ${path}. Passwords are not included.`);
+  } catch (err) {
+    toast(`Couldn't export: ${err}`, true);
+  }
+}
+
+async function importFile(onImported: (profiles: ProfileView[]) => void) {
+  const path = await chooseFile({
+    title: "Import Broker Profiles",
+    filters: PROFILE_FILE_FILTER,
+  });
+  if (!path) return;
+  try {
+    const { report, profiles } = await importProfiles(path);
+    onImported(profiles);
+    toast(describeImport(report));
+  } catch (err) {
+    toast(`Couldn't import: ${err}`, true);
+  }
+}
+
+export function ProfileList({
+  profiles,
+  statuses,
+  onNew,
+  onEdit,
+  onImported,
+}: Props) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
     <aside className="profiles">
       <div className="profiles__header">
         <span>Brokers</span>
-        <button onClick={onNew} title="New Broker Profile">
-          + New
-        </button>
+        <span className="profiles__header-actions">
+          <button
+            className="icon-button"
+            title="Import or export Profiles"
+            aria-label="Import or export Profiles"
+            onClick={(e) => {
+              const box = e.currentTarget.getBoundingClientRect();
+              setMenu({ x: box.left, y: box.bottom + 4 });
+            }}
+          >
+            ⋯
+          </button>
+          <button onClick={onNew} title="New Broker Profile">
+            + New
+          </button>
+        </span>
       </div>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "Import Profiles…",
+              onSelect: () => void importFile(onImported),
+            },
+            { label: "Export Profiles…", onSelect: () => void exportAll() },
+          ]}
+        />
+      )}
       {profiles.length === 0 && (
         <p className="profiles__empty">
           No Broker Profiles yet. Add one to connect.

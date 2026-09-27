@@ -12,6 +12,11 @@ export class MessageLogController {
 
   constructor(readonly store: MessageLogStore) {}
 
+  /** The filter the Message Log shows now. */
+  get currentFilter(): LogFilter {
+    return this.filter;
+  }
+
   get isLoadingLatest(): boolean {
     return this.loadingLatest;
   }

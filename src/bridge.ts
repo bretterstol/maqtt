@@ -297,3 +297,26 @@ export function publishHistory(): Promise<PublishRecord[]> {
 export function clearPublishHistory(): Promise<void> {
   return invoke("clear_publish_history");
 }
+
+/** Writes every Message Log row the filter matches to `path` as JSON Lines; resolves to the count. */
+export function exportLog(filter: LogFilter, path: string): Promise<number> {
+  return invoke("export_log", { filter, path });
+}
+
+/** Writes all Broker Profiles, without passwords, to `path`; resolves to the count. */
+export function exportProfiles(path: string): Promise<number> {
+  return invoke("export_profiles", { path });
+}
+
+export interface ImportReport {
+  added: string[];
+  /** Already here; left untouched. */
+  skipped: string[];
+  invalid: string[];
+}
+
+export function importProfiles(
+  path: string,
+): Promise<{ report: ImportReport; profiles: ProfileView[] }> {
+  return invoke("import_profiles", { path });
+}

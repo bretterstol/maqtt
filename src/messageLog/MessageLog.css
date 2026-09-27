@@ -114,3 +114,7 @@
   background: var(--border-subtle);
   color: var(--text-muted);
 }
+
+.message-log__export {
+  margin-left: auto;
+}

@@ -64,3 +64,11 @@ export function formatPayload(
       return hexDump(payloadBytes(payload));
   }
 }
+
+/** A payload as plain text for the clipboard: the text itself, or its bytes as hex. */
+export function payloadAsText(payload: PayloadData): string {
+  if (payload.kind === "text") return payload.text;
+  return Array.from(payloadBytes(payload), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join(" ");
+}

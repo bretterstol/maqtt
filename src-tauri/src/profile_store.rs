@@ -84,6 +84,17 @@ pub enum PasswordChange {
     Clear,
 }
 
+/// What an import did.
+#[derive(Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReport {
+    pub added: Vec<String>,
+    /// Already here (same Profile ID); left untouched.
+    pub skipped: Vec<String>,
+    /// Not valid; with the reason.
+    pub invalid: Vec<String>,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct ProfilesFile {
     #[serde(default)]
@@ -171,6 +182,54 @@ impl ProfileStore {
         self.write()
     }
 
+    /// Writes every Profile to `path` without secrets, with paths under `home` made portable.
+    pub fn export_to(&self, path: &Path, home: &Path) -> Result<usize, String> {
+        let profiles: Vec<Profile> = self
+            .profiles
+            .iter()
+            .cloned()
+            .map(|mut profile| {
+                map_tls_paths(&mut profile, |p| crate::export::to_portable(p, home));
+                profile
+            })
+            .collect();
+        let count = profiles.len();
+        let text = toml::to_string_pretty(&ProfilesFile { profiles })
+            .map_err(|err| format!("Couldn't serialize Profiles: {err}"))?;
+        let text =
+            format!("# Broker Profiles exported from måqtt. Passwords are not included.\n\n{text}");
+        write_atomically(path, &text)
+            .map_err(|err| format!("Couldn't write {}: {err}", path.display()))?;
+        Ok(count)
+    }
+
+    /// Adds the Profiles in `path` that aren't here yet; `~/` paths are expanded under `home`.
+    pub fn import_from(&mut self, path: &Path, home: &Path) -> Result<ImportReport, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|err| format!("Couldn't read {}: {err}", path.display()))?;
+        let file: ProfilesFile = toml::from_str(&text)
+            .map_err(|err| format!("{} isn't a måqtt Profiles file: {err}", path.display()))?;
+        let mut report = ImportReport::default();
+        for mut profile in file.profiles {
+            if self.get(&profile.id).is_some() {
+                report.skipped.push(profile.name);
+                continue;
+            }
+            map_tls_paths(&mut profile, |p| crate::export::from_portable(p, home));
+            match profile.validate() {
+                Ok(()) => {
+                    report.added.push(profile.name.clone());
+                    self.profiles.push(profile);
+                }
+                Err(err) => report.invalid.push(format!("{}: {err}", profile.name)),
+            }
+        }
+        if !report.added.is_empty() {
+            self.write()?;
+        }
+        Ok(report)
+    }
+
     fn write(&self) -> Result<(), String> {
         let text = toml::to_string_pretty(&ProfilesFile {
             profiles: self.profiles.clone(),
@@ -178,6 +237,21 @@ impl ProfileStore {
         .map_err(|err| format!("Couldn't serialize Profiles: {err}"))?;
         write_atomically(&self.path, &text)
             .map_err(|err| format!("Couldn't write {}: {err}", self.path.display()))
+    }
+}
+
+fn map_tls_paths(profile: &mut Profile, map: impl Fn(&Path) -> PathBuf) {
+    if let Some(tls) = &mut profile.tls {
+        for path in [
+            &mut tls.ca_file,
+            &mut tls.client_cert_file,
+            &mut tls.client_key_file,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *path = map(path);
+        }
     }
 }
 
@@ -272,6 +346,78 @@ mod tests {
         store.delete(&profile.id).unwrap();
         assert!(store.list().is_empty());
         assert_eq!(store.password(&profile.id).unwrap(), None);
+    }
+
+    #[test]
+    fn export_then_import_on_another_machine() {
+        let linux_home = Path::new("/home/me");
+        let mac_home = Path::new("/Users/me");
+        let mut here = store(&temp_path("export-here"));
+        let mut profile = Profile::new("TLS", "broker.local", 8883);
+        profile.username = Some("me".into());
+        profile.tls = Some(TlsSettings {
+            ca_file: Some("/home/me/certs/ca.crt".into()),
+            client_cert_file: Some("/etc/ssl/client.crt".into()),
+            client_key_file: Some("/home/me/certs/client.key".into()),
+            insecure_skip_verify: false,
+        });
+        here.save(profile.clone(), PasswordChange::Set("secret".into()))
+            .unwrap();
+
+        let file = temp_path("export-file").with_file_name("exported.toml");
+        assert_eq!(here.export_to(&file, linux_home).unwrap(), 1);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains("secret"));
+        assert!(text.contains("~/certs/ca.crt"));
+
+        let mut there = store(&temp_path("export-there"));
+        let report = there.import_from(&file, mac_home).unwrap();
+        assert_eq!(report.added, ["TLS"]);
+        let imported = there.get(&profile.id).unwrap();
+        let tls = imported.tls.as_ref().unwrap();
+        assert_eq!(
+            tls.ca_file.as_deref(),
+            Some(Path::new("/Users/me/certs/ca.crt"))
+        );
+        assert_eq!(
+            tls.client_cert_file.as_deref(),
+            Some(Path::new("/etc/ssl/client.crt"))
+        );
+        assert_eq!(imported.username.as_deref(), Some("me"));
+        assert_eq!(imported.subscriptions, profile.subscriptions);
+        assert_eq!(there.password(&profile.id).unwrap(), None);
+    }
+
+    #[test]
+    fn importing_skips_profiles_already_here_and_reports_invalid_ones() {
+        let home = Path::new("/home/me");
+        let mut here = store(&temp_path("import-skip"));
+        let existing = Profile::new("Existing", "localhost", 1883);
+        here.save(existing.clone(), PasswordChange::Keep).unwrap();
+        let file = temp_path("import-skip-file").with_file_name("in.toml");
+        here.export_to(&file, home).unwrap();
+        let mut text = std::fs::read_to_string(&file).unwrap();
+        text.push_str(
+            "\n[[profiles]]\nid = \"new\"\nname = \"Bad\"\nhost = \"\"\nport = 1\nprotocol = \"mqtt5\"\nclientId = \"x\"\n",
+        );
+        std::fs::write(&file, text).unwrap();
+
+        let report = here.import_from(&file, home).unwrap();
+        assert_eq!(report.skipped, ["Existing"]);
+        assert!(report.added.is_empty());
+        assert_eq!(report.invalid.len(), 1);
+        assert_eq!(here.list().len(), 1);
+    }
+
+    #[test]
+    fn importing_something_else_says_so() {
+        let file = temp_path("import-garbage").with_file_name("x.toml");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "profiles = 3").unwrap();
+        let err = store(&temp_path("import-garbage-store"))
+            .import_from(&file, Path::new("/home/me"))
+            .unwrap_err();
+        assert!(err.contains("isn't a måqtt Profiles file"), "{err}");
     }
 
     #[test]

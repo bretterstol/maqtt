@@ -22,6 +22,7 @@ import {
   type PayloadFormat,
 } from "./format";
 import { formatDateTime, formatSize, formatTime } from "../format";
+import { copy } from "../ui/clipboard";
 import "./TopicDetail.css";
 
 /** Busy topics refresh at most this often. */
@@ -74,6 +75,9 @@ export function TopicDetail({
         </div>
         {node.depth > 0 && (
           <div className="topic-detail__actions">
+            <button onClick={() => void copy(node.path, "topic")}>
+              Copy topic
+            </button>
             <button onClick={onPublish} disabled={!online}>
               Publish…
             </button>
@@ -306,6 +310,13 @@ function Message({
             {option === "auto" ? `Auto (${format})` : option.toUpperCase()}
           </button>
         ))}
+        <button
+          onClick={() =>
+            void copy(formatPayload(detail.payload, format), "payload")
+          }
+        >
+          Copy
+        </button>
         <label className="topic-detail__diff-toggle">
           <input
             type="checkbox"

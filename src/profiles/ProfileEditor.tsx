@@ -1,4 +1,4 @@
-import { ask, open } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useState, type ReactNode } from "react";
 import {
   deleteProfile,
@@ -7,6 +7,7 @@ import {
   type ProfileView,
   type TlsSettings,
 } from "../bridge";
+import { chooseFile } from "../ui/dialogs";
 import { cleanDraft, emptyTls, passwordChange } from "./draft";
 import "./ProfileEditor.css";
 
@@ -356,8 +357,8 @@ function FileField({
   onChange: (path: string | null) => void;
 }) {
   const browse = async () => {
-    const picked = await open({ multiple: false, directory: false });
-    if (typeof picked === "string") onChange(picked);
+    const picked = await chooseFile({ title: label });
+    if (picked) onChange(picked);
   };
   return (
     <Field label={label}>

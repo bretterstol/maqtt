@@ -1,6 +1,7 @@
 mod bus;
 mod connection;
 mod dev_profiles;
+mod export;
 mod history;
 mod message;
 mod mqtt;
@@ -22,7 +23,7 @@ use connection::{ConnectionManager, ConnectionStatuses};
 use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
-use profile_store::{KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
+use profile_store::{ImportReport, KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
 use publish::{OutgoingMessage, PublishHistory, PublishRecord};
 use ui_bridge::{LiveFilter, LogEntry, LogRow, MessageDetail, TopicUpdate};
 
@@ -108,6 +109,71 @@ fn message_detail(
 ) -> Option<MessageDetail> {
     let message = state.history.lock().unwrap().get(connection_id, seq)?;
     Some(MessageDetail::from(message.as_ref()))
+}
+
+/// Writes every message and marker the filter matches, oldest first, as JSON Lines to `path`;
+/// returns how many lines were written.
+#[tauri::command]
+fn export_log(
+    state: State<'_, AppState>,
+    filter: LogFilter,
+    path: std::path::PathBuf,
+) -> Result<usize, String> {
+    // Collect under the lock, write without it.
+    let items = state
+        .history
+        .lock()
+        .unwrap()
+        .query(&LogQuery {
+            filter,
+            before_seq: None,
+            limit: usize::MAX,
+        })
+        .entries;
+    let names = state
+        .statuses
+        .snapshot()
+        .into_iter()
+        .map(|s| (s.connection_id, s.name))
+        .collect();
+    export::write_json_lines(&path, &items, &names)
+}
+
+fn home_dir() -> Result<std::path::PathBuf, String> {
+    directories::BaseDirs::new()
+        .map(|dirs| dirs.home_dir().to_path_buf())
+        .ok_or_else(|| "Couldn't find the home directory".into())
+}
+
+/// Writes all Broker Profiles, without passwords, to `path`; returns how many.
+#[tauri::command]
+fn export_profiles(state: State<'_, AppState>, path: std::path::PathBuf) -> Result<usize, String> {
+    state
+        .profiles
+        .lock()
+        .unwrap()
+        .export_to(&path, &home_dir()?)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Imported {
+    report: ImportReport,
+    profiles: Vec<ProfileView>,
+}
+
+/// Adds the Profiles from an exported file that aren't here yet.
+#[tauri::command]
+fn import_profiles(
+    state: State<'_, AppState>,
+    path: std::path::PathBuf,
+) -> Result<Imported, String> {
+    let mut profiles = state.profiles.lock().unwrap();
+    let report = profiles.import_from(&path, &home_dir()?)?;
+    Ok(Imported {
+        report,
+        profiles: profiles.list(),
+    })
 }
 
 /// Every topic in the Topic Tree, for a frontend starting from scratch.
@@ -344,6 +410,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup({
             let bus = bus.clone();
             let history = history.clone();
@@ -371,6 +438,9 @@ pub fn run() {
             topic_history,
             topic_snapshot,
             message_detail,
+            export_log,
+            export_profiles,
+            import_profiles,
             list_profiles,
             new_profile,
             save_profile,
