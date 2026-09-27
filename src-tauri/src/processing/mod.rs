@@ -95,6 +95,31 @@ pub fn delete_pipeline(state: State<'_, Processing>, name: String) -> Result<(),
     state.files.delete(&name)
 }
 
+/// Renames a Pipeline's file; a running Pipeline carries on under the new name.
+#[tauri::command]
+pub fn rename_pipeline(
+    state: State<'_, Processing>,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    store::check_name(&to)?;
+    if from == to {
+        return Ok(());
+    }
+    if state.files.read(&to).is_ok() {
+        return Err(format!("There is already a Pipeline called {to}"));
+    }
+    let source = state.files.read(&from)?;
+    let was_running = state.runner.is_running(&from);
+    state.files.save(&to, &source)?;
+    state.files.delete(&from)?;
+    state.runner.forget(&from);
+    if was_running && let Ok(pipeline) = lang::parse(&source) {
+        state.runner.start(&to, pipeline)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn start_pipeline(state: State<'_, Processing>, name: String) -> Result<(), String> {
     let source = state.files.read(&name)?;

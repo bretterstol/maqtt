@@ -112,6 +112,8 @@ Status: done on the `processing` branch. Checked in the app (two `.pipe` files s
 
 **Done when:** you can write, save, start and watch a Pipeline entirely in the app, and a mistake shows where it is.
 
+Status: done on the `processing` branch. Checked over WebDriver: a mistake is underlined and Save refuses it, Start saves and runs, `inspect` values appear, and new, rename and delete work. The tab loads as its own chunk. Still open: a restarted Pipeline's old Derived Topics stay in the tree, and a stopped Pipeline's branch isn't marked; both need a "forget topics" event.
+
 ### P3: Preview
 
 - The draft runs, as you type, over the last ~100 matching messages from the History Store, without starting it

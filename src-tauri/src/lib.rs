@@ -469,6 +469,7 @@ pub fn run() {
             processing::check_pipeline,
             processing::save_pipeline,
             processing::delete_pipeline,
+            processing::rename_pipeline,
             processing::start_pipeline,
             processing::stop_pipeline,
             processing::pipelines_folder,

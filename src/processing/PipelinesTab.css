@@ -1,0 +1,233 @@
+/* The Pipelines tab. Code stays in the console's fog and kelp; amber still only means activity. */
+.pipelines {
+  --code-string: light-dark(#2b7a74, #7cc7bd);
+  --code-variable: light-dark(#3d5f9a, #9db7e3);
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.pipelines__list {
+  width: 14rem;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  border-right: 1px solid var(--border);
+  background: var(--bg-rack);
+  overflow-y: auto;
+}
+
+.pipelines__list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pipelines__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.45rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  text-align: left;
+}
+
+.pipelines__item:hover:not(:disabled) {
+  background: var(--border-subtle);
+}
+
+.pipelines__item--selected,
+.pipelines__item--selected:hover:not(:disabled) {
+  background: var(--select);
+}
+
+.pipelines__lamp {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+}
+
+.pipelines__lamp--on {
+  border-color: var(--lamp);
+  background: var(--lamp);
+  box-shadow: 0 0 6px var(--lamp);
+}
+
+.pipelines__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipelines__unsaved {
+  color: var(--text-muted);
+}
+
+.pipelines__count {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pipelines__empty,
+.pipelines__folder {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pipelines__folder {
+  margin-top: auto;
+  overflow-wrap: anywhere;
+}
+
+.pipelines__work {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pipelines__work--empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.pipelines__header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.pipelines__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.pipelines__rename {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.pipelines__spacer {
+  flex: 1;
+}
+
+.pipelines__confirm {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.pipeline-editor {
+  flex: 3;
+  min-height: 8rem;
+  overflow: hidden;
+}
+
+.pipelines__problems {
+  margin: 0;
+  min-height: 1.4em;
+  padding: 0.2rem 0.75rem;
+  border-top: 1px solid var(--border);
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.pipelines__problems:empty {
+  display: none;
+}
+
+.pipeline-output {
+  flex: 2;
+  min-height: 6rem;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.pipeline-output__counts {
+  display: flex;
+  gap: 1rem;
+  padding: 0.35rem 0.75rem;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pipeline-output__counts > :first-child {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pipeline-output__bad,
+.pipeline-output__error {
+  color: var(--bad);
+}
+
+.pipeline-output__error {
+  margin: 0;
+  padding: 0 0.75rem 0.35rem;
+  font-size: 12px;
+}
+
+.pipeline-output__inspected {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.pipeline-output__inspected li {
+  display: grid;
+  grid-template-columns: auto minmax(6rem, 14rem) 1fr;
+  gap: 0.75rem;
+  padding: 0.15rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+
+.pipeline-output__time,
+.pipeline-output__where {
+  color: var(--text-muted);
+  font-variation-settings: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.pipeline-output__where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipeline-output__inspected code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.pipeline-output__hint {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  color: var(--text-muted);
+  font-size: 12px;
+}

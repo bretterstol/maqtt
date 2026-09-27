@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   clearRetained,
   listProfiles,
@@ -28,6 +35,9 @@ import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
 import "./App.css";
 
+// Pipelines live in their own folder and load only when their tab opens (ADR 0004).
+const PipelinesTab = lazy(() => import("./processing/PipelinesTab"));
+
 const LIVE_CAPACITY = 5_000;
 const MAX_SCROLLBACK = 100_000;
 
@@ -50,7 +60,7 @@ function App() {
     store.setExpandMode(savedExpandMode());
     return store;
   });
-  const [tab, setTab] = useState<"topics" | "log">("topics");
+  const [tab, setTab] = useState<"topics" | "log" | "pipelines">("topics");
   const [selected, setSelected] = useState<TreeNode | null>(null);
   const [statuses, setStatuses] = useState<Map<ConnectionId, ConnectionStatus>>(
     new Map(),
@@ -234,6 +244,12 @@ function App() {
             >
               Message Log
             </button>
+            <button
+              className={tab === "pipelines" ? "tabs__tab--active" : undefined}
+              onClick={() => setTab("pipelines")}
+            >
+              Pipelines
+            </button>
           </nav>
           {tab === "topics" ? (
             <div className="app__split">
@@ -261,11 +277,15 @@ function App() {
                 />
               )}
             </div>
-          ) : (
+          ) : tab === "log" ? (
             <MessageLog
               controller={controller}
               connectionNames={connectionNames}
             />
+          ) : (
+            <Suspense fallback={null}>
+              <PipelinesTab />
+            </Suspense>
           )}
           {publishing && (
             <PublishPanel
