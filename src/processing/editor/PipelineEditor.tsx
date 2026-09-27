@@ -8,7 +8,9 @@ import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import type { Diagnostic } from "../api";
 import { byteToIndex } from "../offsets";
+import type { StageNote } from "../stageNotes";
 import { pipeLanguage, pipeTheme } from "./pipeLanguage";
+import { setStageNotes, stageNotesField } from "./stageNotesField";
 
 /** Marks text put in from outside, which isn't an edit to report back. */
 const fromOutside = Annotation.define<boolean>();
@@ -20,6 +22,8 @@ interface Props {
   onChange: (value: string) => void;
   onSave: () => void;
   diagnostics: Diagnostic[];
+  /** Preview's result after each Stage. */
+  notes: StageNote[];
 }
 
 /** CodeMirror with måqtt's pipeline language; the parent owns the text. */
@@ -29,6 +33,7 @@ export function PipelineEditor({
   onChange,
   onSave,
   diagnostics,
+  notes,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -57,6 +62,7 @@ export function PipelineEditor({
           basicSetup,
           pipeLanguage,
           pipeTheme,
+          stageNotesField,
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
             const outside = update.transactions.some((t) =>
@@ -103,6 +109,10 @@ export function PipelineEditor({
     });
     editor.dispatch(setDiagnostics(editor.state, marks));
   }, [diagnostics]);
+
+  useEffect(() => {
+    view.current?.dispatch({ effects: setStageNotes.of(notes) });
+  }, [notes, docKey]);
 
   return <div className="pipeline-editor" ref={host} />;
 }

@@ -86,6 +86,7 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
   - `sinks/`: the app Sink first.
   - `store.rs`: `.pipe` files.
   - `mod.rs`: the Tauri commands.
+- **Preview reads the History Store** through one closure that `lib.rs` hands to the module (`RecentMessages`), read-only. It's the only way in besides the bus.
 - **Frontend** (`src/processing/`): the Pipelines tab (list, editor, Preview, output), a CodeMirror 6 language mode for highlighting, and calls through `bridge.ts`.
 
 ## Milestones
@@ -120,6 +121,8 @@ Status: done on the `processing` branch. Checked over WebDriver: a mistake is un
 - Its output (or first error) shows next to the code, Stage by Stage
 
 **Done when:** changing a `map` shows the new output within a moment, on real data, without starting the Pipeline.
+
+Status: done on the `processing` branch. The draft runs over the newest 100 messages that pass `from` and the leading `filter topic` Stages (looking back up to 50,000 per Connection), replayed on their own timestamps so `throttle` behaves as it did live. Nothing is sent anywhere. After each Stage the editor shows how many values passed and the latest one, or the number of errors and the first. The output panel switches between Preview and the running Pipeline. It runs 300 ms after typing stops and every 3 s after that. Checked over WebDriver: a `map` change shows in about half a second.
 
 ### P4: Stateful Stages
 

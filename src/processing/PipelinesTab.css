@@ -146,8 +146,12 @@
   min-height: 1.4em;
   padding: 0.2rem 0.75rem;
   border-top: 1px solid var(--border);
-  color: var(--bad);
+  color: var(--text-muted);
   font-size: 12px;
+}
+
+.pipelines__problems--bad {
+  color: var(--bad);
 }
 
 .pipelines__problems:empty {
@@ -163,18 +167,38 @@
   background: var(--bg-raised);
 }
 
+.pipeline-output__bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.3rem 0.75rem;
+}
+
+.pipeline-output__switch {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.pipeline-output__switch button {
+  padding: 0.05rem 0.5rem;
+  border-color: transparent;
+  background: none;
+  color: var(--text-muted);
+}
+
+.pipeline-output__switch button[aria-selected="true"] {
+  border-color: var(--border);
+  background: var(--bg-field);
+  color: var(--text);
+  font-weight: 600;
+}
+
 .pipeline-output__counts {
   display: flex;
   gap: 1rem;
-  padding: 0.35rem 0.75rem;
   color: var(--text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-}
-
-.pipeline-output__counts > :first-child {
-  color: var(--text);
-  font-weight: 600;
 }
 
 .pipeline-output__bad,

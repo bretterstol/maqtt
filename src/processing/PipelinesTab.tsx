@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "../ui/toast";
 import {
-  checkPipeline,
   deletePipeline,
   listPipelines,
   pipelinesFolder,
+  previewPipeline,
   renamePipeline,
   savePipeline,
   startPipeline,
   stopPipeline,
   type Diagnostic,
+  type Preview,
   type PipelineView,
 } from "./api";
 import { PipelineEditor } from "./editor/PipelineEditor";
-import { OutputPanel } from "./OutputPanel";
+import { OutputPanel, type OutputView } from "./OutputPanel";
+import { stageNotes, type StageNote } from "./stageNotes";
 import "./PipelinesTab.css";
 
 const POLL_MS = 1_000;
-const CHECK_DELAY_MS = 300;
+const PREVIEW_DELAY_MS = 300;
+/** Preview runs again this often while the text stays the same, to follow live data. */
+const PREVIEW_EVERY_MS = 3_000;
+
+const NO_NOTES: StageNote[] = [];
 
 const TEMPLATE = `# Describe what this Pipeline does
 from all
@@ -32,6 +38,17 @@ function freeName(taken: string[]): string {
   }
 }
 
+function problemsOnly(problems: Diagnostic[]): Preview {
+  return {
+    problems,
+    messages: 0,
+    ends: [],
+    stages: [],
+    results: [],
+    inspected: [],
+  };
+}
+
 function problemText(problems: Diagnostic[]): string {
   const first = problems[0];
   const more = problems.length > 1 ? ` (and ${problems.length - 1} more)` : "";
@@ -44,11 +61,14 @@ export default function PipelinesTab() {
   const [selected, setSelected] = useState<string | null>(null);
   // Unsaved edits per Pipeline, so switching between them keeps the text.
   const [drafts, setDrafts] = useState<Map<string, string>>(new Map());
-  // The problems found in a Pipeline's text, kept with its name so another Pipeline's don't show.
-  const [checked, setChecked] = useState<{
+  // The latest Preview, kept with its Pipeline's name so another Pipeline's doesn't show.
+  const [previewed, setPreviewed] = useState<{
     name: string;
-    problems: Diagnostic[];
+    preview: Preview;
+    notes: StageNote[];
   } | null>(null);
+  // Preview or live output; unset follows whether the Pipeline runs.
+  const [outputView, setOutputView] = useState<OutputView | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [folder, setFolder] = useState("");
@@ -85,22 +105,39 @@ export default function PipelinesTab() {
   const current = pipelines.find((p) => p.name === selected) ?? null;
   const text = current ? (drafts.get(current.name) ?? current.source) : "";
   const dirty = current !== null && text !== current.source;
-  const problems =
-    current && checked?.name === current.name ? checked.problems : [];
+  const preview =
+    current && previewed?.name === current.name ? previewed : null;
+  const problems = preview?.preview.problems ?? [];
 
-  // Check the text shortly after typing stops, for the underlines in the editor.
+  // Preview the text shortly after typing stops, then keep it fresh. It also finds the
+  // problems underlined in the editor. An answer for text that has since changed is dropped.
   useEffect(() => {
     if (!current) return;
     const name = current.name;
     let stale = false;
-    const timer = setTimeout(() => {
-      void checkPipeline(text).then((found) => {
-        if (!stale) setChecked({ name, problems: found });
-      });
-    }, CHECK_DELAY_MS);
+    const run = () =>
+      void previewPipeline(text).then(
+        (result) => {
+          if (!stale)
+            setPreviewed({
+              name,
+              preview: result,
+              notes: stageNotes(text, result),
+            });
+        },
+        (error) => {
+          if (!stale) toast(`Preview failed: ${String(error)}`, true);
+        },
+      );
+    let every: ReturnType<typeof setInterval> | undefined;
+    const first = setTimeout(() => {
+      run();
+      every = setInterval(run, PREVIEW_EVERY_MS);
+    }, PREVIEW_DELAY_MS);
     return () => {
       stale = true;
-      clearTimeout(timer);
+      clearTimeout(first);
+      clearInterval(every);
     };
   }, [current?.name, text]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -124,7 +161,7 @@ export default function PipelinesTab() {
     try {
       const found = await savePipeline(name, text);
       if (found.length > 0) {
-        setChecked({ name, problems: found });
+        setPreviewed({ name, preview: problemsOnly(found), notes: [] });
         toast(`Not saved. ${problemText(found)}`, true);
         return false;
       }
@@ -339,15 +376,28 @@ export default function PipelinesTab() {
             onChange={edit}
             onSave={() => void save()}
             diagnostics={problems}
+            notes={preview?.notes ?? NO_NOTES}
           />
-          <p className="pipelines__problems" aria-live="polite">
+          <p
+            className={
+              problems.length > 0
+                ? "pipelines__problems pipelines__problems--bad"
+                : "pipelines__problems"
+            }
+            aria-live="polite"
+          >
             {problems.length > 0
               ? problemText(problems)
               : dirty
                 ? "Unsaved changes"
                 : ""}
           </p>
-          <OutputPanel status={current.status} />
+          <OutputPanel
+            status={current.status}
+            preview={problems.length > 0 ? null : (preview?.preview ?? null)}
+            view={outputView ?? (current.status.running ? "live" : "preview")}
+            onView={setOutputView}
+          />
         </section>
       ) : (
         <section className="pipelines__work pipelines__work--empty">

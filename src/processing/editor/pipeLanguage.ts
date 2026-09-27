@@ -120,5 +120,14 @@ export const pipeTheme = [
       color: "var(--text)",
     },
     ".cm-diagnostic-error": { borderLeftColor: "var(--bad)" },
+    ".cm-stage-note": {
+      marginLeft: "3ch",
+      color: "var(--text-muted)",
+      fontSize: "12px",
+      opacity: "0.85",
+    },
+    ".cm-stage-note::before": { content: '"→ "' },
+    ".cm-stage-note--error": { color: "var(--bad)", opacity: "1" },
+    ".cm-stage-note--error::before": { content: '"✕ "' },
   }),
 ];

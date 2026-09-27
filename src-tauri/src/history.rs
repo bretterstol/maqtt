@@ -227,6 +227,35 @@ impl HistoryStore {
             .collect()
     }
 
+    /// Up to `limit` of the newest messages that `keep` accepts, oldest first, looking at no more
+    /// than `scan` messages per Connection.
+    pub fn recent(
+        &self,
+        keep: &dyn Fn(&ReceivedMessage) -> bool,
+        limit: usize,
+        scan: usize,
+    ) -> Vec<Arc<ReceivedMessage>> {
+        // The newest `limit` overall are among the newest `limit` of each Connection.
+        let mut found: Vec<Arc<ReceivedMessage>> = self
+            .connections
+            .values()
+            .flat_map(|history| {
+                history
+                    .messages
+                    .values()
+                    .rev()
+                    .take(scan)
+                    .filter(|m| keep(m))
+                    .take(limit)
+                    .cloned()
+            })
+            .collect();
+        found.sort_by_key(|m| std::cmp::Reverse(m.seq));
+        found.truncate(limit);
+        found.reverse();
+        found
+    }
+
     /// A page of the Message Log across all Connections, messages and markers merged by seq.
     pub fn query(&self, query: &LogQuery) -> LogPage<LogItem> {
         let before = query.before_seq.unwrap_or(u64::MAX);
@@ -552,5 +581,26 @@ mod tests {
         };
         assert!(text("ok").matches(&binary));
         assert!(!text("a needle longer than both").matches(&binary));
+    }
+
+    #[test]
+    fn recent_takes_the_newest_accepted_messages_across_connections() {
+        let mut store = HistoryStore::new(HistoryLimits::default());
+        for seq in 1..=10 {
+            let topic = if seq % 2 == 0 { "even" } else { "odd" };
+            store.insert(message(seq, (seq % 3) as u32, topic, ""));
+        }
+        let seqs =
+            |found: Vec<Arc<ReceivedMessage>>| found.iter().map(|m| m.seq).collect::<Vec<_>>();
+        assert_eq!(
+            seqs(store.recent(&|m| m.topic == "even", 3, 100)),
+            vec![6, 8, 10]
+        );
+        assert_eq!(
+            seqs(store.recent(&|_| true, 100, 100)),
+            (1..=10).collect::<Vec<_>>()
+        );
+        // Each Connection looks at only its newest message.
+        assert_eq!(seqs(store.recent(&|_| true, 100, 1)), vec![8, 9, 10]);
     }
 }

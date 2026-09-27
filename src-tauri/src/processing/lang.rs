@@ -50,6 +50,9 @@ pub enum Stage {
 pub struct Pipeline {
     pub from: Connections,
     pub stages: Vec<Stage>,
+    /// Where the `from` line and then each Stage end in the source (byte offsets), for Preview
+    /// to show what each Stage did.
+    pub ends: Vec<usize>,
 }
 
 const STAGES: &str = "filter, map, changes, throttle, inspect, to";
@@ -61,7 +64,10 @@ pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
     let mut segments = split_stages(&code).into_iter();
 
     let mut from = None;
+    let mut ends = Vec::new();
+    let end_of = |span: Span| span.start + code[span.start..span.end].trim_end().len();
     if let Some(first) = segments.next() {
+        ends.push(end_of(first));
         let (keyword, arg) = keyword(&code, first);
         if keyword.text == "from" {
             from = parse_from(&code, arg, &mut problems);
@@ -79,11 +85,12 @@ pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
         let (keyword, arg) = keyword(&code, segment);
         if let Some(stage) = parse_stage(&code, keyword, arg, &mut problems) {
             stages.push(stage);
+            ends.push(end_of(segment));
         }
     }
 
     match (from, problems.list.is_empty()) {
-        (Some(from), true) => Ok(Pipeline { from, stages }),
+        (Some(from), true) => Ok(Pipeline { from, stages, ends }),
         _ => {
             if problems.list.is_empty() {
                 problems.at(0, 1, "A Pipeline needs a `from` line");
@@ -818,5 +825,16 @@ from "Dev Broker"
     fn every_problem_is_reported() {
         let problems = parse("from all |> sort |> map |> throttle soon").unwrap_err();
         assert_eq!(problems.len(), 3);
+    }
+
+    #[test]
+    fn records_where_each_stage_ends() {
+        let source = "from all   # all of it\n|> map .a\n\n|> inspect \"x\"  \n";
+        let ends = parse(source).unwrap().ends;
+        let text: Vec<&str> = ends.iter().map(|&end| &source[..end]).collect();
+        assert!(text[0].ends_with("from all"), "{text:?}");
+        assert!(text[1].ends_with("map .a"), "{text:?}");
+        assert!(text[2].ends_with("inspect \"x\""), "{text:?}");
+        assert_eq!(ends.len(), 3);
     }
 }

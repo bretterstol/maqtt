@@ -39,9 +39,6 @@ export interface PipelineView {
 export const listPipelines = (): Promise<PipelineView[]> =>
   invoke("list_pipelines");
 
-export const checkPipeline = (source: string): Promise<Diagnostic[]> =>
-  invoke("check_pipeline", { source });
-
 /** Saves if there are no problems (and restarts it if running); resolves to the problems. */
 export const savePipeline = (
   name: string,
@@ -62,3 +59,32 @@ export const stopPipeline = (name: string): Promise<void> =>
 
 export const pipelinesFolder = (): Promise<string> =>
   invoke("pipelines_folder");
+
+/** What one Stage did in a Preview. */
+export interface StageTrace {
+  passed: number;
+  last: string | null;
+  errors: number;
+  firstError: string | null;
+}
+
+export interface PreviewValue {
+  label: string | null;
+  topic: string;
+  value: string;
+}
+
+export interface Preview {
+  /** When not empty, nothing ran. */
+  problems: Diagnostic[];
+  messages: number;
+  /** Where `from` and then each Stage end in the source (UTF-8 byte offsets). */
+  ends: number[];
+  stages: StageTrace[];
+  results: PreviewValue[];
+  inspected: PreviewValue[];
+}
+
+/** Runs a draft over recent messages without starting it. */
+export const previewPipeline = (source: string): Promise<Preview> =>
+  invoke("preview_pipeline", { source });

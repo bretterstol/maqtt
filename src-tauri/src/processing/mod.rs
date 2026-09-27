@@ -1,10 +1,12 @@
 //! Pipelines: user code that transforms live messages. See docs/processing-plan.md.
 //!
 //! Per ADR 0004 this module is removable: it reaches the rest of måqtt only through the Message
-//! Bus, the Connection names it reads, and the commands below, which `lib.rs` registers.
+//! Bus, the Connection names it reads, a read-only view of recent messages for Preview, and the
+//! commands below, which `lib.rs` registers.
 
 pub mod jq;
 pub mod lang;
+pub mod preview;
 pub mod runner;
 pub mod stages;
 pub mod store;
@@ -17,19 +19,29 @@ use tauri::State;
 use crate::bus::Bus;
 use crate::connection::ConnectionStatuses;
 use lang::Diagnostic;
+use preview::{Preview, RecentMessages};
 use runner::{PipelineStatus, Runner};
 use store::PipelineFiles;
 
 pub struct Processing {
     runner: Runner,
     files: PipelineFiles,
+    statuses: ConnectionStatuses,
+    recent: RecentMessages,
 }
 
 impl Processing {
-    pub fn new(bus: Bus, statuses: ConnectionStatuses, dir: PathBuf) -> Self {
+    pub fn new(
+        bus: Bus,
+        statuses: ConnectionStatuses,
+        dir: PathBuf,
+        recent: RecentMessages,
+    ) -> Self {
         Self {
-            runner: Runner::new(bus, statuses),
+            runner: Runner::new(bus, statuses.clone()),
             files: PipelineFiles::new(dir),
+            statuses,
+            recent,
         }
     }
 }
@@ -61,12 +73,6 @@ pub fn list_pipelines(state: State<'_, Processing>) -> Vec<PipelineView> {
             source,
         })
         .collect()
-}
-
-/// Problems in a Pipeline's source, for the editor; empty when it's fine.
-#[tauri::command]
-pub fn check_pipeline(source: String) -> Vec<Diagnostic> {
-    lang::parse(&source).err().unwrap_or_default()
 }
 
 /// Saves a Pipeline if it has no problems, and restarts it if it's running. Returns the
@@ -139,6 +145,21 @@ pub fn stop_pipeline(state: State<'_, Processing>, name: String) {
 }
 
 /// Where the `.pipe` files live, for showing it to the user.
+/// Runs a draft over recent messages without starting it; see [`preview::preview`].
+#[tauri::command]
+pub async fn preview_pipeline(
+    state: State<'_, Processing>,
+    source: String,
+) -> Result<Preview, String> {
+    let names = state
+        .statuses
+        .snapshot()
+        .into_iter()
+        .map(|s| (s.connection_id, s.name))
+        .collect();
+    Ok(preview::preview(&source, &names, &state.recent))
+}
+
 #[tauri::command]
 pub fn pipelines_folder(state: State<'_, Processing>) -> String {
     state.files.dir().display().to_string()

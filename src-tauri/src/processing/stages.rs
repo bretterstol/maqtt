@@ -30,6 +30,18 @@ pub enum Effect {
     Error(String),
 }
 
+/// What went through one Stage, kept only when Preview asks for it.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageTrace {
+    /// Values the Stage passed on.
+    pub passed: usize,
+    /// The latest of them, as JSON.
+    pub last: Option<String>,
+    pub errors: usize,
+    pub first_error: Option<String>,
+}
+
 /// The original message a value came from, with its jq variables worked out once.
 pub struct Origin {
     pub message: Arc<ReceivedMessage>,
@@ -107,6 +119,7 @@ struct Throttled {
 pub struct Runtime {
     from: Connections,
     stages: Vec<Running>,
+    trace: Option<Vec<StageTrace>>,
 }
 
 impl Runtime {
@@ -140,7 +153,32 @@ impl Runtime {
         Ok(Self {
             from: pipeline.from.clone(),
             stages,
+            trace: None,
         })
+    }
+
+    /// Keeps a [`StageTrace`] per Stage from now on.
+    pub fn traced(mut self) -> Self {
+        self.trace = Some(vec![StageTrace::default(); self.stages.len()]);
+        self
+    }
+
+    pub fn trace(&self) -> &[StageTrace] {
+        self.trace.as_deref().unwrap_or_default()
+    }
+
+    /// Whether a message gets past `from` and the `filter topic` Stages at the start: the cheap
+    /// test Preview uses to pick sample messages.
+    pub fn wants(&self, connection: &str, topic: &str) -> bool {
+        self.reads(connection)
+            && self
+                .stages
+                .iter()
+                .map_while(|stage| match stage {
+                    Running::FilterTopic { filter, negate } => Some((filter, *negate)),
+                    _ => None,
+                })
+                .all(|(filter, negate)| topic_matches(filter, topic) != negate)
     }
 
     /// Whether messages from this Connection are the Pipeline's to handle.
@@ -179,6 +217,9 @@ impl Runtime {
                 _ => continue,
             };
             if !released.is_empty() {
+                if let Some(trace) = &mut self.trace {
+                    record(&mut trace[i], &released, &[]);
+                }
                 self.run_from(i + 1, released, now, out);
             }
         }
@@ -191,15 +232,32 @@ impl Runtime {
         now: Instant,
         out: &mut Vec<Effect>,
     ) {
-        for stage in &mut self.stages[start..] {
+        for (i, stage) in self.stages.iter_mut().enumerate().skip(start) {
             let mut next = Vec::with_capacity(items.len());
+            let before = out.len();
             for item in items {
                 apply(stage, item, now, &mut next, out);
+            }
+            if let Some(trace) = &mut self.trace {
+                record(&mut trace[i], &next, &out[before..]);
             }
             items = next;
             if items.is_empty() {
                 return;
             }
+        }
+    }
+}
+
+fn record(trace: &mut StageTrace, passed: &[Item], effects: &[Effect]) {
+    trace.passed += passed.len();
+    if let Some(item) = passed.last() {
+        trace.last = Some(item.value.to_string());
+    }
+    for effect in effects {
+        if let Effect::Error(message) = effect {
+            trace.errors += 1;
+            trace.first_error.get_or_insert_with(|| message.clone());
         }
     }
 }
@@ -621,5 +679,63 @@ mod tests {
                 r#"["a/b",["a","b"],"Dev Broker",1.0,1,false]"#
             )]
         );
+    }
+
+    #[test]
+    fn a_trace_counts_what_each_stage_passed() {
+        let mut rt =
+            runtime(r#"from all |> filter .t > 1 |> map .t - 1 |> to app "x/{.}""#).traced();
+        run(
+            &mut rt,
+            &[
+                ("a", r#"{"t": 1}"#),
+                ("a", r#"{"t": 2}"#),
+                ("a", r#"{"t": "hi"}"#),
+            ],
+        );
+        let trace = rt.trace();
+        assert_eq!(trace.len(), 3);
+        // "hi" > 1 is true in jq, so it passes the filter and fails in map.
+        assert_eq!(trace[0].passed, 2);
+        assert_eq!((trace[1].passed, trace[1].errors), (1, 1));
+        assert!(
+            trace[1]
+                .first_error
+                .as_deref()
+                .unwrap()
+                .starts_with("map on a: ")
+        );
+        assert_eq!(trace[1].last.as_deref(), Some("1"));
+        assert_eq!((trace[2].passed, trace[2].errors), (1, 0));
+    }
+
+    #[test]
+    fn untraced_runtimes_keep_no_trace() {
+        let mut rt = runtime("from all |> inspect");
+        run(&mut rt, &[("a", "1")]);
+        assert!(rt.trace().is_empty());
+    }
+
+    #[test]
+    fn wants_checks_from_and_the_leading_topic_filters() {
+        let rt = runtime(
+            r#"from "Dev" |> filter topic "home/#" |> filter not topic "+/status" |> filter .x |> filter topic "never""#,
+        );
+        assert!(rt.wants("Dev", "home/kitchen"));
+        assert!(!rt.wants("Dev", "home/status"));
+        assert!(!rt.wants("Dev", "office/kitchen"));
+        assert!(!rt.wants("Other", "home/kitchen"));
+    }
+
+    #[test]
+    fn a_trace_counts_what_throttle_releases_later() {
+        let mut rt = runtime(r#"from all |> throttle 1s |> to app "x""#).traced();
+        let start = Instant::now();
+        let mut out = Vec::new();
+        rt.push(origin("a", "1"), start, &mut out);
+        rt.push(origin("a", "2"), start, &mut out);
+        rt.tick(start + Duration::from_secs(2), &mut out);
+        assert_eq!(rt.trace()[0].passed, 2);
+        assert_eq!(rt.trace()[1].passed, 2);
     }
 }

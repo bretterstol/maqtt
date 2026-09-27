@@ -413,6 +413,10 @@ pub fn run() {
         .with_file_name("pipelines");
     let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits::default())));
     let (live_filter, _) = watch::channel(LiveFilter::default());
+    let recent_messages: processing::preview::RecentMessages = {
+        let history = history.clone();
+        Arc::new(move |keep, limit, scan| history.lock().unwrap().recent(keep, limit, scan))
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -443,6 +447,7 @@ pub fn run() {
             processing_bus,
             statuses,
             pipelines_dir,
+            recent_messages,
         ))
         .invoke_handler(tauri::generate_handler![
             stream_messages,
@@ -466,12 +471,12 @@ pub fn run() {
             publish_history,
             clear_publish_history,
             processing::list_pipelines,
-            processing::check_pipeline,
             processing::save_pipeline,
             processing::delete_pipeline,
             processing::rename_pipeline,
             processing::start_pipeline,
             processing::stop_pipeline,
+            processing::preview_pipeline,
             processing::pipelines_folder,
             subscribe,
             unsubscribe
