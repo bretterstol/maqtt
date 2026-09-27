@@ -6,6 +6,16 @@ A desktop MQTT client for exploring and debugging live traffic on several Broker
 - Decisions: [docs/adr/](./docs/adr/)
 - Roadmap: [docs/v1-plan.md](./docs/v1-plan.md)
 
+## Quick start
+
+```sh
+make dev       # dev Broker, fake traffic and the app in one terminal; Ctrl+C stops it all
+make sandbox   # the same with a throwaway config, every Profile connected
+make           # every shortcut
+```
+
+`make dev` uses your real config (`~/.config/maqtt`); the first run adds the dev Broker Profiles there. `make sandbox` keeps its config in `/tmp/maqtt-sandbox` and `make clean-sandbox` removes it, along with its keyring entry. `make stop` stops the dev Broker.
+
 ## Installing
 
 Download a build from the [Releases](https://github.com/bretterstol/maqtt/releases) page, or build one yourself (below).
