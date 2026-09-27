@@ -39,3 +39,29 @@ _Avoid_: Sent log, outbox
 **Message Log**:
 The chronological stream of messages received across all Connections, filterable by Connection, including markers for disconnects and reconnects.
 _Avoid_: Feed, history, console
+
+### Processing
+
+**Pipeline**:
+A piece of code, written in måqtt's pipeline language, that takes messages from a Source, passes them through Stages and hands the results to Sinks. It runs only while you have started it.
+_Avoid_: Script, rule, flow, job
+
+**Stage**:
+One step of a Pipeline, named by a keyword and joined to the next with `|>`.
+_Avoid_: Operator, step, node
+
+**Source**:
+Where a Pipeline's messages come from: the live messages on the Connections, narrowed by Connection and topic filter.
+_Avoid_: Input, feed
+
+**Sink**:
+Where a Pipeline's results go: the app, a Broker (republishing), a file or a map.
+_Avoid_: Output, target, destination
+
+**Derived Topic**:
+A topic created by a Pipeline's app Sink. It appears in the Topic Tree under its own Pipelines root, and can be explored like any received topic.
+_Avoid_: Virtual topic, computed topic
+
+**Preview**:
+A dry run of the Pipeline being edited over recent history, showing what it would emit or where it fails, without running it for real.
+_Avoid_: Test run, simulation
