@@ -18,6 +18,7 @@ const batch = (seqs: number[], extra: Partial<Batch> = {}): Batch => ({
   messages: seqs.map(entry),
   filterGeneration: 0,
   connectionStates: [],
+  topics: [],
   received: seqs.length,
   dropped: 0,
   ...extra,

@@ -3,6 +3,7 @@ import {
   listProfiles,
   newProfile,
   streamMessages,
+  topicSnapshot,
   type ConnectionId,
   type ConnectionStatus,
   type Profile,
@@ -13,6 +14,8 @@ import { MessageLog } from "./messageLog/MessageLog";
 import { MessageLogStore } from "./messageLog/store";
 import { ProfileEditor } from "./profiles/ProfileEditor";
 import { ProfileList } from "./profiles/ProfileList";
+import { TopicTreeStore, type TreeNode } from "./topicTree/store";
+import { TopicTree } from "./topicTree/TopicTree";
 import "./App.css";
 
 const LIVE_CAPACITY = 5_000;
@@ -32,6 +35,9 @@ function App() {
       ),
   );
   const { store } = controller;
+  const [tree] = useState(() => new TopicTreeStore());
+  const [tab, setTab] = useState<"topics" | "log">("topics");
+  const [selected, setSelected] = useState<TreeNode | null>(null);
   const [statuses, setStatuses] = useState<Map<ConnectionId, ConnectionStatus>>(
     new Map(),
   );
@@ -48,6 +54,7 @@ function App() {
   useEffect(() => {
     streamMessages((batch) => {
       store.applyBatch(batch);
+      tree.apply(batch.topics);
       if (batch.connectionStates.length > 0) {
         setStatuses((previous) => {
           const next = new Map(previous);
@@ -58,9 +65,12 @@ function App() {
       }
     })
       // Backfill from the History Store, e.g. after a reload of the frontend.
-      .then((generation) => controller.resetForStream(generation))
+      .then(async (generation) => {
+        tree.apply(await topicSnapshot());
+        await controller.resetForStream(generation);
+      })
       .catch((err) => console.error("stream_messages failed", err));
-  }, [controller, store]);
+  }, [controller, store, tree]);
 
   useEffect(() => {
     let last = store.totalReceived;
@@ -73,6 +83,10 @@ function App() {
 
   const statusesByProfile = useMemo(
     () => new Map([...statuses.values()].map((s) => [s.profileId, s])),
+    [statuses],
+  );
+  const connectionStates = useMemo(
+    () => new Map([...statuses].map(([id, status]) => [id, status.state])),
     [statuses],
   );
   const connectionNames = useMemo(
@@ -109,10 +123,34 @@ function App() {
           }
         />
         <main className="app__main">
-          <MessageLog
-            controller={controller}
-            connectionNames={connectionNames}
-          />
+          <nav className="tabs">
+            <button
+              className={tab === "topics" ? "tabs__tab--active" : undefined}
+              onClick={() => setTab("topics")}
+            >
+              Topics
+            </button>
+            <button
+              className={tab === "log" ? "tabs__tab--active" : undefined}
+              onClick={() => setTab("log")}
+            >
+              Message Log
+            </button>
+          </nav>
+          {tab === "topics" ? (
+            <TopicTree
+              store={tree}
+              connectionNames={connectionNames}
+              connectionStates={connectionStates}
+              selectedKey={selected?.key ?? null}
+              onSelect={setSelected}
+            />
+          ) : (
+            <MessageLog
+              controller={controller}
+              connectionNames={connectionNames}
+            />
+          )}
         </main>
       </div>
       {editing && (

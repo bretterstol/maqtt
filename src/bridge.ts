@@ -77,11 +77,22 @@ export interface LogEntry {
   receivedAtMs: number;
 }
 
+/** A topic's full current state; the update with the newest `latest.seq` wins. */
+export interface TopicUpdate {
+  connectionId: ConnectionId;
+  topic: string;
+  count: number;
+  retained: boolean;
+  latest: LogEntry;
+}
+
 export interface Batch {
   /** New entries matching the filter of `filterGeneration`, oldest first. */
   messages: LogEntry[];
   filterGeneration: number;
   connectionStates: ConnectionStatus[];
+  /** Topics that changed since the previous batch, each with its full current stats. */
+  topics: TopicUpdate[];
   /** Every message received since the previous batch, matching the filter or not. */
   received: number;
   /** Matching messages that never reached the frontend. */
@@ -177,4 +188,9 @@ export function unsubscribe(
   filter: string,
 ): Promise<void> {
   return invoke("unsubscribe", { profileId, filter });
+}
+
+/** Every topic in the Topic Tree, for starting from scratch. */
+export function topicSnapshot(): Promise<TopicUpdate[]> {
+  return invoke("topic_snapshot");
 }

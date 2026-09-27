@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::bus::{Bus, BusEvent};
+use crate::connection::ConnectionState;
 use crate::message::{ConnectionId, ReceivedMessage};
+use crate::topics::TopicIndex;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLimits {
@@ -91,6 +93,8 @@ impl<T> LogPage<T> {
 
 #[derive(Default)]
 pub struct HistoryStore {
+    /// Every topic ever seen; kept here so one lock covers both.
+    pub topics: TopicIndex,
     default_limits: HistoryLimits,
     limits: HashMap<ConnectionId, HistoryLimits>,
     connections: HashMap<ConnectionId, ConnectionHistory>,
@@ -106,6 +110,7 @@ struct ConnectionHistory {
 impl HistoryStore {
     pub fn new(default_limits: HistoryLimits) -> Self {
         Self {
+            topics: TopicIndex::default(),
             default_limits,
             limits: HashMap::new(),
             connections: HashMap::new(),
@@ -122,6 +127,7 @@ impl HistoryStore {
     }
 
     pub fn insert(&mut self, message: Arc<ReceivedMessage>) {
+        self.topics.record(&message);
         let limits = self
             .limits
             .get(&message.connection_id)
@@ -223,17 +229,14 @@ pub fn spawn_recorder(bus: &Bus, store: Arc<Mutex<HistoryStore>>) {
     tauri::async_runtime::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(BusEvent::Message(message)) => {
+                Ok(event) => {
                     let mut store = store.lock().unwrap();
-                    store.insert(message);
+                    store.record(event);
                     // Drain whatever else is ready under the same lock.
                     while let Ok(event) = rx.try_recv() {
-                        if let BusEvent::Message(message) = event {
-                            store.insert(message);
-                        }
+                        store.record(event);
                     }
                 }
-                Ok(BusEvent::ConnectionState(_)) => {}
                 Err(RecvError::Lagged(n)) => {
                     eprintln!("maqtt: History Store fell behind and missed {n} messages");
                 }
@@ -241,6 +244,18 @@ pub fn spawn_recorder(bus: &Bus, store: Arc<Mutex<HistoryStore>>) {
             }
         }
     });
+}
+
+impl HistoryStore {
+    fn record(&mut self, event: BusEvent) {
+        match event {
+            BusEvent::Message(message) => self.insert(message),
+            BusEvent::ConnectionState(status) if status.state == ConnectionState::Connected => {
+                self.topics.on_connected(status.connection_id);
+            }
+            BusEvent::ConnectionState(_) => {}
+        }
+    }
 }
 
 #[cfg(test)]

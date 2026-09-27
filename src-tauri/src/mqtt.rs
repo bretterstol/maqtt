@@ -108,8 +108,13 @@ impl Client {
             Client::V311(c) => c
                 .try_subscribe(filter, v311_qos(qos))
                 .map_err(|err| err.to_string()),
+            // Retain As Published: live retained publishes keep their flag, so the Topic Index
+            // can track Retained Messages as they are set and cleared.
             Client::V5(c) => c
-                .try_subscribe(filter, v5_qos(qos))
+                .try_subscribe_many([rumqttc::v5::mqttbytes::v5::Filter {
+                    preserve_retain: true,
+                    ..rumqttc::v5::mqttbytes::v5::Filter::new(filter, v5_qos(qos))
+                }])
                 .map_err(|err| err.to_string()),
         }
     }

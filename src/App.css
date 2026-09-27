@@ -114,3 +114,23 @@ input:not([type="checkbox"]) {
 input:disabled {
   opacity: 0.6;
 }
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.4rem 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--text-muted);
+}
+
+.tabs .tabs__tab--active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}

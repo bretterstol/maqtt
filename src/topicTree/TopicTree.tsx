@@ -1,0 +1,200 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type MouseEvent,
+} from "react";
+import type { ConnectionId, ConnectionState } from "../bridge";
+import type { TopicTreeStore, TreeNode } from "./store";
+import "./TopicTree.css";
+
+const ROW_HEIGHT = 24;
+const INDENT_PX = 16;
+const SEARCH_DEBOUNCE_MS = 150;
+/** How long a changed value stays highlighted. */
+const FRESH_MS = 1_000;
+
+interface Props {
+  store: TopicTreeStore;
+  connectionNames: Map<ConnectionId, string>;
+  connectionStates: Map<ConnectionId, ConnectionState>;
+  selectedKey: string | null;
+  onSelect: (node: TreeNode) => void;
+}
+
+export function TopicTree({
+  store,
+  connectionNames,
+  connectionStates,
+  selectedKey,
+  onSelect,
+}: Props) {
+  useSyncExternalStore(store.subscribe, store.getVersion);
+  const rows = store.rows();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const now = Date.now();
+
+  // Not using the React Compiler, so its memoization caveat for TanStack Virtual does not apply.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 20,
+  });
+
+  return (
+    <section className="topic-tree">
+      <SearchBar store={store} />
+      <div className="topic-tree__scroll" ref={scrollRef}>
+        {rows.length === 0 && (
+          <p className="topic-tree__empty">
+            {store.topicCount === 0
+              ? "No topics yet. Connect to a Broker to see its topics here."
+              : "No topics match."}
+          </p>
+        )}
+        <div
+          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+        >
+          {virtualizer.getVirtualItems().map((item) => {
+            const node = rows[item.index];
+            return (
+              <Row
+                key={node.key}
+                node={node}
+                top={item.start}
+                expanded={store.isExpanded(node)}
+                selected={node.key === selectedKey}
+                fresh={!!node.topic && now - node.topic.changedAt < FRESH_MS}
+                rootName={connectionNames.get(node.connectionId)}
+                rootState={connectionStates.get(node.connectionId)}
+                onToggle={() => store.toggle(node)}
+                onSelect={() => onSelect(node)}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SearchBar({ store }: { store: TopicTreeStore }) {
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => store.setQuery(query), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [store, query]);
+
+  return (
+    <div className="topic-tree__search">
+      <input
+        type="search"
+        placeholder="Search topics, or filter with + and #…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <span className="topic-tree__count">
+        {store.queryError ??
+          (query.trim()
+            ? `${store.matchCount.toLocaleString()} of ${store.topicCount.toLocaleString()} topics`
+            : `${store.topicCount.toLocaleString()} topics`)}
+      </span>
+    </div>
+  );
+}
+
+interface RowProps {
+  node: TreeNode;
+  top: number;
+  expanded: boolean;
+  selected: boolean;
+  fresh: boolean;
+  rootName: string | undefined;
+  rootState: ConnectionState | undefined;
+  onToggle: () => void;
+  onSelect: () => void;
+}
+
+function Row({
+  node,
+  top,
+  expanded,
+  selected,
+  fresh,
+  rootName,
+  rootState,
+  onToggle,
+  onSelect,
+}: RowProps) {
+  const isRoot = node.depth === 0;
+  const hasChildren = node.children.size > 0;
+  const toggle = (e: MouseEvent) => {
+    e.stopPropagation();
+    onToggle();
+  };
+  const className = [
+    "topic-tree__row",
+    selected && "topic-tree__row--selected",
+    fresh && "topic-tree__row--fresh",
+    isRoot && "topic-tree__row--root",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div
+      className={className}
+      style={{
+        transform: `translateY(${top}px)`,
+        paddingLeft: node.depth * INDENT_PX + 8,
+      }}
+      onClick={onSelect}
+      onDoubleClick={onToggle}
+    >
+      <button
+        className="topic-tree__expander"
+        onClick={toggle}
+        tabIndex={-1}
+        style={{ visibility: hasChildren ? "visible" : "hidden" }}
+      >
+        {expanded ? "▾" : "▸"}
+      </button>
+      {isRoot && (
+        <span
+          className={`status-dot status-dot--${rootState?.kind ?? "closed"}`}
+        />
+      )}
+      <span className="topic-tree__name" title={node.path || rootName}>
+        {isRoot
+          ? (rootName ?? `Connection ${node.connectionId}`)
+          : node.name || <em>(empty)</em>}
+      </span>
+      {node.topic && !isRoot && (
+        <span
+          className={`topic-tree__value${node.topic.latest.binary ? " topic-tree__value--binary" : ""}`}
+        >
+          {node.topic.latest.preview}
+        </span>
+      )}
+      <span className="topic-tree__meta">
+        {node.topic?.retained && (
+          <span className="badge" title="The Broker holds a Retained Message">
+            R
+          </span>
+        )}
+        {hasChildren ? (
+          <span title={`${node.messageCount.toLocaleString()} messages`}>
+            {node.topicCount.toLocaleString()} topics
+          </span>
+        ) : (
+          <span>{node.messageCount.toLocaleString()} msgs</span>
+        )}
+      </span>
+    </div>
+  );
+}

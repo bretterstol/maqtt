@@ -6,13 +6,14 @@ mod message;
 mod mqtt;
 mod profile;
 mod profile_store;
+mod topics;
 mod ui_bridge;
 
 use std::sync::{Arc, Mutex};
 
-use tauri::State;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
+use tauri::{Manager, State};
 use tokio::sync::watch;
 
 use bus::Bus;
@@ -21,7 +22,7 @@ use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
 use profile_store::{KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
-use ui_bridge::{LiveFilter, LogEntry};
+use ui_bridge::{LiveFilter, LogEntry, TopicUpdate};
 
 /// Upper bound for one `query_log` page, so a careless caller can't serialize the whole store.
 const MAX_PAGE: usize = 5_000;
@@ -45,6 +46,7 @@ fn stream_messages(state: State<'_, AppState>, on_batch: Channel<ui_bridge::Batc
     let handle = ui_bridge::spawn(
         &state.bus,
         &state.statuses,
+        state.history.clone(),
         state.live_filter.subscribe(),
         on_batch,
     );
@@ -94,6 +96,18 @@ fn topic_history(
         .collect()
 }
 
+/// Every topic in the Topic Tree, for a frontend starting from scratch.
+#[tauri::command]
+fn topic_snapshot(state: State<'_, AppState>) -> Vec<TopicUpdate> {
+    let history = state.history.lock().unwrap();
+    history
+        .topics
+        .snapshot()
+        .into_iter()
+        .map(TopicUpdate::from)
+        .collect()
+}
+
 #[tauri::command]
 fn list_profiles(state: State<'_, AppState>) -> Vec<ProfileView> {
     state.profiles.lock().unwrap().list()
@@ -129,13 +143,14 @@ fn delete_profile(
 
 #[tauri::command]
 fn connect(state: State<'_, AppState>, profile_id: ProfileId) -> Result<(), String> {
+    connect_profile(&state, &profile_id)
+}
+
+fn connect_profile(state: &AppState, profile_id: &ProfileId) -> Result<(), String> {
     let (profile, password) = {
         let profiles = state.profiles.lock().unwrap();
-        let profile = profiles
-            .get(&profile_id)
-            .cloned()
-            .ok_or("No such Profile")?;
-        let password = profiles.password(&profile_id)?;
+        let profile = profiles.get(profile_id).cloned().ok_or("No such Profile")?;
+        let password = profiles.password(profile_id)?;
         (profile, password)
     };
     let id = state.connections.lock().unwrap().connect(
@@ -150,6 +165,23 @@ fn connect(state: State<'_, AppState>, profile_id: ProfileId) -> Result<(), Stri
         .unwrap()
         .set_per_topic_limit(id, profile.history_per_topic);
     Ok(())
+}
+
+/// `MAQTT_AUTOCONNECT=all` or a comma-separated list of Profile names
+/// connects those Profiles at startup.
+fn autoconnect(state: &AppState) {
+    let Ok(wanted) = std::env::var("MAQTT_AUTOCONNECT") else {
+        return;
+    };
+    let wanted: Vec<&str> = wanted.split(',').map(str::trim).collect();
+    let profiles = state.profiles.lock().unwrap().list();
+    for view in profiles {
+        if (wanted.contains(&"all") || wanted.contains(&view.profile.name.as_str()))
+            && let Err(err) = connect_profile(state, &view.profile.id)
+        {
+            eprintln!("maqtt: autoconnect {} failed: {err}", view.profile.name);
+        }
+    }
 }
 
 #[tauri::command]
@@ -202,8 +234,9 @@ pub fn run() {
         .setup({
             let bus = bus.clone();
             let history = history.clone();
-            move |_| {
+            move |app| {
                 history::spawn_recorder(&bus, history);
+                autoconnect(&app.state::<AppState>());
                 Ok(())
             }
         })
@@ -221,6 +254,7 @@ pub fn run() {
             set_log_filter,
             query_log,
             topic_history,
+            topic_snapshot,
             list_profiles,
             new_profile,
             save_profile,

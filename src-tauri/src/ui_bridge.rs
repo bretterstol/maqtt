@@ -2,7 +2,7 @@
 //! webview gets a steady ~20 updates per second no matter how busy the Brokers are.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -12,8 +12,9 @@ use tokio::sync::{broadcast, watch};
 
 use crate::bus::{Bus, BusEvent};
 use crate::connection::{ConnectionStatus, ConnectionStatuses};
-use crate::history::LogFilter;
+use crate::history::{HistoryStore, LogFilter};
 use crate::message::{ConnectionId, ReceivedMessage};
+use crate::topics::TopicSnapshot;
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 /// Beyond this many messages per batch the frontend can't show them meaningfully anyway;
@@ -29,6 +30,8 @@ pub struct Batch {
     pub messages: Vec<LogEntry>,
     pub filter_generation: u64,
     pub connection_states: Vec<ConnectionStatus>,
+    /// Topics that changed since the previous batch, each with its full current stats.
+    pub topics: Vec<TopicUpdate>,
     /// Every message received since the previous batch, matching the filter or not.
     pub received: u64,
     /// Matching messages that never reached the frontend since the previous batch.
@@ -55,6 +58,30 @@ pub struct LogEntry {
     pub qos: u8,
     pub retain: bool,
     pub received_at_ms: u64,
+}
+
+/// A topic's full current state for the Topic Tree. Absolute, not a delta, so updates can be
+/// applied in any order: the one with the newest `latest.seq` wins.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicUpdate {
+    pub connection_id: ConnectionId,
+    pub topic: String,
+    pub count: u64,
+    pub retained: bool,
+    pub latest: LogEntry,
+}
+
+impl From<TopicSnapshot<'_>> for TopicUpdate {
+    fn from(s: TopicSnapshot<'_>) -> Self {
+        Self {
+            connection_id: s.connection_id,
+            topic: s.topic.to_string(),
+            count: s.stats.count,
+            retained: s.stats.retained,
+            latest: LogEntry::from(s.stats.latest.as_ref()),
+        }
+    }
 }
 
 impl From<&ReceivedMessage> for LogEntry {
@@ -106,18 +133,20 @@ fn preview(payload: &[u8]) -> (String, bool) {
 pub fn spawn(
     bus: &Bus,
     statuses: &ConnectionStatuses,
+    history: Arc<Mutex<HistoryStore>>,
     filter: watch::Receiver<LiveFilter>,
     channel: Channel<Batch>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     // Subscribe before taking the snapshot so no state change falls between the two.
     let rx = bus.subscribe();
     let initial = statuses.snapshot();
-    tauri::async_runtime::spawn(run(rx, initial, filter, channel))
+    tauri::async_runtime::spawn(run(rx, initial, history, filter, channel))
 }
 
 async fn run(
     mut rx: broadcast::Receiver<BusEvent>,
     initial: Vec<ConnectionStatus>,
+    history: Arc<Mutex<HistoryStore>>,
     mut filter: watch::Receiver<LiveFilter>,
     channel: Channel<Batch>,
 ) {
@@ -157,13 +186,26 @@ async fn run(
                 pending.clear();
             },
             _ = tick.tick() => {
-                if pending.is_empty() && connection_states.is_empty() && received == 0 {
+                let topics: Vec<TopicUpdate> = history
+                    .lock()
+                    .unwrap()
+                    .topics
+                    .take_changed()
+                    .into_iter()
+                    .map(TopicUpdate::from)
+                    .collect();
+                let idle = pending.is_empty()
+                    && connection_states.is_empty()
+                    && topics.is_empty()
+                    && received == 0;
+                if idle {
                     continue;
                 }
                 let batch = Batch {
                     messages: pending.drain(..).map(|m| LogEntry::from(m.as_ref())).collect(),
                     filter_generation: live.generation,
                     connection_states: std::mem::take(&mut connection_states),
+                    topics,
                     received: std::mem::take(&mut received),
                     dropped: std::mem::take(&mut dropped),
                 };

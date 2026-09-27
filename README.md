@@ -43,7 +43,7 @@ dev/env.sh down                       # stop the Broker
 
 Profiles are stored in `~/.config/maqtt/profiles.toml` (Linux) or `~/Library/Application Support/maqtt/profiles.toml` (macOS); set `MAQTT_CONFIG_DIR` to use another directory. Passwords are kept in the OS keyring (Secret Service / Keychain), never in the file.
 
-On first run, debug builds create Profiles for the dev Broker (plain, TLS and mTLS) so you can connect straight away.
+On first run, debug builds create Profiles for the dev Broker (plain, TLS and mTLS) so you can connect straight away. `MAQTT_AUTOCONNECT=all` (or a comma-separated list of Profile names) connects those Profiles at startup.
 
 ## Checks
 

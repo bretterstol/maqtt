@@ -468,4 +468,77 @@ mod dev_broker_tests {
         })
         .await;
     }
+
+    /// Publishes with `mosquitto_pub` to the dev Broker's plain listener; an empty payload is
+    /// sent as a null message (`-n`), which is how a Retained Message is cleared.
+    fn publish(topic: &str, payload: &str, retain: bool) {
+        let mut command = std::process::Command::new("mosquitto_pub");
+        command.args(["-h", "localhost", "-p", "21883", "-t", topic]);
+        if payload.is_empty() {
+            command.arg("-n");
+        } else {
+            command.args(["-m", payload]);
+        }
+        if retain {
+            command.arg("-r");
+        }
+        assert!(command.status().expect("mosquitto_pub").success());
+    }
+
+    /// The retain flags seen for `topic`, in order, until `count` messages arrived.
+    async fn retain_flags(
+        rx: &mut tokio::sync::broadcast::Receiver<BusEvent>,
+        topic: &str,
+        count: usize,
+    ) -> Vec<(bool, bool)> {
+        let mut seen = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while seen.len() < count {
+                if let Ok(BusEvent::Message(m)) = rx.recv().await
+                    && m.topic == topic
+                {
+                    seen.push((m.retain, m.payload.is_empty()));
+                }
+            }
+        })
+        .await
+        .expect("messages arrive");
+        seen
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn retain_as_published_keeps_live_retain_flags_on_mqtt5_only() {
+        for (protocol, live_flag) in [
+            (crate::profile::Protocol::Mqtt5, true),
+            (crate::profile::Protocol::Mqtt311, false),
+        ] {
+            let topic = format!("maqtt/it/retained/{}/{protocol:?}", std::process::id());
+            publish(&topic, "stored", true);
+
+            let mut profile = Profile::new("retain test", "localhost", 21883);
+            profile.protocol = protocol;
+            profile.subscriptions = vec![Subscription {
+                filter: topic.clone(),
+                qos: 0,
+            }];
+            let bus = Bus::new();
+            let mut rx = bus.subscribe();
+            let statuses = ConnectionStatuses::default();
+            let mut manager = ConnectionManager::default();
+            manager.connect(&profile, None, &bus, &statuses).unwrap();
+
+            // The replay on subscribe is always flagged retained.
+            assert_eq!(retain_flags(&mut rx, &topic, 1).await, [(true, false)]);
+
+            publish(&topic, "updated", true);
+            publish(&topic, "", true);
+            assert_eq!(
+                retain_flags(&mut rx, &topic, 2).await,
+                [(live_flag, false), (live_flag, true)],
+                "{protocol:?}"
+            );
+            manager.disconnect(&profile.id);
+        }
+    }
 }
