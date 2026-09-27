@@ -23,6 +23,7 @@ import { copy } from "./ui/clipboard";
 import { ContextMenu } from "./ui/ContextMenu";
 import { Toasts } from "./ui/Toasts";
 import { TopicTreeStore, type TreeNode } from "./topicTree/store";
+import { savedExpandMode } from "./topicTree/expandPreference";
 import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
 import "./App.css";
@@ -44,7 +45,11 @@ function App() {
       ),
   );
   const { store } = controller;
-  const [tree] = useState(() => new TopicTreeStore());
+  const [tree] = useState(() => {
+    const store = new TopicTreeStore();
+    store.setExpandMode(savedExpandMode());
+    return store;
+  });
   const [tab, setTab] = useState<"topics" | "log">("topics");
   const [selected, setSelected] = useState<TreeNode | null>(null);
   const [statuses, setStatuses] = useState<Map<ConnectionId, ConnectionStatus>>(

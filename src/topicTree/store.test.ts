@@ -3,6 +3,7 @@ import type { TopicUpdate } from "../bridge";
 import {
   ACTIVITY_BUCKET_MS,
   activityOf,
+  GROUP_EXPAND_LIMIT,
   TopicTreeStore,
   type TreeNode,
 } from "./store";
@@ -198,5 +199,74 @@ describe("activity", () => {
     expect(a.messageCount).toBe(500);
     expect([...activityOf(a, bucket(0))].every((v) => v === 0)).toBe(true);
     expect(a.lastActiveAt).toBe(0);
+  });
+});
+
+describe("expand modes", () => {
+  const tree = () => {
+    const store = new TopicTreeStore();
+    store.apply([
+      update("home/kitchen/temp", 1),
+      update("home/kitchen/lamp", 2),
+      update("home/office/temp", 3),
+      update("status", 4),
+    ]);
+    return store;
+  };
+
+  it("opens every level except the one holding only topics in groups mode", () => {
+    const store = tree();
+    store.setExpandMode("groups");
+    expect(labels(store.rows())).toEqual([
+      "#1",
+      "  home",
+      "    kitchen",
+      "    office",
+      "  status",
+    ]);
+    expect(store.isExpanded(find(store, "home/kitchen"))).toBe(false);
+  });
+
+  it("keeps a big group closed in groups mode", () => {
+    const store = new TopicTreeStore();
+    store.apply(
+      Array.from({ length: GROUP_EXPAND_LIMIT + 1 }, (_, i) =>
+        update(`fleet/${i}/telemetry`, i + 1),
+      ),
+    );
+    store.setExpandMode("groups");
+    expect(labels(store.rows())).toEqual(["#1", "  fleet"]);
+  });
+
+  it("opens everything in all mode", () => {
+    const store = tree();
+    store.setExpandMode("all");
+    expect(labels(store.rows())).toEqual([
+      "#1",
+      "  home",
+      "    kitchen",
+      "      lamp",
+      "      temp",
+      "    office",
+      "      temp",
+      "  status",
+    ]);
+  });
+
+  it("lets a hand-picked choice win until the mode changes", () => {
+    const store = tree();
+    store.setExpandMode("groups");
+    store.toggle(find(store, "home/kitchen"));
+    store.toggle(find(store, "home"));
+    expect(labels(store.rows())).toEqual(["#1", "  home", "  status"]);
+    store.setExpandMode("all");
+    expect(store.rows().length).toBe(8);
+  });
+
+  it("opens new groups as they appear", () => {
+    const store = tree();
+    store.setExpandMode("groups");
+    store.apply([update("garage/door/state", 5)]);
+    expect(labels(store.rows())).toContain("    door");
   });
 });

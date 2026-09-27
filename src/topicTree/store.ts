@@ -8,6 +8,15 @@ export interface TopicInfo {
   latest: LogEntry;
 }
 
+/**
+ * How the tree opens itself: only by hand, every level except the one holding the topics
+ * ("groups"), or everything.
+ */
+export type ExpandMode = "manual" | "groups" | "all";
+
+/** In "groups" mode, a group with more entries than this stays closed, so it can't flood the tree. */
+export const GROUP_EXPAND_LIMIT = 50;
+
 /** The activity meter covers the last 30 s in 12 buckets. */
 export const ACTIVITY_BUCKETS = 12;
 export const ACTIVITY_BUCKET_MS = 2_500;
@@ -44,7 +53,9 @@ const collator = new Intl.Collator(undefined, { numeric: true });
 export class TopicTreeStore {
   private readonly roots = new Map<ConnectionId, TreeNode>();
   private readonly topicNodes: TreeNode[] = [];
-  private readonly expanded = new Set<string>();
+  private mode: ExpandMode = "manual";
+  /** Nodes opened or closed by hand, which win over the mode until the mode changes. */
+  private readonly overrides = new Map<string, boolean>();
   private readonly sortedChildren = new WeakMap<TreeNode, TreeNode[]>();
   private query = "";
   private cachedRows: TreeNode[] | null = null;
@@ -76,13 +87,47 @@ export class TopicTreeStore {
     return this.cachedRows;
   }
 
+  get expandMode(): ExpandMode {
+    return this.mode;
+  }
+
+  /** Switches how the tree opens itself; choices made by hand are forgotten. */
+  setExpandMode(mode: ExpandMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this.overrides.clear();
+    this.structureChanged();
+    this.notify();
+  }
+
   isExpanded(node: TreeNode): boolean {
-    return this.query !== "" || this.expanded.has(node.key);
+    return this.query !== "" || this.isOpen(node);
+  }
+
+  private isOpen(node: TreeNode): boolean {
+    return this.overrides.get(node.key) ?? this.opensItself(node);
+  }
+
+  private opensItself(node: TreeNode): boolean {
+    if (node.depth === 0) return true;
+    if (node.children.size === 0) return false;
+    switch (this.mode) {
+      case "manual":
+        return false;
+      case "all":
+        return true;
+      case "groups":
+        // Open unless this is the last level, the one holding only topics.
+        return (
+          node.children.size <= GROUP_EXPAND_LIMIT &&
+          [...node.children.values()].some((child) => child.children.size > 0)
+        );
+    }
   }
 
   toggle(node: TreeNode): void {
     if (node.children.size === 0 || this.query) return;
-    if (!this.expanded.delete(node.key)) this.expanded.add(node.key);
+    this.overrides.set(node.key, !this.isOpen(node));
     this.structureChanged();
     this.notify();
   }
@@ -130,7 +175,6 @@ export class TopicTreeStore {
     if (!root) {
       root = newNode(connectionId, "", "", 0, null);
       this.roots.set(connectionId, root);
-      this.expanded.add(root.key);
       this.structureChanged();
     }
     let node: TreeNode = root;
@@ -169,7 +213,7 @@ export class TopicTreeStore {
     const rows: TreeNode[] = [];
     const visit = (node: TreeNode) => {
       rows.push(node);
-      if (this.expanded.has(node.key)) this.childrenOf(node).forEach(visit);
+      if (this.isOpen(node)) this.childrenOf(node).forEach(visit);
     };
     this.sortedRoots().forEach(visit);
     this.matchCount = this.topicNodes.length;

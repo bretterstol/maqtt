@@ -10,7 +10,13 @@ import type { ConnectionId, ConnectionState } from "../bridge";
 import { plural } from "../format";
 import { useNow } from "../ui/useNow";
 import { ActivityMeter } from "./ActivityMeter";
-import type { TopicTreeStore, TreeNode } from "./store";
+import { saveExpandMode } from "./expandPreference";
+import {
+  GROUP_EXPAND_LIMIT,
+  type ExpandMode,
+  type TopicTreeStore,
+  type TreeNode,
+} from "./store";
 import "./TopicTree.css";
 
 const ROW_HEIGHT = 24;
@@ -88,6 +94,10 @@ export function TopicTree({
 
 function SearchBar({ store }: { store: TopicTreeStore }) {
   const [query, setQuery] = useState("");
+  const setMode = (mode: ExpandMode) => {
+    store.setExpandMode(mode);
+    saveExpandMode(mode);
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => store.setQuery(query), SEARCH_DEBOUNCE_MS);
@@ -102,6 +112,18 @@ function SearchBar({ store }: { store: TopicTreeStore }) {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
+      <select
+        id="topic-tree-expand"
+        value={store.expandMode}
+        onChange={(e) => setMode(e.target.value as ExpandMode)}
+        aria-label="How the tree opens"
+        title={`Groups: open every level except the one holding the topics. Groups with more than ${GROUP_EXPAND_LIMIT} entries stay closed.`}
+        disabled={query.trim() !== ""}
+      >
+        <option value="manual">Open by hand</option>
+        <option value="groups">Open groups</option>
+        <option value="all">Open everything</option>
+      </select>
       <span className="topic-tree__count">
         {store.queryError ??
           (query.trim()
