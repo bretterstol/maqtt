@@ -145,6 +145,11 @@ function LiveCounts({ status }: { status: PipelineStatus }) {
           {status.missed.toLocaleString()} missed
         </span>
       )}
+      {status.returned > 0 && (
+        <span title="Messages this Pipeline republished that came back from a Broker. They were left out, so the Pipeline doesn't feed itself.">
+          {status.returned.toLocaleString()} came back
+        </span>
+      )}
       {status.errors > 0 && (
         <span className="pipeline-output__bad">
           {status.errors.toLocaleString()} errors

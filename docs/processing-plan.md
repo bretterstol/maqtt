@@ -79,6 +79,8 @@ In every string, including strings inside jq expressions, `{…}` fills in the v
 
 When the Pipeline reads that Broker, a topic that gets past its `from` and leading `filter topic` Stages would come straight back in, so it is refused as an error instead of sent. `filter not topic "hot/#"` right after `from` (or a `filter topic` that doesn't match the output) lets it through. Preview shows what `to broker` would send, and the refusals, without sending anything.
 
+That check goes by Connection name, but several Broker Profiles can reach one Broker (the dev profiles are three listeners on one Mosquitto). So a running Pipeline also remembers what it republished in the last 10 s (topic and payload, up to 10,000 messages) and leaves out any copy that comes back, on whichever Connection. Its panel counts them as "came back". Without this, `from "Dev Broker" |> to broker "Dev Broker (TLS)" "test/{$topic}"` republished its own output with one more level each round, until Mosquitto dropped the Connection for a topic over 200 levels deep.
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.

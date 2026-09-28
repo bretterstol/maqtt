@@ -1204,8 +1204,9 @@ mod dev_broker_tests {
         assert_eq!(derived.topic, "warm rooms/hot/kitchen");
         assert_eq!(&derived.payload[..], br#"{"celsius":24,"room":"kitchen"}"#);
 
+        // `received` would also count other traffic on the dev Broker, such as trafficgen.
         let status = runner.status("warm rooms").unwrap();
-        assert_eq!((status.received, status.emitted, status.errors), (2, 1, 0));
+        assert_eq!((status.emitted, status.errors), (1, 0), "{status:?}");
         runner.stop("warm rooms");
         manager.disconnect(&profile.id);
     }
@@ -1271,5 +1272,70 @@ mod dev_broker_tests {
         assert_eq!((status.emitted, status.errors), (1, 0), "{status:?}");
         runner.stop("copy");
         manager.lock().unwrap().disconnect(&profile.id);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn republishing_through_another_profile_of_the_same_broker_does_not_loop() {
+        use crate::processing::{lang, runner::Runner};
+
+        let path = std::env::temp_dir().join(format!(
+            "maqtt-it-echo-{}/profiles.toml",
+            std::process::id()
+        ));
+        let mut profiles = ProfileStore::load(path, Box::new(MemorySecrets::default())).unwrap();
+        dev_profiles::seed(&mut profiles).unwrap();
+        let bus = Bus::new();
+        let statuses = ConnectionStatuses::default();
+        let manager = Arc::new(Mutex::new(ConnectionManager::default()));
+        for view in profiles.list() {
+            let password = profiles.password(&view.profile.id).unwrap();
+            manager
+                .lock()
+                .unwrap()
+                .connect(&view.profile, password.as_deref(), &bus, &statuses)
+                .unwrap();
+        }
+        wait_until("connected", || all_subscribed(&statuses)).await;
+
+        let republish = {
+            let (manager, statuses) = (manager.clone(), statuses.clone());
+            Arc::new(move |name: &str, topic: &str, payload| {
+                manager
+                    .lock()
+                    .unwrap()
+                    .try_publish_by_name(&statuses, name, topic, payload)
+            })
+        };
+        let runner = Runner::new(bus.clone(), statuses.clone(), republish);
+        // Reads everything on the plain listener and writes through the TLS one: the same
+        // Broker, which the names can't tell. Each copy used to come back and grow a level
+        // until Mosquitto dropped the Connection as malformed.
+        let base = format!("maqtt/it/echo/{}", std::process::id());
+        let source = format!(
+            r#"from "Dev Broker"
+            |> filter topic "{base}/#"
+            |> to broker "Dev Broker (TLS)" "{base}/copy/{{$topic}}""#
+        );
+        runner.start("echo", lang::parse(&source).unwrap()).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        publish(&format!("{base}/seed"), "1", false);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let status = runner.status("echo").unwrap();
+        runner.stop("echo");
+        assert_eq!((status.emitted, status.returned), (1, 1), "{status:?}");
+        assert!(
+            statuses
+                .snapshot()
+                .iter()
+                .all(|s| s.state == ConnectionState::Connected),
+            "{:?}",
+            statuses.snapshot()
+        );
+        for view in profiles.list() {
+            manager.lock().unwrap().disconnect(&view.profile.id);
+        }
     }
 }

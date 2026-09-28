@@ -30,6 +30,8 @@ export interface PipelineStatus {
   received: number;
   emitted: number;
   missed: number;
+  /** Its own republished messages that came back from a Broker and were left out. */
+  returned: number;
   errors: number;
   lastError: string | null;
   inspected: Inspected[];

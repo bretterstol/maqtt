@@ -203,7 +203,7 @@
         },
         {
           "syntax": "to broker \"<Broker>\" \"<topic>\"",
-          "does": "Republishes on a connected Broker, QoS 0 and not retained. A topic the Pipeline would read back is refused: narrow what it reads with filter topic right after from."
+          "does": "Republishes on a connected Broker, QoS 0 and not retained. A topic the Pipeline would read back is refused: narrow what it reads with filter topic right after from. Copies that come back anyway, through another Broker Profile for the same Broker, are left out and counted as came back."
         }
       ],
       "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send without sending it.",
