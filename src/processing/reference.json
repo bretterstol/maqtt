@@ -34,12 +34,12 @@
           "does": "A jq condition on the current value. Anything but false and null keeps it."
         },
         {
-          "syntax": "filter topic \"<mqtt filter>\"",
-          "does": "The original topic matches an MQTT filter: + is one level, # is the rest."
+          "syntax": "filter topic \"<mqtt filter>\", …",
+          "does": "The original topic matches any of the MQTT filters: + is one level, # is the rest."
         },
         {
-          "syntax": "filter not topic \"<mqtt filter>\"",
-          "does": "The original topic doesn't match."
+          "syntax": "filter not topic \"<mqtt filter>\", …",
+          "does": "The original topic matches none of them."
         }
       ],
       "details": "Put `filter topic` first: Preview uses the leading ones to pick its sample messages.",
@@ -47,6 +47,7 @@
       "examples": [
         "filter .temperature > 22",
         "filter topic \"home/+/climate\"",
+        "filter topic \"home/#\", \"office/#\"",
         "filter not topic \"+/status\"",
         "filter $levels[1] == \"kitchen\" and .battery < 20"
       ]

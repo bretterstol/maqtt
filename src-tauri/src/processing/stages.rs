@@ -10,9 +10,9 @@ use jaq_json::Val;
 
 use super::jq;
 use super::keyed::Keyed;
-use super::lang::{Connections, Pipeline, Stage, WindowSize};
+use super::lang::{Connections, Pipeline, Stage, TopicFilter, WindowSize};
 use crate::message::ReceivedMessage;
-use crate::profile::{topic_matches, validate_topic_name};
+use crate::profile::validate_topic_name;
 
 /// What running a message (or a tick) produced.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,10 +106,7 @@ fn vars(item: &Item) -> [Val; 9] {
 }
 
 enum Running {
-    FilterTopic {
-        filter: String,
-        negate: bool,
-    },
+    FilterTopic(TopicFilter),
     Filter(jq::Filter),
     Map(jq::Filter),
     Changes {
@@ -150,7 +147,7 @@ enum Running {
         topic: jq::Filter,
         /// When the Pipeline reads this Broker: the `filter topic` Stages at its start. A topic
         /// that gets past them would come back into the Pipeline, so it's refused.
-        reads_back: Option<Vec<(String, bool)>>,
+        reads_back: Option<Vec<TopicFilter>>,
     },
 }
 
@@ -198,11 +195,11 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(pipeline: &Pipeline) -> Result<Self, String> {
         let compile = |code: &str| jq::compile(code).map_err(|e| e.message);
-        let leading_filters: Vec<(String, bool)> = pipeline
+        let leading_filters: Vec<TopicFilter> = pipeline
             .stages
             .iter()
             .map_while(|stage| match stage {
-                Stage::FilterTopic { filter, negate } => Some((filter.clone(), *negate)),
+                Stage::FilterTopic(filter) => Some(filter.clone()),
                 _ => None,
             })
             .collect();
@@ -211,10 +208,7 @@ impl Runtime {
             .iter()
             .map(|stage| {
                 Ok(match stage {
-                    Stage::FilterTopic { filter, negate } => Running::FilterTopic {
-                        filter: filter.clone(),
-                        negate: *negate,
-                    },
+                    Stage::FilterTopic(filter) => Running::FilterTopic(filter.clone()),
                     Stage::Filter(code) => Running::Filter(compile(code)?),
                     Stage::Map(code) => Running::Map(compile(code)?),
                     Stage::Changes(key) => Running::Changes {
@@ -286,10 +280,10 @@ impl Runtime {
                 .stages
                 .iter()
                 .map_while(|stage| match stage {
-                    Running::FilterTopic { filter, negate } => Some((filter, *negate)),
+                    Running::FilterTopic(filter) => Some(filter),
                     _ => None,
                 })
-                .all(|(filter, negate)| topic_matches(filter, topic) != negate)
+                .all(|filter| filter.passes(topic))
     }
 
     /// Whether messages from this Connection are the Pipeline's to handle.
@@ -439,8 +433,8 @@ fn apply(
     out: &mut Vec<Effect>,
 ) {
     match stage {
-        Running::FilterTopic { filter, negate } => {
-            if topic_matches(filter, item.origin.topic()) != *negate {
+        Running::FilterTopic(filter) => {
+            if filter.passes(item.origin.topic()) {
                 next.push(item);
             }
         }
@@ -595,10 +589,7 @@ fn apply(
                     if topic.is_empty() { e } else { format!("{e}: `{topic}`") }
                 })?;
                 match reads_back {
-                    Some(filters)
-                        if filters
-                            .iter()
-                            .all(|(filter, negate)| topic_matches(filter, &topic) != *negate) =>
+                    Some(filters) if filters.iter().all(|filter| filter.passes(&topic)) =>
                     {
                         Err(format!(
                             "`{topic}` would come back into this Pipeline, which reads {broker}. Keep it out with `filter not topic` right after `from`"

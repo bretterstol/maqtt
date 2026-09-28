@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::jq;
-use crate::profile::validate_topic_filter;
+use crate::profile::{topic_matches, validate_topic_filter};
 
 /// A problem in a Pipeline's source, for the editor.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -30,12 +30,23 @@ pub enum Connections {
 }
 
 /// A Stage as written, with its jq expressions already rewritten for jq (see [`to_jq`]).
+/// `filter topic "a", "b"`: passes a topic matching any of the MQTT filters; with `not`, a
+/// topic matching none of them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopicFilter {
+    pub filters: Vec<String>,
+    pub negate: bool,
+}
+
+impl TopicFilter {
+    pub fn passes(&self, topic: &str) -> bool {
+        self.filters.iter().any(|f| topic_matches(f, topic)) != self.negate
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stage {
-    FilterTopic {
-        filter: String,
-        negate: bool,
-    },
+    FilterTopic(TopicFilter),
     Filter(String),
     Map(String),
     /// With an optional key (a jq expression); without one, state is per incoming topic.
@@ -190,37 +201,65 @@ fn parse_from(code: &str, arg: Span, problems: &mut Problems) -> Option<Connecti
     if text == "all" {
         return Some(Connections::All);
     }
-    let mut names = Vec::new();
-    let mut rest = arg;
+    match string_list(code, arg) {
+        Ok(names) => Some(Connections::Named(
+            names.into_iter().map(|(name, _)| name).collect(),
+        )),
+        Err(ListError::NotAString(at)) => {
+            problems.at(
+                at.start,
+                at.end.max(at.start + 1),
+                "`from` takes `all` or Connection names in quotes, for example `from \"Dev Broker\"`",
+            );
+            None
+        }
+        Err(ListError::Unseparated(at)) => {
+            problems.at(at.start, at.end, "Separate Connection names with commas");
+            None
+        }
+    }
+}
+
+enum ListError {
+    /// Where a quoted string should have been.
+    NotAString(Span),
+    /// Text after a string that isn't a comma.
+    Unseparated(Span),
+}
+
+/// Strings in quotes separated by commas, each with where it is in the source.
+fn string_list(code: &str, span: Span) -> Result<Vec<(String, Span)>, ListError> {
+    let mut items = Vec::new();
+    let mut rest = span;
     loop {
-        match string_literal(code, rest) {
-            Some((name, after)) => {
-                names.push(name);
-                let tail = code[after.start..after.end].trim_start();
-                if let Some(next) = tail.strip_prefix(',') {
-                    rest = Span {
-                        start: after.end - next.len(),
-                        end: after.end,
-                    };
-                } else if tail.is_empty() {
-                    return Some(Connections::Named(names));
-                } else {
-                    problems.at(
-                        after.end - tail.len(),
-                        after.end,
-                        "Separate Connection names with commas",
-                    );
-                    return None;
-                }
-            }
-            None => {
-                problems.at(
-                    rest.start,
-                    rest.end.max(rest.start + 1),
-                    "`from` takes `all` or Connection names in quotes, for example `from \"Dev Broker\"`",
-                );
-                return None;
-            }
+        let text = &code[rest.start..rest.end];
+        let start = rest.start + (text.len() - text.trim_start().len());
+        let Some((value, after)) = string_literal(code, rest) else {
+            return Err(ListError::NotAString(Span {
+                start,
+                end: rest.end,
+            }));
+        };
+        items.push((
+            value,
+            Span {
+                start,
+                end: after.start,
+            },
+        ));
+        let tail = code[after.start..after.end].trim_start();
+        if let Some(next) = tail.strip_prefix(',') {
+            rest = Span {
+                start: after.end - next.len(),
+                end: after.end,
+            };
+        } else if tail.is_empty() {
+            return Ok(items);
+        } else {
+            return Err(ListError::Unseparated(Span {
+                start: after.end - tail.len(),
+                end: after.end,
+            }));
         }
     }
 }
@@ -241,27 +280,31 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                     start: offset_in(code, after),
                     end: arg.end,
                 };
-                let Some((filter, trailing)) = string_literal(code, topic_span) else {
-                    problems.at(
-                        topic_span.start,
-                        arg.end,
-                        "`filter topic` takes a topic filter in quotes, like `\"home/#\"`",
-                    );
-                    return None;
+                let filters = match string_list(code, topic_span) {
+                    Ok(filters) => filters,
+                    Err(ListError::NotAString(at)) => {
+                        problems.at(
+                            at.start,
+                            at.end.max(at.start + 1),
+                            "`filter topic` takes topic filters in quotes, like `\"home/#\"` or `\"home/#\", \"office/#\"`",
+                        );
+                        return None;
+                    }
+                    Err(ListError::Unseparated(at)) => {
+                        problems.at(at.start, at.end, "Separate topic filters with commas");
+                        return None;
+                    }
                 };
-                if !code[trailing.start..trailing.end].trim().is_empty() {
-                    problems.at(
-                        trailing.start,
-                        trailing.end,
-                        "Unexpected text after the topic filter",
-                    );
-                    return None;
+                for (filter, at) in &filters {
+                    if let Err(err) = validate_topic_filter(filter) {
+                        problems.at(at.start, at.end, err);
+                        return None;
+                    }
                 }
-                if let Err(err) = validate_topic_filter(&filter) {
-                    problems.at(topic_span.start, arg.end, err);
-                    return None;
-                }
-                return Some(Stage::FilterTopic { filter, negate });
+                return Some(Stage::FilterTopic(TopicFilter {
+                    filters: filters.into_iter().map(|(filter, _)| filter).collect(),
+                    negate,
+                }));
             }
             if negate {
                 problems.at(
@@ -944,6 +987,13 @@ mod tests {
         parse(source).unwrap_or_else(|e| panic!("{e:?}")).stages
     }
 
+    fn topics(filters: &[&str], negate: bool) -> Stage {
+        Stage::FilterTopic(TopicFilter {
+            filters: filters.iter().map(|f| f.to_string()).collect(),
+            negate,
+        })
+    }
+
     fn first_problem(source: &str) -> (usize, usize, String) {
         let d = &parse(source).unwrap_err()[0];
         (d.line, d.column, d.message.clone())
@@ -966,10 +1016,7 @@ from "Dev Broker"
         assert_eq!(
             pipeline.stages,
             vec![
-                Stage::FilterTopic {
-                    filter: "home/+/climate-1".into(),
-                    negate: false
-                },
+                topics(&["home/+/climate-1"], false),
                 Stage::Map("{ temp: .temperature, room: $levels[2] }".into()),
                 Stage::Filter(".temp > 22".into()),
                 Stage::Changes(None),
@@ -993,10 +1040,7 @@ from "Dev Broker"
         assert_eq!(
             stages(r#"from all |> filter topic "home/#" |> map "a |> b # c""#),
             vec![
-                Stage::FilterTopic {
-                    filter: "home/#".into(),
-                    negate: false
-                },
+                topics(&["home/#"], false),
                 Stage::Map(r#""a |> b # c""#.into()),
             ]
         );
@@ -1018,10 +1062,7 @@ from "Dev Broker"
         assert_eq!(
             stages(r#"from all |> filter not topic "+/status" |> inspect |> inspect "after""#),
             vec![
-                Stage::FilterTopic {
-                    filter: "+/status".into(),
-                    negate: true
-                },
+                topics(&["+/status"], true),
                 Stage::Inspect(None),
                 Stage::Inspect(Some("after".into())),
             ]
@@ -1101,13 +1142,7 @@ from "Dev Broker"
     fn stages_split_over_lines() {
         assert_eq!(
             stages("from all\n  |> filter topic \"a/#\"\n  |> changes\n"),
-            vec![
-                Stage::FilterTopic {
-                    filter: "a/#".into(),
-                    negate: false
-                },
-                Stage::Changes(None)
-            ]
+            vec![topics(&["a/#"], false), Stage::Changes(None)]
         );
     }
 
@@ -1296,5 +1331,41 @@ from "Dev Broker"
             first_problem(r#"from all |> to broker "Office""#).2,
             "`to broker` needs an expression"
         );
+    }
+
+    #[test]
+    fn filter_topic_takes_several_filters() {
+        assert_eq!(
+            stages(
+                r#"from all |> filter topic "home/#", "office/+" |> filter not topic "+/status","$SYS/#""#
+            ),
+            vec![
+                topics(&["home/#", "office/+"], false),
+                topics(&["+/status", "$SYS/#"], true),
+            ]
+        );
+        let any = TopicFilter {
+            filters: vec!["home/#".into(), "office/+".into()],
+            negate: false,
+        };
+        assert!(any.passes("home/a/b") && any.passes("office/a") && !any.passes("garage/a"));
+        let none = TopicFilter {
+            negate: true,
+            ..any
+        };
+        assert!(!none.passes("home/a") && !none.passes("office/a") && none.passes("garage/a"));
+
+        assert_eq!(
+            first_problem(r#"from all |> filter topic "a" "b""#).2,
+            "Separate topic filters with commas"
+        );
+        assert!(
+            first_problem(r#"from all |> filter topic "a","#)
+                .2
+                .starts_with("`filter topic` takes topic filters in quotes")
+        );
+        // The problem is marked on the filter that has it.
+        let d = &parse(r#"from all |> filter topic "a/#", "b/#/c""#).unwrap_err()[0];
+        assert_eq!((d.column, d.end - d.start), (33, 7));
     }
 }

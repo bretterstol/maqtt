@@ -290,6 +290,35 @@ mod tests {
     }
 
     #[test]
+    fn several_topic_filters_pick_samples_and_guard_several_outputs() {
+        let recent = history(vec![
+            message(1, 1, "home/a", "1", 0),
+            message(2, 1, "office/a", "2", 10),
+            message(3, 1, "garage/a", "3", 20),
+        ]);
+        let p = preview(
+            r#"from "Dev" |> filter topic "home/#", "office/#" |> to app "x""#,
+            &names(),
+            &recent,
+        );
+        assert_eq!(p.messages, 2, "home and office, not garage");
+
+        // Reading Dev but not out/ or alerts/: both outputs go, anything else is refused.
+        let p = preview(
+            r#"from "Dev"
+|> filter not topic "out/#", "alerts/#"
+|> to broker "Dev" "out/{$topic}"
+|> to broker "Dev" "alerts/{$topic}"
+|> to broker "Dev" "other/{$topic}""#,
+            &names(),
+            &recent,
+        );
+        let errors: Vec<usize> = p.stages.iter().map(|s| s.errors).collect();
+        assert_eq!(errors, vec![0, 0, 0, 3]);
+        assert_eq!(p.results.len(), 6);
+    }
+
+    #[test]
     fn a_draft_with_problems_does_not_run() {
         let p = preview(
             "from all |> sort",
