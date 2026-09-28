@@ -138,6 +138,10 @@ export default function PipelinesTab() {
   const preview =
     current && previewed?.name === current.name ? previewed : null;
   const problems = preview?.preview.problems ?? [];
+  const draftError =
+    current && previewError?.name === current.name
+      ? previewError.message
+      : null;
   const hints = useMemo<Hints>(
     () => ({
       payload: preview?.preview.payload ?? null,
@@ -147,12 +151,15 @@ export default function PipelinesTab() {
     [preview, brokers],
   );
 
-  // Preview the text shortly after typing stops, then keep it fresh. It also finds the
-  // problems underlined in the editor. An answer for text that has since changed is dropped.
+  // Preview the text shortly after typing stops, then keep it fresh: each run schedules the
+  // next once it has succeeded. A failed run isn't retried (the same text would fail, or get
+  // stuck, again); an edit runs it. It also finds the problems underlined in the editor. An
+  // answer for text that has since changed is dropped.
   useEffect(() => {
     if (!current) return;
     const name = current.name;
     let stale = false;
+    let timer: ReturnType<typeof setTimeout>;
     const run = () =>
       void previewPipeline(text).then(
         (result) => {
@@ -163,20 +170,19 @@ export default function PipelinesTab() {
             preview: result,
             notes: stageNotes(text, result),
           });
+          timer = setTimeout(run, PREVIEW_EVERY_MS);
         },
         (error) => {
-          if (!stale) setPreviewError({ name, message: String(error) });
+          if (stale) return;
+          // What the previous draft showed no longer applies.
+          setPreviewed(null);
+          setPreviewError({ name, message: String(error) });
         },
       );
-    let every: ReturnType<typeof setInterval> | undefined;
-    const first = setTimeout(() => {
-      run();
-      every = setInterval(run, PREVIEW_EVERY_MS);
-    }, PREVIEW_DELAY_MS);
+    timer = setTimeout(run, PREVIEW_DELAY_MS);
     return () => {
       stale = true;
-      clearTimeout(first);
-      clearInterval(every);
+      clearTimeout(timer);
     };
   }, [current?.name, text]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -428,7 +434,7 @@ export default function PipelinesTab() {
           />
           <p
             className={
-              problems.length > 0
+              problems.length > 0 || draftError
                 ? "pipelines__problems pipelines__problems--bad"
                 : "pipelines__problems"
             }
@@ -436,16 +442,12 @@ export default function PipelinesTab() {
           >
             {problems.length > 0
               ? problemText(problems)
-              : dirty
-                ? "Unsaved changes"
-                : ""}
+              : (draftError ?? (dirty ? "Unsaved changes" : ""))}
           </p>
           <OutputPanel
             status={current.status}
             preview={problems.length > 0 ? null : (preview?.preview ?? null)}
-            previewError={
-              previewError?.name === current.name ? previewError.message : null
-            }
+            previewError={draftError}
             view={outputView ?? (current.status.running ? "live" : "preview")}
             onView={setOutputView}
           />

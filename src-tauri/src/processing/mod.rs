@@ -16,7 +16,7 @@ pub mod store;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -34,9 +34,9 @@ pub struct Processing {
     files: PipelineFiles,
     statuses: ConnectionStatuses,
     recent: RecentMessages,
-    /// Set while a Preview runs; one at a time, so one stuck on an endless expression can't
-    /// pile up more.
-    previewing: Arc<AtomicBool>,
+    /// Previews running now. A Preview stuck on an endless expression never ends, so this
+    /// caps how many can pile up.
+    previewing: Arc<AtomicUsize>,
 }
 
 impl Processing {
@@ -51,7 +51,7 @@ impl Processing {
             files: PipelineFiles::new(dir),
             statuses,
             recent,
-            previewing: Arc::new(AtomicBool::new(false)),
+            previewing: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -155,14 +155,18 @@ pub fn stop_pipeline(state: State<'_, Processing>, name: String) {
 }
 
 /// Where the `.pipe` files live, for showing it to the user.
-/// Clears a busy flag when dropped.
-struct Busy(Arc<AtomicBool>);
+/// Counts a running Preview until dropped.
+struct Busy(Arc<AtomicUsize>);
 
 impl Drop for Busy {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
+
+/// Previews that may run at once: one stuck on an endless expression still leaves room for the
+/// fixed draft.
+const MAX_PREVIEWS: usize = 2;
 
 /// How long a Preview may take before it's given up on.
 const PREVIEW_LIMIT: Duration = Duration::from_secs(3);
@@ -174,8 +178,9 @@ pub async fn preview_pipeline(
     state: State<'_, Processing>,
     source: String,
 ) -> Result<Preview, String> {
-    if state.previewing.swap(true, Ordering::SeqCst) {
-        return Err("The previous Preview is still busy, most likely on an expression that never ends. Change it; Preview picks up again once that one gives up.".into());
+    let busy = Busy(state.previewing.clone());
+    if state.previewing.fetch_add(1, Ordering::SeqCst) >= MAX_PREVIEWS {
+        return Err("Earlier Previews are stuck on expressions that never end, each keeping a CPU busy. Restart måqtt to free them.".into());
     }
     let names = state
         .statuses
@@ -184,13 +189,12 @@ pub async fn preview_pipeline(
         .map(|s| (s.connection_id, s.name))
         .collect();
     let recent = state.recent.clone();
-    let previewing = state.previewing.clone();
     let (done, result) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("pipeline preview".into())
         .spawn(move || {
-            // Cleared however the thread ends, even by a panic.
-            let _busy = Busy(previewing);
+            // Counted down however the thread ends, even by a panic.
+            let _busy = busy;
             let _ = done.send(preview::preview(&source, &names, &recent));
         })
         .map_err(|e| format!("Couldn't run the Preview: {e}"))?;
