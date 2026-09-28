@@ -40,14 +40,19 @@
         {
           "syntax": "filter not topic \"<mqtt filter>\", …",
           "does": "The original topic matches none of them."
+        },
+        {
+          "syntax": "filter topic \"home/+room/#rest\"",
+          "does": "Names a wildcard: + or # followed by a name. From here on $room is the level + matched, and $rest the levels # matched (null for none)."
         }
       ],
-      "details": "Put `filter topic` first: Preview uses the leading ones to pick its sample messages.",
+      "details": "Put `filter topic` first: Preview uses the leading ones to pick its sample messages. A named wildcard matches like a plain one; with several filters, a name the matching one lacks is null.",
       "snippet": "filter ${condition}",
       "examples": [
         "filter .temperature > 22",
         "filter topic \"home/+/climate\"",
         "filter topic \"home/#\", \"office/#\"",
+        "filter topic \"maqtt/home/+room/#\"",
         "filter not topic \"+/status\"",
         "filter $levels[1] == \"kitchen\" and .battery < 20"
       ]

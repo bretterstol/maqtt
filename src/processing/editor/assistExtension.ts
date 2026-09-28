@@ -6,7 +6,12 @@ import {
   type CompletionResult,
 } from "@codemirror/autocomplete";
 import { hoverTooltip, type EditorView } from "@codemirror/view";
-import { assistAt, fieldsAt } from "../assist";
+import {
+  assistAt,
+  fieldsAt,
+  wildcardNames,
+  type WildcardName,
+} from "../assist";
 import {
   FUNCTIONS,
   STAGES,
@@ -88,6 +93,25 @@ const variableOptions: Completion[] = VARIABLES.map((doc) => ({
   info: () => nameDocNode(doc),
 }));
 
+function wildcardDoc(wildcard: WildcardName): NameDoc {
+  const what = wildcard.written.startsWith("#")
+    ? 'the levels its # matched, like "a/b", or null for none'
+    : "the level its + matched";
+  return {
+    name: `$${wildcard.name}`,
+    does: `Named wildcard ${wildcard.written} in "${wildcard.filter}": ${what}. Null until that filter topic.`,
+  };
+}
+
+const wildcardOptions = (before: string): Completion[] =>
+  wildcardNames(before).map((wildcard) => ({
+    label: `$${wildcard.name}`,
+    detail: wildcard.written,
+    type: "variable",
+    info: () => nameDocNode(wildcardDoc(wildcard)),
+    boost: 1,
+  }));
+
 function keyword(
   label: string,
   snippet: string,
@@ -161,7 +185,7 @@ function options(
     case "variable":
       return {
         from: assist.from,
-        options: variableOptions,
+        options: [...wildcardOptions(before), ...variableOptions],
         validFor: /^\$\w*$/,
       };
     case "field": {
@@ -261,7 +285,12 @@ export const pipeHover = hoverTooltip((view: EditorView, pos: number) => {
   if (stage && /(^|\|>)\s*$/.test(before)) dom = stageDocNode(stage);
   else if (word.startsWith("$") && variableDoc(word))
     dom = nameDocNode(variableDoc(word)!);
-  else if (functionDoc(word) && !/\.\s*$/.test(before))
+  else if (word.startsWith("$")) {
+    const wildcard = wildcardNames(view.state.doc.toString()).find(
+      (w) => `$${w.name}` === word,
+    );
+    if (wildcard) dom = nameDocNode(wildcardDoc(wildcard));
+  } else if (functionDoc(word) && !/\.\s*$/.test(before))
     dom = functionDocNode(functionDoc(word)!);
   if (!dom) return null;
 

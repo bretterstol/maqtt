@@ -34,14 +34,108 @@ pub enum Connections {
 /// topic matching none of them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TopicFilter {
-    pub filters: Vec<String>,
+    pub patterns: Vec<TopicPattern>,
     pub negate: bool,
+}
+
+/// One MQTT filter as written, which may name its wildcards: `home/+room/#rest`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopicPattern {
+    /// The plain MQTT filter, names taken out: `home/+/#`.
+    pub filter: String,
+    pub captures: Vec<Capture>,
+}
+
+/// A named wildcard: the topic level (or, for `#`, the levels from there on) it stands for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Capture {
+    pub name: String,
+    pub level: usize,
+    pub rest: bool,
 }
 
 impl TopicFilter {
     pub fn passes(&self, topic: &str) -> bool {
-        self.filters.iter().any(|f| topic_matches(f, topic)) != self.negate
+        self.matching(topic).is_some() != self.negate
     }
+
+    /// The first pattern the topic matches.
+    pub fn matching(&self, topic: &str) -> Option<&TopicPattern> {
+        self.patterns
+            .iter()
+            .find(|p| topic_matches(&p.filter, topic))
+    }
+
+    /// The wildcard names any of its patterns declare, each once.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+        for capture in self.patterns.iter().flat_map(|p| &p.captures) {
+            if !names.contains(&capture.name.as_str()) {
+                names.push(&capture.name);
+            }
+        }
+        names
+    }
+}
+
+impl TopicPattern {
+    /// What each named wildcard stands for in a topic this pattern matches. A `#` that matched
+    /// no levels gives `None`.
+    pub fn captured<'a>(&'a self, topic: &str) -> Vec<(&'a str, Option<String>)> {
+        let levels: Vec<&str> = topic.split('/').collect();
+        self.captures
+            .iter()
+            .map(|c| {
+                let value = if c.rest {
+                    (c.level < levels.len()).then(|| levels[c.level..].join("/"))
+                } else {
+                    levels.get(c.level).map(|l| l.to_string())
+                };
+                (c.name.as_str(), value)
+            })
+            .collect()
+    }
+}
+
+/// Reads one filter, taking out the names of its wildcards: `+room` is `+` named `room`.
+fn topic_pattern(text: &str) -> Result<TopicPattern, String> {
+    let mut levels = Vec::new();
+    let mut captures: Vec<Capture> = Vec::new();
+    for (level, part) in text.split('/').enumerate() {
+        let wildcard = part.chars().next().filter(|c| matches!(c, '+' | '#'));
+        let (Some(wildcard), Some(name)) = (wildcard, part.get(1..).filter(|n| !n.is_empty()))
+        else {
+            levels.push(part);
+            continue;
+        };
+        let identifier = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !identifier {
+            return Err(format!(
+                "`{part}`: a wildcard's name uses letters, digits and `_`, like `{wildcard}room`"
+            ));
+        }
+        if name.starts_with("__")
+            || name == "acc"
+            || jq::VARIABLES.contains(&format!("${name}").as_str())
+        {
+            return Err(format!(
+                "`${name}` is already a variable; give `{part}` another name"
+            ));
+        }
+        if captures.iter().any(|c| c.name == name) {
+            return Err(format!("`{name}` names two wildcards in {text}"));
+        }
+        captures.push(Capture {
+            name: name.to_string(),
+            level,
+            rest: wildcard == '#',
+        });
+        levels.push(if wildcard == '#' { "#" } else { "+" });
+    }
+    let filter = levels.join("/");
+    validate_topic_filter(&filter)?;
+    Ok(TopicPattern { filter, captures })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +177,8 @@ pub enum WindowSize {
 pub struct Pipeline {
     pub from: Connections,
     pub stages: Vec<Stage>,
+    /// The named wildcards its `filter topic` Stages declare, in order: extra jq variables.
+    pub names: Vec<String>,
     /// Where the `from` line and then each Stage end in the source (byte offsets), for Preview
     /// to show what each Stage did.
     pub ends: Vec<usize>,
@@ -123,7 +219,12 @@ pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
     }
 
     match (from, problems.list.is_empty()) {
-        (Some(from), true) => Ok(Pipeline { from, stages, ends }),
+        (Some(from), true) => Ok(Pipeline {
+            from,
+            stages,
+            names: problems.names,
+            ends,
+        }),
         _ => {
             if problems.list.is_empty() {
                 problems.at(0, 1, "A Pipeline needs a `from` line");
@@ -145,9 +246,12 @@ struct Word<'a> {
     span: Span,
 }
 
+/// The problems found so far, and the named wildcards declared so far, which the expressions
+/// after them may use.
 struct Problems<'a> {
     source: &'a str,
     list: Vec<Diagnostic>,
+    names: Vec<String>,
 }
 
 impl<'a> Problems<'a> {
@@ -155,6 +259,7 @@ impl<'a> Problems<'a> {
         Self {
             source,
             list: Vec::new(),
+            names: Vec::new(),
         }
     }
 
@@ -295,16 +400,31 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                         return None;
                     }
                 };
+                let mut patterns = Vec::new();
                 for (filter, at) in &filters {
-                    if let Err(err) = validate_topic_filter(filter) {
-                        problems.at(at.start, at.end, err);
-                        return None;
+                    match topic_pattern(filter) {
+                        Ok(pattern) => patterns.push(pattern),
+                        Err(err) => {
+                            problems.at(at.start, at.end, err);
+                            return None;
+                        }
                     }
                 }
-                return Some(Stage::FilterTopic(TopicFilter {
-                    filters: filters.into_iter().map(|(filter, _)| filter).collect(),
-                    negate,
-                }));
+                let filter = TopicFilter { patterns, negate };
+                if negate && !filter.names().is_empty() {
+                    problems.at(
+                        topic_span.start,
+                        arg.end,
+                        "Named wildcards need a match to name: use them in `filter topic`, not `filter not topic`",
+                    );
+                    return None;
+                }
+                for name in filter.names() {
+                    if !problems.names.iter().any(|n| n == name) {
+                        problems.names.push(name.to_string());
+                    }
+                }
+                return Some(Stage::FilterTopic(filter));
             }
             if negate {
                 problems.at(
@@ -746,7 +866,7 @@ fn expression_in(
     }
     let (jq_code, original_offsets) = to_jq(&drop_trailing_commas(text));
     let (prefix, suffix) = wrap;
-    match jq::compile(&format!("{prefix}{jq_code}{suffix}")) {
+    match jq::compile(&format!("{prefix}{jq_code}{suffix}"), &problems.names) {
         Ok(_) => Some(jq_code),
         Err(err) => {
             let at = start
@@ -989,7 +1109,7 @@ mod tests {
 
     fn topics(filters: &[&str], negate: bool) -> Stage {
         Stage::FilterTopic(TopicFilter {
-            filters: filters.iter().map(|f| f.to_string()).collect(),
+            patterns: filters.iter().map(|f| topic_pattern(f).unwrap()).collect(),
             negate,
         })
     }
@@ -1345,7 +1465,10 @@ from "Dev Broker"
             ]
         );
         let any = TopicFilter {
-            filters: vec!["home/#".into(), "office/+".into()],
+            patterns: vec![
+                topic_pattern("home/#").unwrap(),
+                topic_pattern("office/+").unwrap(),
+            ],
             negate: false,
         };
         assert!(any.passes("home/a/b") && any.passes("office/a") && !any.passes("garage/a"));
@@ -1367,5 +1490,71 @@ from "Dev Broker"
         // The problem is marked on the filter that has it.
         let d = &parse(r#"from all |> filter topic "a/#", "b/#/c""#).unwrap_err()[0];
         assert_eq!((d.column, d.end - d.start), (33, 7));
+    }
+
+    #[test]
+    fn named_wildcards_capture_levels_and_become_variables() {
+        let pipeline = parse(
+            r#"from all
+|> filter topic "maqtt/home/+room/#rest", "maqtt/office/+room"
+|> window 1m by $room
+|> map { room: $key, rest: $rest }"#,
+        )
+        .unwrap();
+        assert_eq!(pipeline.names, ["room", "rest"]);
+        let Stage::FilterTopic(filter) = &pipeline.stages[0] else {
+            panic!("{:?}", pipeline.stages[0]);
+        };
+        assert_eq!(filter.patterns[0].filter, "maqtt/home/+/#");
+
+        let captured = |topic: &str| filter.matching(topic).unwrap().captured(topic);
+        assert_eq!(
+            captured("maqtt/home/kitchen/climate/1"),
+            [
+                ("room", Some("kitchen".to_string())),
+                ("rest", Some("climate/1".to_string()))
+            ]
+        );
+        // `#` also matches no levels at all.
+        assert_eq!(captured("maqtt/home/kitchen")[1], ("rest", None));
+        assert_eq!(
+            captured("maqtt/office/desk"),
+            [("room", Some("desk".to_string()))]
+        );
+    }
+
+    #[test]
+    fn named_wildcards_are_checked() {
+        for (source, problem) in [
+            (
+                r#"from all |> filter topic "a/+1x""#,
+                "`+1x`: a wildcard's name uses letters, digits and `_`, like `+room`",
+            ),
+            (
+                r#"from all |> filter topic "a/+topic""#,
+                "`$topic` is already a variable; give `+topic` another name",
+            ),
+            (
+                r#"from all |> filter topic "+a/+a""#,
+                "`a` names two wildcards in +a/+a",
+            ),
+            (
+                r#"from all |> filter topic "a/#rest/b""#,
+                "`#` must be the whole last level in a/#/b",
+            ),
+            (
+                r#"from all |> filter not topic "a/+room""#,
+                "Named wildcards need a match to name: use them in `filter topic`, not `filter not topic`",
+            ),
+        ] {
+            assert_eq!(first_problem(source).2, problem, "{source}");
+        }
+        // Only after the filter that names it.
+        assert_eq!(
+            first_problem(r#"from all |> map $room |> filter topic "+room""#).2,
+            "unknown variable `$room`"
+        );
+        // Plain wildcards stay plain.
+        stages(r##"from all |> filter topic "a/+/b/#", "+", "#""##);
     }
 }
