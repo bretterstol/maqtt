@@ -227,6 +227,25 @@ impl HistoryStore {
             .collect()
     }
 
+    /// The newest `per_connection` messages of each Connection, oldest first within each. Cheap
+    /// (it only clones pointers), so callers can do their filtering without holding the lock.
+    pub fn newest(&self, per_connection: usize) -> Vec<Arc<ReceivedMessage>> {
+        self.connections
+            .values()
+            .flat_map(|history| {
+                let mut newest: Vec<_> = history
+                    .messages
+                    .values()
+                    .rev()
+                    .take(per_connection)
+                    .cloned()
+                    .collect();
+                newest.reverse();
+                newest
+            })
+            .collect()
+    }
+
     /// A page of the Message Log across all Connections, messages and markers merged by seq.
     pub fn query(&self, query: &LogQuery) -> LogPage<LogItem> {
         let before = query.before_seq.unwrap_or(u64::MAX);
@@ -552,5 +571,16 @@ mod tests {
         };
         assert!(text("ok").matches(&binary));
         assert!(!text("a needle longer than both").matches(&binary));
+    }
+
+    #[test]
+    fn newest_takes_the_latest_of_each_connection() {
+        let mut store = HistoryStore::new(HistoryLimits::default());
+        for seq in 1..=10 {
+            store.insert(message(seq, (seq % 3) as u32, "t", ""));
+        }
+        let mut seqs: Vec<u64> = store.newest(2).iter().map(|m| m.seq).collect();
+        seqs.sort();
+        assert_eq!(seqs, vec![5, 6, 7, 8, 9, 10]);
     }
 }

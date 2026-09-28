@@ -5,6 +5,7 @@ mod export;
 mod history;
 mod message;
 mod mqtt;
+mod processing;
 mod profile;
 mod profile_store;
 mod publish;
@@ -405,8 +406,17 @@ pub fn run() {
             .with_file_name("publish-history.json"),
     );
     let bus = Bus::new();
+    let statuses = ConnectionStatuses::default();
+    let processing_bus = bus.clone();
+    let pipelines_dir = ProfileStore::default_path()
+        .expect("config directory")
+        .with_file_name("pipelines");
     let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits::default())));
     let (live_filter, _) = watch::channel(LiveFilter::default());
+    let recent_messages: processing::preview::RecentMessages = {
+        let history = history.clone();
+        Arc::new(move |per_connection| history.lock().unwrap().newest(per_connection))
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -423,7 +433,7 @@ pub fn run() {
         })
         .manage(AppState {
             bus,
-            statuses: ConnectionStatuses::default(),
+            statuses: statuses.clone(),
             connections: Mutex::new(ConnectionManager::default()),
             profiles: Mutex::new(profiles),
             publish_history: Mutex::new(sent),
@@ -431,6 +441,14 @@ pub fn run() {
             live_filter,
             ui_bridge: Mutex::new(None),
         })
+        // Pipelines (ADR 0004): this `manage` and the `processing::` commands below are the
+        // whole of the feature's footprint here.
+        .manage(processing::Processing::new(
+            processing_bus,
+            statuses,
+            pipelines_dir,
+            recent_messages,
+        ))
         .invoke_handler(tauri::generate_handler![
             stream_messages,
             set_log_filter,
@@ -452,6 +470,14 @@ pub fn run() {
             clear_retained,
             publish_history,
             clear_publish_history,
+            processing::list_pipelines,
+            processing::save_pipeline,
+            processing::delete_pipeline,
+            processing::rename_pipeline,
+            processing::start_pipeline,
+            processing::stop_pipeline,
+            processing::preview_pipeline,
+            processing::pipelines_folder,
             subscribe,
             unsubscribe
         ])

@@ -156,6 +156,25 @@ pub fn validate_topic_name(topic: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// MQTT topic filter matching: `+` matches one level, `#` the rest (including none), and topics
+/// starting with `$` are not matched by a filter starting with a wildcard.
+pub fn topic_matches(filter: &str, topic: &str) -> bool {
+    if topic.starts_with('$') && (filter.starts_with('+') || filter.starts_with('#')) {
+        return false;
+    }
+    let mut topic_levels = topic.split('/');
+    for level in filter.split('/') {
+        if level == "#" {
+            return true;
+        }
+        match topic_levels.next() {
+            Some(t) if level == "+" || level == t => {}
+            _ => return false,
+        }
+    }
+    topic_levels.next().is_none()
+}
+
 /// Checks MQTT topic filter syntax: `#` only as the whole last level, `+` only as a whole level.
 pub fn validate_topic_filter(filter: &str) -> Result<(), String> {
     if filter.is_empty() {
@@ -189,6 +208,38 @@ mod tests {
     fn invalid_topic_filters() {
         for filter in ["", "a/#/b", "a#", "#/a", "a+/b", "a/b+", "++"] {
             assert!(validate_topic_filter(filter).is_err(), "{filter}");
+        }
+    }
+
+    #[test]
+    fn topic_matching() {
+        for (filter, topic) in [
+            ("a/b", "a/b"),
+            ("#", "a/b/c"),
+            ("a/#", "a"),
+            ("a/+", "a/b"),
+            ("+/+", "/a"),
+            ("+", ""),
+            ("a/+/b", "a//b"),
+            ("$SYS/#", "$SYS/x"),
+        ] {
+            assert!(
+                topic_matches(filter, topic),
+                "{filter} should match {topic}"
+            );
+        }
+        for (filter, topic) in [
+            ("a/b", "a/b/c"),
+            ("a/+", "a"),
+            ("+", "/a"),
+            ("A/b", "a/b"),
+            ("#", "$SYS/x"),
+            ("+/x", "$SYS/x"),
+        ] {
+            assert!(
+                !topic_matches(filter, topic),
+                "{filter} should not match {topic}"
+            );
         }
     }
 
