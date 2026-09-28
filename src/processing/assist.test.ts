@@ -18,6 +18,19 @@ describe("what fits at the cursor", () => {
     });
   });
 
+  it("offers Brokers after to broker, in or before the quotes", () => {
+    expect(assistAt('from all |> to broker "Off')).toEqual({
+      kind: "broker",
+      from: 22,
+    });
+    expect(assistAt("from all\n|> to broker ")).toEqual({
+      kind: "broker",
+      from: 22,
+    });
+    expect(kind('from all |> to broker "Office" "x/')).toBe("none");
+    expect(kind("from all |> to b")).toBe("sink");
+  });
+
   it("offers Stages after |>, adding the space a bare |> needs", () => {
     expect(assistAt("from all\n|> thr")).toEqual({
       kind: "stage",

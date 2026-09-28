@@ -53,6 +53,12 @@ pub enum Stage {
     Inspect(Option<String>),
     /// The Derived Topic, as a jq expression that yields a string.
     ToApp(String),
+    /// Republishing on a Connection, named as in `from`; the topic is a jq expression that
+    /// yields a string.
+    ToBroker {
+        broker: String,
+        topic: String,
+    },
 }
 
 /// When a window closes: on the clock every interval, or every N values.
@@ -355,11 +361,23 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
             let (sink, sink_arg) = keyword(code, arg);
             match sink.text {
                 "app" => expression(code, sink_arg, problems, "to app").map(Stage::ToApp),
+                "broker" => {
+                    let Some((broker, rest)) = string_literal(code, sink_arg) else {
+                        problems.at(
+                            sink.span.start,
+                            sink_arg.end.max(sink.span.end),
+                            "`to broker` takes a Broker's name in quotes and a topic, for example `to broker \"Office\" \"hot/{.room}\"`",
+                        );
+                        return None;
+                    };
+                    expression(code, rest, problems, "to broker")
+                        .map(|topic| Stage::ToBroker { broker, topic })
+                }
                 "" => {
                     problems.at(
                         arg_start,
                         arg.end.max(arg_start + 1),
-                        "`to` needs a Sink, for example `to app \"hot/{$levels[2]}\"`",
+                        "`to` needs a Sink: `to app \"hot/{$levels[2]}\"` or `to broker \"Office\" \"hot/{$levels[2]}\"`",
                     );
                     None
                 }
@@ -367,7 +385,9 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                     problems.at(
                         sink.span.start,
                         sink.span.end,
-                        format!("`to {other}` isn't available yet; only `to app` is"),
+                        format!(
+                            "`to {other}` isn't available yet; only `to app` and `to broker` are"
+                        ),
                     );
                     None
                 }
@@ -1053,7 +1073,7 @@ from "Dev Broker"
         assert_eq!(first_problem("from all\n|> sort .a").1, 4);
         assert_eq!(
             first_problem("from all |> to file \"x\"").2,
-            "`to file` isn't available yet; only `to app` is"
+            "`to file` isn't available yet; only `to app` and `to broker` are"
         );
         assert_eq!(
             first_problem("from all |> filter topic \"a/#/b\"").2,
@@ -1250,5 +1270,31 @@ from "Dev Broker"
         ] {
             assert!(parse(source).is_err(), "{source}");
         }
+    }
+
+    #[test]
+    fn to_broker_takes_a_name_and_a_topic() {
+        assert_eq!(
+            stages(r#"from all |> to broker "Office" "hot/{.room}""#),
+            vec![Stage::ToBroker {
+                broker: "Office".into(),
+                topic: r#""hot/\(.room)""#.into(),
+            }]
+        );
+        for source in [
+            "from all |> to broker",
+            "from all |> to broker Office \"x\"",
+        ] {
+            assert!(
+                first_problem(source)
+                    .2
+                    .starts_with("`to broker` takes a Broker's name"),
+                "{source}"
+            );
+        }
+        assert_eq!(
+            first_problem(r#"from all |> to broker "Office""#).2,
+            "`to broker` needs an expression"
+        );
     }
 }

@@ -200,14 +200,19 @@
         {
           "syntax": "to app \"<topic>\"",
           "does": "A Derived Topic in the Topic Tree, under Pipelines ▸ <this Pipeline> ▸ <topic>."
+        },
+        {
+          "syntax": "to broker \"<Broker>\" \"<topic>\"",
+          "does": "Republishes on a connected Broker, QoS 0 and not retained. A topic the Pipeline would read back is refused: narrow what it reads with filter topic right after from."
         }
       ],
-      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values.",
+      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send without sending it.",
       "snippet": "to app \"${topic}\"",
       "examples": [
         "to app \"hot\"",
         "to app \"hot/{.room}\"",
-        "to app \"{$levels[1]}/battery\""
+        "to app \"{$levels[1]}/battery\"",
+        "to broker \"Office\" \"alerts/{$levels[1]}\""
       ]
     }
   ],

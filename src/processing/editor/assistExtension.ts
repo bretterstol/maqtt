@@ -140,6 +140,15 @@ function options(
           })),
         ],
       };
+    case "broker":
+      return {
+        from: assist.from,
+        options: hints.brokers.map((name) => ({
+          label: `"${name}"`,
+          detail: "Broker",
+          type: "constant",
+        })),
+      };
     case "stage":
       return {
         from: assist.from,
@@ -213,6 +222,11 @@ function options(
         from: assist.from,
         options: [
           keyword("app", 'app "${topic}"', "a Derived Topic in the Topic Tree"),
+          keyword(
+            "broker",
+            'broker "${Broker}" "${topic}"',
+            "republish on a connected Broker",
+          ),
         ],
         validFor: IDENT,
       };

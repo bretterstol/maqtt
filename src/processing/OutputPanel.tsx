@@ -107,7 +107,10 @@ function PreviewOutput({
   }
   const rows: [string, PreviewValue][] = [
     ...preview.inspected.map((v): [string, PreviewValue] => ["inspect", v]),
-    ...preview.results.map((v): [string, PreviewValue] => ["to app", v]),
+    ...preview.results.map((v): [string, PreviewValue] => [
+      v.sink ?? "to app",
+      v,
+    ]),
   ];
   if (rows.length === 0) {
     return (

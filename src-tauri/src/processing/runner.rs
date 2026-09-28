@@ -19,6 +19,10 @@ use crate::connection::{ConnectionState, ConnectionStatus, ConnectionStatuses};
 use crate::message::{ConnectionId, ReceivedMessage, now_ms};
 use crate::profile::ProfileId;
 
+/// Sends a payload to a topic on the Connection with this name, without waiting, for
+/// `to broker`. `lib.rs` backs it with the live Connections.
+pub type Republish = Arc<dyn Fn(&str, &str, Vec<u8>) -> Result<(), String> + Send + Sync>;
+
 /// The pseudo-Connection that Derived Topics come from; real Connections start at 1.
 pub const PIPELINES: ConnectionId = ConnectionId(0);
 const TICK: Duration = Duration::from_millis(50);
@@ -35,7 +39,7 @@ pub struct PipelineStatus {
     pub finished: bool,
     /// Messages from the Pipeline's Connections that entered it.
     pub received: u64,
-    /// Messages its Sinks sent.
+    /// Messages its Sinks sent: Derived Topics and republished messages.
     pub emitted: u64,
     /// Messages it missed because it fell behind.
     pub missed: u64,
@@ -66,16 +70,18 @@ struct Handle {
 pub struct Runner {
     bus: Bus,
     statuses: ConnectionStatuses,
+    republish: Republish,
     running: Mutex<HashMap<String, Handle>>,
     /// Status of Pipelines that ran and stopped, kept so their counts stay visible.
     stopped: Mutex<HashMap<String, PipelineStatus>>,
 }
 
 impl Runner {
-    pub fn new(bus: Bus, statuses: ConnectionStatuses) -> Self {
+    pub fn new(bus: Bus, statuses: ConnectionStatuses, republish: Republish) -> Self {
         Self {
             bus,
             statuses,
+            republish,
             running: Mutex::new(HashMap::new()),
             stopped: Mutex::new(HashMap::new()),
         }
@@ -105,6 +111,7 @@ impl Runner {
             _done: done_tx,
             pipeline,
             bus: self.bus.clone(),
+            republish: self.republish.clone(),
             names: self
                 .statuses
                 .snapshot()
@@ -214,6 +221,7 @@ struct Job {
     name: String,
     pipeline: Pipeline,
     bus: Bus,
+    republish: Republish,
     names: HashMap<ConnectionId, String>,
     rx: tokio::sync::broadcast::Receiver<BusEvent>,
     stop: Arc<Notify>,
@@ -313,6 +321,18 @@ impl Job {
                             properties: None,
                         })));
                 }
+                Effect::Republish {
+                    broker,
+                    topic,
+                    payload,
+                } => match (self.republish)(&broker, &topic, payload) {
+                    Ok(()) => status.emitted += 1,
+                    Err(err) => {
+                        status.errors += 1;
+                        status.last_error =
+                            Some(format!("to broker \"{broker}\" on {topic}: {err}"));
+                    }
+                },
                 Effect::Inspected {
                     label,
                     topic,
@@ -356,7 +376,15 @@ mod tests {
         }))
     }
 
+    type Sent = Arc<Mutex<Vec<(String, String, Vec<u8>)>>>;
+
     fn setup() -> (Bus, Runner) {
+        let (bus, runner, _) = setup_sending();
+        (bus, runner)
+    }
+
+    /// Also records what `to broker` sends; only "Office" is connected.
+    fn setup_sending() -> (Bus, Runner, Sent) {
         let bus = Bus::new();
         let statuses = ConnectionStatuses::default();
         statuses.publish(
@@ -369,7 +397,18 @@ mod tests {
                 subscriptions: Vec::new(),
             },
         );
-        (bus.clone(), Runner::new(bus, statuses))
+        let sent: Sent = Arc::default();
+        let log = sent.clone();
+        let republish: Republish = Arc::new(move |broker, topic, payload| {
+            if broker != "Office" {
+                return Err(format!("{broker} isn't connected"));
+            }
+            log.lock()
+                .unwrap()
+                .push((broker.into(), topic.into(), payload));
+            Ok(())
+        });
+        (bus.clone(), Runner::new(bus, statuses, republish), sent)
     }
 
     fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
@@ -538,5 +577,33 @@ mod tests {
         let status = runner.status("few").unwrap();
         assert!(!status.running && status.emitted == 2, "{status:?}");
         assert!(!runner.is_running("few"));
+    }
+
+    #[test]
+    fn to_broker_republishes_and_reports_what_it_couldnt_send() {
+        let (bus, runner, sent) = setup_sending();
+        runner
+            .start(
+                "copy",
+                parse(
+                    r#"from "Dev Broker" |> to broker "Office" "copy/{$topic}" |> to broker "Home" "x""#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bus.publish(message(&bus, 1, "a/b", r#"{"t": 1}"#));
+        wait_for("sent", || runner.status("copy").unwrap().errors == 1);
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec![("Office".into(), "copy/a/b".into(), br#"{"t":1}"#.to_vec())]
+        );
+        let status = runner.status("copy").unwrap();
+        assert_eq!(status.emitted, 1);
+        assert_eq!(
+            status.last_error.as_deref(),
+            Some(r#"to broker "Home" on x: Home isn't connected"#)
+        );
+        runner.stop("copy");
     }
 }

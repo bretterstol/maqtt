@@ -1,8 +1,8 @@
 //! Pipelines: user code that transforms live messages. See docs/processing-plan.md.
 //!
 //! Per ADR 0004 this module is removable: it reaches the rest of måqtt only through the Message
-//! Bus, the Connection names it reads, a read-only view of recent messages for Preview, and the
-//! commands below, which `lib.rs` registers.
+//! Bus, the Connection names it reads, a read-only view of recent messages for Preview, a way to
+//! send on a Connection for `to broker`, and the commands below, which `lib.rs` registers.
 
 pub mod jq;
 pub mod keyed;
@@ -26,7 +26,7 @@ use crate::bus::Bus;
 use crate::connection::ConnectionStatuses;
 use lang::Diagnostic;
 use preview::{Preview, RecentMessages};
-use runner::{PipelineStatus, Runner};
+use runner::{PipelineStatus, Republish, Runner};
 use store::PipelineFiles;
 
 pub struct Processing {
@@ -45,9 +45,10 @@ impl Processing {
         statuses: ConnectionStatuses,
         dir: PathBuf,
         recent: RecentMessages,
+        republish: Republish,
     ) -> Self {
         Self {
-            runner: Runner::new(bus, statuses.clone()),
+            runner: Runner::new(bus, statuses.clone(), republish),
             files: PipelineFiles::new(dir),
             statuses,
             recent,

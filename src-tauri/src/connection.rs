@@ -536,6 +536,28 @@ impl ConnectionManager {
         self.live.get(profile_id).filter(|c| !c.is_finished())
     }
 
+    /// Queues a plain message on the Connection with this name, without waiting: for a
+    /// Pipeline's `to broker`, which names Connections as `from` does.
+    pub fn try_publish_by_name(
+        &self,
+        statuses: &ConnectionStatuses,
+        name: &str,
+        topic: &str,
+        payload: Vec<u8>,
+    ) -> Result<(), String> {
+        let profile_id = statuses
+            .snapshot()
+            .into_iter()
+            .find(|s| s.name == name && self.ids.get(&s.profile_id) == Some(&s.connection_id))
+            .map(|s| s.profile_id)
+            .ok_or_else(|| format!("there is no Connection called {name}"))?;
+        self.get(&profile_id)
+            .ok_or_else(|| format!("{name} isn't connected"))?
+            .publisher()?
+            .try_publish(topic, payload)
+            .map_err(|_| format!("{name} is too busy to send right now"))
+    }
+
     pub fn reset_all(&self) {
         for connection in self.live.values().filter(|c| !c.is_finished()) {
             connection.reset();
@@ -1140,7 +1162,11 @@ mod dev_broker_tests {
         manager.connect(&profile, None, &bus, &statuses).unwrap();
         wait_until("subscribed", || all_subscribed(&statuses)).await;
 
-        let runner = Runner::new(bus.clone(), statuses.clone());
+        let runner = Runner::new(
+            bus.clone(),
+            statuses.clone(),
+            Arc::new(|_, _, _| Err("not in this test".into())),
+        );
         let source = format!(
             r#"from "pipeline test"
             |> filter topic "{base}/+/climate"
@@ -1182,5 +1208,68 @@ mod dev_broker_tests {
         assert_eq!((status.received, status.emitted, status.errors), (2, 1, 0));
         runner.stop("warm rooms");
         manager.disconnect(&profile.id);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev Broker"]
+    async fn a_pipeline_republishes_to_a_broker_without_reading_it_back() {
+        use crate::processing::{lang, runner::Runner};
+
+        let base = format!("maqtt/it/republish/{}", std::process::id());
+        let profile = Profile::new("republish test", "localhost", 21883);
+        let bus = Bus::new();
+        let mut rx = bus.subscribe();
+        let statuses = ConnectionStatuses::default();
+        let manager = Arc::new(Mutex::new(ConnectionManager::default()));
+        manager
+            .lock()
+            .unwrap()
+            .connect(&profile, None, &bus, &statuses)
+            .unwrap();
+        wait_until("subscribed", || all_subscribed(&statuses)).await;
+
+        let republish = {
+            let (manager, statuses) = (manager.clone(), statuses.clone());
+            Arc::new(move |name: &str, topic: &str, payload| {
+                manager
+                    .lock()
+                    .unwrap()
+                    .try_publish_by_name(&statuses, name, topic, payload)
+            })
+        };
+        let runner = Runner::new(bus.clone(), statuses.clone(), republish);
+        // Reads `in/`, writes `out/` on the same Broker; the Broker sends `out/` back to måqtt,
+        // which the Pipeline must not take in again.
+        let source = format!(
+            r#"from "republish test"
+            |> filter topic "{base}/in/+"
+            |> map {{ doubled: .n * 2 }}
+            |> to broker "republish test" "{base}/out/{{$levels[-1]}}""#
+        );
+        runner.start("copy", lang::parse(&source).unwrap()).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        publish(&format!("{base}/in/a"), r#"{"n": 21}"#, false);
+
+        let republished = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(BusEvent::Message(m)) = rx.recv().await
+                    && m.topic.starts_with(&format!("{base}/out/"))
+                {
+                    return m;
+                }
+            }
+        })
+        .await
+        .expect("the republished message comes back from the Broker");
+        assert_eq!(republished.topic, format!("{base}/out/a"));
+        assert_eq!(&republished.payload[..], br#"{"doubled":42}"#);
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        // The echo of `out/a` arrived too, and was left alone: still one sent.
+        let status = runner.status("copy").unwrap();
+        assert_eq!((status.emitted, status.errors), (1, 0), "{status:?}");
+        runner.stop("copy");
+        manager.lock().unwrap().disconnect(&profile.id);
     }
 }

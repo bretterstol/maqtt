@@ -34,7 +34,7 @@ const MAX_PAGE: usize = 5_000;
 struct AppState {
     bus: Bus,
     statuses: ConnectionStatuses,
-    connections: Mutex<ConnectionManager>,
+    connections: Arc<Mutex<ConnectionManager>>,
     profiles: Mutex<ProfileStore>,
     publish_history: Mutex<PublishHistory>,
     history: Arc<Mutex<HistoryStore>>,
@@ -413,6 +413,17 @@ pub fn run() {
         .with_file_name("pipelines");
     let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits::default())));
     let (live_filter, _) = watch::channel(LiveFilter::default());
+    let connections = Arc::new(Mutex::new(ConnectionManager::default()));
+    // `to broker` sends on a Connection by name, as `from` reads one.
+    let republish: processing::runner::Republish = {
+        let (connections, statuses) = (connections.clone(), statuses.clone());
+        Arc::new(move |name, topic, payload| {
+            connections
+                .lock()
+                .unwrap()
+                .try_publish_by_name(&statuses, name, topic, payload)
+        })
+    };
     let recent_messages: processing::preview::RecentMessages = {
         let history = history.clone();
         Arc::new(move |per_connection| history.lock().unwrap().newest(per_connection))
@@ -434,7 +445,7 @@ pub fn run() {
         .manage(AppState {
             bus,
             statuses: statuses.clone(),
-            connections: Mutex::new(ConnectionManager::default()),
+            connections: connections.clone(),
             profiles: Mutex::new(profiles),
             publish_history: Mutex::new(sent),
             history,
@@ -448,6 +459,7 @@ pub fn run() {
             statuses,
             pipelines_dir,
             recent_messages,
+            republish,
         ))
         .invoke_handler(tauri::generate_handler![
             stream_messages,

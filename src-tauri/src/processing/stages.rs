@@ -12,7 +12,7 @@ use super::jq;
 use super::keyed::Keyed;
 use super::lang::{Connections, Pipeline, Stage, WindowSize};
 use crate::message::ReceivedMessage;
-use crate::profile::topic_matches;
+use crate::profile::{topic_matches, validate_topic_name};
 
 /// What running a message (or a tick) produced.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,12 @@ pub enum Effect {
         label: Option<String>,
         topic: String,
         value: String,
+    },
+    /// A message to republish on a Connection, named as in `from`.
+    Republish {
+        broker: String,
+        topic: String,
+        payload: Vec<u8>,
     },
     Error(String),
 }
@@ -139,6 +145,13 @@ enum Running {
     },
     Inspect(Option<String>),
     ToApp(jq::Filter),
+    ToBroker {
+        broker: String,
+        topic: jq::Filter,
+        /// When the Pipeline reads this Broker: the `filter topic` Stages at its start. A topic
+        /// that gets past them would come back into the Pipeline, so it's refused.
+        reads_back: Option<Vec<(String, bool)>>,
+    },
 }
 
 struct Throttled {
@@ -185,6 +198,14 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(pipeline: &Pipeline) -> Result<Self, String> {
         let compile = |code: &str| jq::compile(code).map_err(|e| e.message);
+        let leading_filters: Vec<(String, bool)> = pipeline
+            .stages
+            .iter()
+            .map_while(|stage| match stage {
+                Stage::FilterTopic { filter, negate } => Some((filter.clone(), *negate)),
+                _ => None,
+            })
+            .collect();
         let stages = pipeline
             .stages
             .iter()
@@ -231,6 +252,11 @@ impl Runtime {
                     },
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
+                    Stage::ToBroker { broker, topic } => Running::ToBroker {
+                        broker: broker.clone(),
+                        topic: compile(topic)?,
+                        reads_back: reads(&pipeline.from, broker).then(|| leading_filters.clone()),
+                    },
                 })
             })
             .collect::<Result<_, String>>()?;
@@ -268,10 +294,7 @@ impl Runtime {
 
     /// Whether messages from this Connection are the Pipeline's to handle.
     pub fn reads(&self, connection: &str) -> bool {
-        match &self.from {
-            Connections::All => true,
-            Connections::Named(names) => names.iter().any(|n| n == connection),
-        }
+        reads(&self.from, connection)
     }
 
     pub fn push(&mut self, origin: Origin, now: Instant, out: &mut Vec<Effect>) {
@@ -552,30 +575,66 @@ fn apply(
             next.push(item);
         }
         Running::ToApp(filter) => {
-            match jq::run(filter, item.value.clone(), &vars(&item)) {
-                Ok(results) => match results.first() {
-                    Some(Val::TStr(topic)) => {
-                        match derived_topic(&String::from_utf8_lossy(topic)) {
-                            Ok(topic) => out.push(Effect::Derived {
-                                topic,
-                                payload: payload_bytes(&item.value),
-                            }),
-                            Err(err) => out.push(error(&item, "to app", err)),
-                        }
-                    }
-                    other => out.push(error(
-                        &item,
-                        "to app",
-                        format!(
-                            "the topic must be a string, not {}",
-                            other.map_or("nothing".into(), |v| v.to_string())
-                        ),
-                    )),
-                },
+            match sink_topic(filter, &item).and_then(|topic| derived_topic(&topic)) {
+                Ok(topic) => out.push(Effect::Derived {
+                    topic,
+                    payload: payload_bytes(&item.value),
+                }),
                 Err(err) => out.push(error(&item, "to app", err)),
             }
             next.push(item);
         }
+        Running::ToBroker {
+            broker,
+            topic,
+            reads_back,
+        } => {
+            let stage = format!("to broker \"{broker}\"");
+            let checked = sink_topic(topic, &item).and_then(|topic| {
+                validate_topic_name(&topic).map_err(|e| {
+                    if topic.is_empty() { e } else { format!("{e}: `{topic}`") }
+                })?;
+                match reads_back {
+                    Some(filters)
+                        if filters
+                            .iter()
+                            .all(|(filter, negate)| topic_matches(filter, &topic) != *negate) =>
+                    {
+                        Err(format!(
+                            "`{topic}` would come back into this Pipeline, which reads {broker}. Keep it out with `filter not topic` right after `from`"
+                        ))
+                    }
+                    _ => Ok(topic),
+                }
+            });
+            match checked {
+                Ok(topic) => out.push(Effect::Republish {
+                    broker: broker.clone(),
+                    topic,
+                    payload: payload_bytes(&item.value),
+                }),
+                Err(err) => out.push(error(&item, &stage, err)),
+            }
+            next.push(item);
+        }
+    }
+}
+
+/// The topic a Sink's expression gives for this item: its first result, which must be a string.
+fn sink_topic(filter: &jq::Filter, item: &Item) -> Result<String, String> {
+    match jq::run(filter, item.value.clone(), &vars(item))?.first() {
+        Some(Val::TStr(topic)) => Ok(String::from_utf8_lossy(topic).into_owned()),
+        other => Err(format!(
+            "the topic must be a string, not {}",
+            other.map_or("nothing".into(), |v| v.to_string())
+        )),
+    }
+}
+
+fn reads(from: &Connections, connection: &str) -> bool {
+    match from {
+        Connections::All => true,
+        Connections::Named(names) => names.iter().any(|n| n == connection),
     }
 }
 

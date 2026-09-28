@@ -35,7 +35,7 @@ from "Dev Broker"
 | `changes`  | `changes`, `changes by .room`                                                      | Passes a message only if its value differs from the previous one with the same key (the incoming topic, unless `by` names one).                                                 |
 | `throttle` | `throttle 5s`, `throttle 5s by .room`                                              | At most one message per interval per key (the incoming topic, unless `by` names one); the latest wins.                                                                          |
 | `inspect`  | `inspect`, `inspect "after map"`                                                   | Shows the value in the Pipeline's panel and passes it on unchanged.                                                                                                             |
-| `to`       | `to app "hot/{$levels[2]}"`                                                        | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline.                                                                                        |
+| `to`       | `to app "hot/{$levels[2]}"`, `to broker "Office" "hot/{.room}"`                    | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline.                                                                                        |
 | `scan`     | `scan 0 ($acc + .)`, `scan 0 ($acc + 1) by .room`                                  | Carries a result from value to value: `$acc` is the previous result, the update gives the next, and each one is sent on. The start is one value; wrap anything longer in `( )`. |
 | `debounce` | `debounce 2s`, `debounce 2s by .room`                                              | Sends the latest value once there has been no new one for the interval.                                                                                                         |
 | `take`     | `take 10`, `take 1 by .room`                                                       | Passes the first N values, then the Pipeline finishes. With `by`: the first N per key, and it keeps running.                                                                    |
@@ -73,6 +73,12 @@ In every string, including strings inside jq expressions, `{…}` fills in the v
 
 `from all` doesn't read Derived Topics, so a Pipeline can't feed itself. Reading another Pipeline's output (`from pipelines`) can come later if needed.
 
+### Republishing
+
+`to broker "Office" "hot/{.room}"` publishes the value on the Connection named `Office` (named as in `from`), QoS 0 and not retained. Strings go as text, anything else as JSON. A Broker that isn't connected, or a Connection too busy to take the message right away, counts as an error in the Pipeline's panel; sending never waits.
+
+When the Pipeline reads that Broker, a topic that gets past its `from` and leading `filter topic` Stages would come straight back in, so it is refused as an error instead of sent. `filter not topic "hot/#"` right after `from` (or a `filter topic` that doesn't match the output) lets it through. Preview shows what `to broker` would send, and the refusals, without sending anything.
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.
@@ -84,9 +90,10 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
                              │
                              └─► Pipeline runner (one task per started Pipeline)
                                    bounded queue ─► Stages ─► Sinks
-                                                               └─ app Sink ─► Message Bus
-                                                                  (Derived Topics under the
-                                                                   Pipelines pseudo-Connection)
+                                                               ├─ app Sink ─► Message Bus
+                                                               │  (Derived Topics under the
+                                                               │   Pipelines pseudo-Connection)
+                                                               └─ broker Sink ─► a Connection
 ```
 
 - **Derived Topics go back onto the Message Bus** as ordinary messages from a reserved "Pipelines" pseudo-Connection. The History Store, Topic Index, Topic Tree, Message Log, detail panel and exports then work on them with no changes. That is what keeps processing removable.
@@ -98,7 +105,7 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
   - `sinks/`: the app Sink first.
   - `store.rs`: `.pipe` files.
   - `mod.rs`: the Tauri commands.
-- **Preview reads the History Store** through one closure that `lib.rs` hands to the module (`RecentMessages`), read-only. It's the only way in besides the bus.
+- **Preview reads the History Store** through one closure that `lib.rs` hands to the module (`RecentMessages`), read-only. **`to broker` sends through another** (`Republish`), which queues a message on a Connection by name and says at once if it couldn't. These two and the bus are the only ways in.
 - **Frontend** (`src/processing/`): the Pipelines tab (list, editor, Preview, output), a CodeMirror 6 language mode for highlighting, and calls through `bridge.ts`.
 
 ## Milestones
@@ -170,7 +177,7 @@ Hardening that came with it:
 
 ### P5: More Sinks
 
-1. **Republish**: `to broker "Office" "topic/{…}"`, with a guard against republishing into something the Pipeline itself reads
+1. **Republish**: `to broker "Office" "topic/{…}"`, with a guard against republishing into something the Pipeline itself reads. Done on the `pipelines-p5` branch; see Republishing above. Checked over WebDriver against the dev Broker: Preview lists what would be sent, a Pipeline reading its own output is refused in Preview, and once started the Broker receives the republished message while its echo isn't taken in again. A broker integration test covers the same round trip.
 2. **File**: JSON Lines or CSV, rotating by size or day
 3. **Map**: messages with latitude and longitude on a map (design together first: which map library, and how to pick the fields)
 

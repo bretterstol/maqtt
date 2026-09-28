@@ -11,6 +11,8 @@ export type Assist =
   | { kind: "stage"; from: number; prefix: string; alsoFunctions: boolean }
   /** After `from`: `all` or a Broker's name. */
   | { kind: "sources"; from: number; first: boolean }
+  /** After `to broker`: a Broker's name. */
+  | { kind: "broker"; from: number }
   | { kind: "variable"; from: number }
   /** A field of the value entering Stage `stage` (1 = the first after `from`), or of $payload. */
   | {
@@ -80,6 +82,12 @@ export function assistAt(before: string): Assist {
   const pos = before.length;
   const { modes, pipes, segmentStart } = scan(before);
   const top = modes[modes.length - 1];
+  if (pipes > 0 && modes.length <= 2) {
+    const name = /^to\s+broker\s+("[^"]*)?$/.exec(
+      before.slice(segmentStart).trimStart(),
+    );
+    if (name) return { kind: "broker", from: pos - (name[1]?.length ?? 0) };
+  }
   // A string is no place for suggestions, except a Broker's name after `from`.
   const naming = top === "string" && modes.length === 2 && pipes === 0;
   if (top === "comment" || (top === "string" && !naming)) {
