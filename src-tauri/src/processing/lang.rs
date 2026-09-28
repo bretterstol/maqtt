@@ -41,9 +41,25 @@ pub enum Stage {
     /// With an optional key (a jq expression); without one, state is per incoming topic.
     Changes(Option<String>),
     Throttle(Duration, Option<String>),
+    Debounce(Duration, Option<String>),
+    /// A start value and an update, both jq; the update is run wrapped in [`jq::SCAN_WRAP`].
+    Scan {
+        start: String,
+        update: String,
+        key: Option<String>,
+    },
+    Window(WindowSize, Option<String>),
+    Take(usize, Option<String>),
     Inspect(Option<String>),
     /// The Derived Topic, as a jq expression that yields a string.
     ToApp(String),
+}
+
+/// When a window closes: on the clock every interval, or every N values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowSize {
+    Time(Duration),
+    Count(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +71,7 @@ pub struct Pipeline {
     pub ends: Vec<usize>,
 }
 
-const STAGES: &str = "filter, map, changes, throttle, inspect, to";
+const STAGES: &str = "filter, map, changes, throttle, debounce, scan, window, take, inspect, to";
 
 /// Parses and checks a Pipeline, reporting every problem found.
 pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
@@ -260,22 +276,63 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
             key_clause(code, rest, problems, "changes by .room").map(Stage::Changes)
         }
         "throttle" => {
-            let duration_len = arg_text.find(char::is_whitespace).unwrap_or(arg_text.len());
-            let Some(interval) = parse_duration(&arg_text[..duration_len]) else {
+            let (interval, rest) = leading_duration(code, arg, problems, "throttle")?;
+            key_clause(code, rest, problems, "throttle 5s by .room")
+                .map(|key| Stage::Throttle(interval, key))
+        }
+        "debounce" => {
+            let (interval, rest) = leading_duration(code, arg, problems, "debounce")?;
+            key_clause(code, rest, problems, "debounce 2s by .room")
+                .map(|key| Stage::Debounce(interval, key))
+        }
+        "window" => {
+            let size_len = arg_text.find(char::is_whitespace).unwrap_or(arg_text.len());
+            let size_text = &arg_text[..size_len];
+            let size = if size_text.bytes().all(|b| b.is_ascii_digit()) {
+                size_text
+                    .parse()
+                    .ok()
+                    .filter(|&n: &usize| n > 0)
+                    .map(WindowSize::Count)
+            } else {
+                parse_duration(size_text).map(WindowSize::Time)
+            };
+            let Some(size) = size else {
                 problems.at(
                     arg_start,
-                    (arg_start + duration_len).max(arg_start + 1),
-                    "`throttle` takes a duration such as `500ms`, `5s`, `1m` or `1h`",
+                    (arg_start + size_len).max(arg_start + 1),
+                    "`window` takes a duration such as `1m`, or a number of values such as `10`",
                 );
                 return None;
             };
             let rest = Span {
-                start: arg_start + duration_len,
+                start: arg_start + size_len,
                 end: arg.end,
             };
-            key_clause(code, rest, problems, "throttle 5s by .room")
-                .map(|key| Stage::Throttle(interval, key))
+            key_clause(code, rest, problems, "window 1m by .room")
+                .map(|key| Stage::Window(size, key))
         }
+        "take" => {
+            let count_len = arg_text.find(char::is_whitespace).unwrap_or(arg_text.len());
+            let Some(count) = arg_text[..count_len]
+                .parse()
+                .ok()
+                .filter(|&n: &usize| n > 0)
+            else {
+                problems.at(
+                    arg_start,
+                    (arg_start + count_len).max(arg_start + 1),
+                    "`take` takes a number of values, such as `take 10`",
+                );
+                return None;
+            };
+            let rest = Span {
+                start: arg_start + count_len,
+                end: arg.end,
+            };
+            key_clause(code, rest, problems, "take 1 by .room").map(|key| Stage::Take(count, key))
+        }
+        "scan" => parse_scan(code, arg, problems),
         "inspect" => {
             if arg_text.is_empty() {
                 return Some(Stage::Inspect(None));
@@ -343,6 +400,139 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
     }
 }
 
+/// The duration a Stage starts with, and the span after it.
+fn leading_duration(
+    code: &str,
+    arg: Span,
+    problems: &mut Problems,
+    stage: &str,
+) -> Option<(Duration, Span)> {
+    let text = code[arg.start..arg.end].trim();
+    let start = arg.end - code[arg.start..arg.end].trim_start().len();
+    let len = text.find(char::is_whitespace).unwrap_or(text.len());
+    let Some(interval) = parse_duration(&text[..len]) else {
+        problems.at(
+            start,
+            (start + len).max(start + 1),
+            format!("`{stage}` takes a duration such as `500ms`, `5s`, `1m` or `1h`"),
+        );
+        return None;
+    };
+    Some((
+        interval,
+        Span {
+            start: start + len,
+            end: arg.end,
+        },
+    ))
+}
+
+/// `scan <start> <update> [by <key>]`. The start is one value: everything up to the first
+/// space outside brackets and strings.
+fn parse_scan(code: &str, arg: Span, problems: &mut Problems) -> Option<Stage> {
+    const EXAMPLE: &str = "for example `scan 0 ($acc + .)`";
+    let text = &code[arg.start..arg.end];
+    let lead = text.len() - text.trim_start().len();
+    let body = Span {
+        start: arg.start + lead,
+        end: arg.start + text.trim_end().len(),
+    };
+    let body_text = &code[body.start..body.end];
+    let mut start_end = body_text.len();
+    let mut by_at = None;
+    let mut previous = ' ';
+    scan_code(body_text, |i, c, top| {
+        if top && c.is_whitespace() && start_end == body_text.len() {
+            start_end = i;
+        }
+        if top
+            && by_at.is_none()
+            && start_end < i
+            && previous.is_whitespace()
+            && body_text[i..].starts_with("by")
+            && body_text[i + 2..].starts_with(|c: char| c.is_whitespace())
+        {
+            by_at = Some(i);
+        }
+        previous = c;
+    });
+    if body_text.is_empty() {
+        problems.at(
+            arg.start.saturating_sub(1),
+            arg.start,
+            format!("`scan` needs a start value and an update, {EXAMPLE}"),
+        );
+        return None;
+    }
+    let update_end = by_at.map_or(body.end, |at| body.start + at);
+    if body_text[start_end..update_end - body.start]
+        .trim()
+        .is_empty()
+    {
+        problems.at(
+            body.start,
+            body.end,
+            format!("`scan` needs an update after its start value, {EXAMPLE}"),
+        );
+        return None;
+    }
+    let start = expression(
+        code,
+        Span {
+            start: body.start,
+            end: body.start + start_end,
+        },
+        problems,
+        "scan",
+    );
+    let update = expression_in(
+        code,
+        Span {
+            start: body.start + start_end,
+            end: update_end,
+        },
+        problems,
+        "scan",
+        jq::SCAN_WRAP,
+    );
+    let key = key_clause(
+        code,
+        Span {
+            start: update_end,
+            end: body.end,
+        },
+        problems,
+        "scan 0 ($acc + 1) by .room",
+    );
+    Some(Stage::Scan {
+        start: start?,
+        update: update?,
+        key: key?,
+    })
+}
+
+/// Walks `text`, telling for each character whether it's at the top level: outside strings and
+/// brackets.
+fn scan_code(text: &str, mut visit: impl FnMut(usize, char, bool)) {
+    let mut modes = vec![Mode::Code { depth: 0 }];
+    let mut iter = text.char_indices().peekable();
+    while let Some((i, c)) = iter.next() {
+        let top = *modes.last().unwrap();
+        visit(i, c, modes.len() == 1 && top == Mode::Code { depth: 0 });
+        if top == Mode::Str && c == '\\' {
+            iter.next();
+            continue;
+        }
+        let mut chars = iter.clone().map(|(_, c)| c).peekable();
+        let before = modes.len();
+        step(&mut modes, c, &mut chars);
+        // `{{` in a string: skip the second brace too.
+        if top == Mode::Str && c == '{' && modes.len() == before {
+            iter.next();
+        }
+    }
+}
+
 /// The first jq construct in `text` that can recurse without end, which would overflow the
 /// stack and abort the app: `def`, and `recurse`, `repeat`, `while` and `until` with arguments.
 /// Plain `recurse` (into the data) is fine. Returns its offset and name.
@@ -388,6 +578,37 @@ fn endless_construct(text: &str) -> Option<(usize, &'static str)> {
     found
 }
 
+/// Replaces a comma before a closing `}` or `]` with a space, as jq doesn't allow one there;
+/// keeps every offset.
+fn drop_trailing_commas(text: &str) -> String {
+    let mut out = text.to_string();
+    let mut commas = Vec::new();
+    let mut modes = vec![Mode::Code { depth: 0 }];
+    let mut iter = text.char_indices().peekable();
+    while let Some((i, c)) = iter.next() {
+        let top = *modes.last().unwrap();
+        if c == ',' && top != Mode::Str {
+            commas.push(i);
+        }
+        if top == Mode::Str && c == '\\' {
+            iter.next();
+            continue;
+        }
+        let mut chars = iter.clone().map(|(_, c)| c).peekable();
+        let before = modes.len();
+        step(&mut modes, c, &mut chars);
+        if top == Mode::Str && c == '{' && modes.len() == before {
+            iter.next();
+        }
+    }
+    for i in commas {
+        if text[i + 1..].trim_start().starts_with(['}', ']']) {
+            out.replace_range(i..i + 1, " ");
+        }
+    }
+    out
+}
+
 /// An optional `by <key>` after a Stage: `Some(None)` when absent, `None` when it's wrong.
 fn key_clause(
     code: &str,
@@ -426,6 +647,17 @@ fn offset_in(code: &str, part: &str) -> usize {
 
 /// Checks a jq expression and returns it rewritten for jq; problems point into the source.
 fn expression(code: &str, arg: Span, problems: &mut Problems, stage: &str) -> Option<String> {
+    expression_in(code, arg, problems, stage, ("", ""))
+}
+
+/// Like [`expression`], checking it inside `wrap` (a prefix and a suffix), as it will run.
+fn expression_in(
+    code: &str,
+    arg: Span,
+    problems: &mut Problems,
+    stage: &str,
+    wrap: (&str, &str),
+) -> Option<String> {
     let text = &code[arg.start..arg.end];
     let leading = text.len() - text.trim_start().len();
     let text = text.trim();
@@ -449,13 +681,14 @@ fn expression(code: &str, arg: Span, problems: &mut Problems, stage: &str) -> Op
         problems.at(start + at, start + at + word.len(), message);
         return None;
     }
-    let (jq_code, original_offsets) = to_jq(text);
-    match jq::compile(&jq_code) {
+    let (jq_code, original_offsets) = to_jq(&drop_trailing_commas(text));
+    let (prefix, suffix) = wrap;
+    match jq::compile(&format!("{prefix}{jq_code}{suffix}")) {
         Ok(_) => Some(jq_code),
         Err(err) => {
             let at = start
                 + original_offsets
-                    .get(err.offset)
+                    .get(err.offset.saturating_sub(prefix.len()))
                     .copied()
                     .unwrap_or(text.len());
             problems.at(at, (at + 1).min(start + text.len()).max(at), err.message);
@@ -814,7 +1047,7 @@ from "Dev Broker"
         );
         assert_eq!(
             first_problem("from all\n|> sort .a").2,
-            "Unknown Stage `sort`. Stages are: filter, map, changes, throttle, inspect, to"
+            "Unknown Stage `sort`. Stages are: filter, map, changes, throttle, debounce, scan, window, take, inspect, to"
         );
         assert_eq!(first_problem("from all\n|> sort .a").0, 2);
         assert_eq!(first_problem("from all\n|> sort .a").1, 4);
@@ -897,6 +1130,98 @@ from "Dev Broker"
         assert!(text[2].ends_with("inspect \"x\""), "{text:?}");
         assert_eq!(ends.len(), 3);
     }
+
+    #[test]
+    fn parses_the_stateful_stages() {
+        assert_eq!(
+            stages("from all |> debounce 2s by .room |> window 1m |> window 10 by .room |> take 3"),
+            vec![
+                Stage::Debounce(Duration::from_secs(2), Some(".room".into())),
+                Stage::Window(WindowSize::Time(Duration::from_secs(60)), None),
+                Stage::Window(WindowSize::Count(10), Some(".room".into())),
+                Stage::Take(3, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_splits_its_start_update_and_key() {
+        assert_eq!(
+            stages("from all |> scan 0 ($acc + 1) by .room"),
+            vec![Stage::Scan {
+                start: "0".into(),
+                update: "($acc + 1)".into(),
+                key: Some(".room".into()),
+            }]
+        );
+        assert_eq!(
+            stages("from all |> scan { n: 0 } { n: ($acc.n + 1) }"),
+            vec![Stage::Scan {
+                start: "{ n: 0 }".into(),
+                update: "{ n: ($acc.n + 1) }".into(),
+                key: None,
+            }]
+        );
+        // `sort_by` isn't a `by` clause.
+        assert!(matches!(
+            &stages("from all |> scan [] ($acc + [.] | sort_by(.t))")[0],
+            Stage::Scan { key: None, .. }
+        ));
+    }
+
+    #[test]
+    fn scan_problems_point_at_the_update() {
+        let (line, column, message) = first_problem("from all\n|> scan 0 ($acc + nope)");
+        assert_eq!((line, column), (2, 19), "{message}");
+        assert!(message.contains("nope"), "{message}");
+        assert!(
+            first_problem("from all |> scan 0")
+                .2
+                .contains("needs an update")
+        );
+        assert!(
+            first_problem("from all |> map $acc").2.contains("$acc"),
+            "$acc is only for scan"
+        );
+    }
+
+    #[test]
+    fn stateful_stage_arguments_are_checked() {
+        assert!(
+            first_problem("from all |> window soon")
+                .2
+                .contains("duration")
+        );
+        assert!(
+            first_problem("from all |> window 0")
+                .2
+                .contains("number of values")
+        );
+        assert!(
+            first_problem("from all |> take lots")
+                .2
+                .contains("number of values")
+        );
+        assert!(
+            first_problem("from all |> debounce 2")
+                .2
+                .contains("duration")
+        );
+    }
+
+    #[test]
+    fn objects_may_span_lines_and_end_with_a_comma() {
+        assert_eq!(
+            stages("from all |> map {\n  a: .x,\n  b: [1, 2,],\n}"),
+            vec![Stage::Map("{\n  a: .x,\n  b: [1, 2 ] \n}".into())]
+        );
+        // A comma inside a string stays.
+        assert_eq!(
+            stages(r#"from all |> map ",}""#),
+            vec![Stage::Map(r#"",}""#.into())]
+        );
+    }
+
     #[test]
     fn constructs_that_can_recurse_forever_are_refused() {
         for source in [

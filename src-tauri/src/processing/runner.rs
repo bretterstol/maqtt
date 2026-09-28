@@ -31,6 +31,8 @@ const STOP_WAIT: Duration = Duration::from_secs(1);
 pub struct PipelineStatus {
     pub name: String,
     pub running: bool,
+    /// It stopped by itself: a `take` passed all it would.
+    pub finished: bool,
     /// Messages from the Pipeline's Connections that entered it.
     pub received: u64,
     /// Messages its Sinks sent.
@@ -85,6 +87,8 @@ impl Runner {
         // Compile once here so a problem is reported now rather than from the thread.
         Runtime::new(&pipeline)?;
         self.stop(name);
+        // Its Derived Topics start over with this run.
+        self.clear_topics(name);
         self.announce();
 
         let stop = Arc::new(Notify::new());
@@ -154,13 +158,26 @@ impl Runner {
         }
     }
 
+    /// Stops a Pipeline for good (deleted or renamed), and clears its Derived Topics.
     pub fn forget(&self, name: &str) {
         self.stop(name);
         self.stopped.lock().unwrap().remove(name);
+        self.clear_topics(name);
+    }
+
+    fn clear_topics(&self, name: &str) {
+        self.bus.publish(BusEvent::TopicsCleared {
+            connection_id: PIPELINES,
+            prefix: name.to_string(),
+        });
     }
 
     pub fn is_running(&self, name: &str) -> bool {
-        self.running.lock().unwrap().contains_key(name)
+        self.running
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|handle| handle.status.lock().unwrap().running)
     }
 
     pub fn status(&self, name: &str) -> Option<PipelineStatus> {
@@ -250,11 +267,18 @@ impl Job {
                     Ok(BusEvent::ConnectionState(s)) => {
                         self.names.insert(s.connection_id, s.name);
                     }
-                    Ok(BusEvent::Marker(_)) => {}
+                    Ok(BusEvent::Marker(_) | BusEvent::TopicsCleared { .. }) => {}
                     Err(RecvError::Lagged(n)) => self.status.lock().unwrap().missed += n,
                     Err(RecvError::Closed) => break,
                 },
                 _ = tick.tick() => pipeline.tick(Instant::now(), &mut effects),
+            }
+            if pipeline.finished() {
+                // A `take` is done: send what later Stages still hold, and stop.
+                pipeline.flush(Instant::now(), &mut effects);
+                self.handle(&mut effects);
+                self.status.lock().unwrap().finished = true;
+                break;
             }
             self.handle(&mut effects);
             if self.halted.load(Ordering::SeqCst) {
@@ -458,5 +482,61 @@ mod tests {
                 "nothing from the stuck Pipeline"
             );
         }
+    }
+
+    #[test]
+    fn a_restart_clears_the_old_topics_and_nothing_old_follows() {
+        let (bus, runner) = setup();
+        let pipeline = || parse(r#"from all |> to app "x""#).unwrap();
+        runner.start("p", pipeline()).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        for _ in 0..200 {
+            bus.publish(message(&bus, 1, "t", "1"));
+        }
+        let mut rx = bus.subscribe();
+        runner.start("p", pipeline()).unwrap();
+
+        // After the clear, only the new run's output: here, none, as nothing new came in.
+        let mut after_clear = None;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                BusEvent::TopicsCleared {
+                    connection_id,
+                    prefix,
+                } => {
+                    assert_eq!((connection_id, prefix.as_str()), (PIPELINES, "p"));
+                    after_clear = Some(0);
+                }
+                BusEvent::Message(m) if m.connection_id == PIPELINES => {
+                    if let Some(n) = after_clear.as_mut() {
+                        *n += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(after_clear, Some(0), "cleared once, nothing old after it");
+
+        runner.forget("p");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(BusEvent::TopicsCleared { prefix, .. }) if prefix == "p"
+        ));
+    }
+
+    #[test]
+    fn take_finishes_the_pipeline() {
+        let (bus, runner) = setup();
+        runner
+            .start("few", parse(r#"from all |> take 2 |> to app "x""#).unwrap())
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        for _ in 0..5 {
+            bus.publish(message(&bus, 1, "t", "1"));
+        }
+        wait_for("finished", || runner.status("few").unwrap().finished);
+        let status = runner.status("few").unwrap();
+        assert!(!status.running && status.emitted == 2, "{status:?}");
+        assert!(!runner.is_running("few"));
     }
 }

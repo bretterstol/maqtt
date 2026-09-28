@@ -269,4 +269,37 @@ describe("expand modes", () => {
     store.apply([update("garage/door/state", 5)]);
     expect(labels(store.rows())).toContain("    door");
   });
+
+  it("clears a prefix, pruning levels left empty and keeping counts right", () => {
+    const store = new TopicTreeStore();
+    store.apply([
+      update("warm/hot/kitchen", 1, 3, { connectionId: 0 }),
+      update("warm/hot/garage", 2, 2, { connectionId: 0 }),
+      update("warmer/x", 3, 1, { connectionId: 0 }),
+    ]);
+    store.setExpandMode("all");
+    const kitchen = find(store, "warm/hot/kitchen");
+    store.clear(0, "warm");
+
+    expect(labels(store.rows())).toEqual(["#0", "  warmer", "    x"]);
+    expect(store.topicCount).toBe(1);
+    expect(store.contains(kitchen)).toBe(false);
+    const root = store.rows()[0];
+    expect([root.topicCount, root.messageCount]).toEqual([1, 1]);
+
+    store.clear(0, "warmer");
+    expect(store.rows()).toEqual([]);
+    expect(store.contains(root)).toBe(false);
+  });
+
+  it("clears only whole levels, and ignores unknown prefixes", () => {
+    const store = new TopicTreeStore();
+    store.apply([update("a/b", 1), update("a/bc", 2)]);
+    store.setExpandMode("all");
+    store.clear(1, "a/b");
+    store.clear(1, "nothing/here");
+    store.clear(7, "a");
+    expect(store.topicCount).toBe(1);
+    expect(store.contains(find(store, "a/bc"))).toBe(true);
+  });
 });

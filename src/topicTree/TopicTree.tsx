@@ -30,6 +30,24 @@ interface Props {
   selectedKey: string | null;
   onSelect: (node: TreeNode) => void;
   onContextMenu: (node: TreeNode, x: number, y: number) => void;
+  /**
+   * A label for a branch whose topics have gone quiet for a reason the tree can't see, such as
+   * a stopped Pipeline. The branch shows it and is dimmed.
+   */
+  branchLabel?: (node: TreeNode) => string | null;
+}
+
+/** The label of the node or its nearest labelled ancestor, and whether it's the node's own. */
+function labelFor(
+  node: TreeNode,
+  branchLabel: Props["branchLabel"],
+): { label: string; own: boolean } | null {
+  if (!branchLabel) return null;
+  for (let n: TreeNode | null = node; n && n.depth > 0; n = n.parent) {
+    const label = branchLabel(n);
+    if (label) return { label, own: n === node };
+  }
+  return null;
 }
 
 export function TopicTree({
@@ -39,6 +57,7 @@ export function TopicTree({
   selectedKey,
   onSelect,
   onContextMenu,
+  branchLabel,
 }: Props) {
   useSyncExternalStore(store.subscribe, store.getVersion);
   const rows = store.rows();
@@ -80,6 +99,7 @@ export function TopicTree({
                 now={now}
                 rootName={connectionNames.get(node.connectionId)}
                 rootState={connectionStates.get(node.connectionId)}
+                branch={labelFor(node, branchLabel)}
                 onToggle={() => store.toggle(node)}
                 onSelect={() => onSelect(node)}
                 onContextMenu={(x, y) => onContextMenu(node, x, y)}
@@ -142,6 +162,7 @@ interface RowProps {
   now: number;
   rootName: string | undefined;
   rootState: ConnectionState | undefined;
+  branch: { label: string; own: boolean } | null;
   onToggle: () => void;
   onSelect: () => void;
   onContextMenu: (x: number, y: number) => void;
@@ -155,6 +176,7 @@ function Row({
   now,
   rootName,
   rootState,
+  branch,
   onToggle,
   onSelect,
   onContextMenu,
@@ -169,6 +191,7 @@ function Row({
     "topic-tree__row",
     selected && "topic-tree__row--selected",
     isRoot && "topic-tree__row--root",
+    branch && "topic-tree__row--quiet",
   ]
     .filter(Boolean)
     .join(" ");
@@ -214,6 +237,7 @@ function Row({
         </span>
       )}
       <span className="topic-tree__meta">
+        {branch?.own && <span className="badge">{branch.label}</span>}
         <ActivityMeter node={node} now={now} />
         {node.topic?.retained && (
           <span className="badge" title="The Broker holds a Retained Message">

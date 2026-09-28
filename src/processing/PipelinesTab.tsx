@@ -314,7 +314,13 @@ export default function PipelinesTab() {
                       ? "pipelines__lamp pipelines__lamp--on"
                       : "pipelines__lamp"
                   }
-                  title={p.status.running ? "Running" : "Stopped"}
+                  title={
+                    p.status.running
+                      ? "Running"
+                      : p.status.finished
+                        ? "Finished"
+                        : "Stopped"
+                  }
                 />
                 <span className="pipelines__name">
                   {p.name}

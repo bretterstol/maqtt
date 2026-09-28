@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
 use crate::connection::ConnectionStatus;
-use crate::message::{ConnectionMarker, ReceivedMessage};
+use crate::message::{ConnectionId, ConnectionMarker, ReceivedMessage};
 
 /// Enough headroom to absorb a few seconds of heavy traffic before a slow consumer lags.
 const CAPACITY: usize = 65_536;
@@ -17,6 +17,18 @@ pub enum BusEvent {
     Message(Arc<ReceivedMessage>),
     Marker(Arc<ConnectionMarker>),
     ConnectionState(ConnectionStatus),
+    /// The topics at and under `prefix` on a Connection are gone: forget them and their history.
+    TopicsCleared {
+        connection_id: ConnectionId,
+        prefix: String,
+    },
+}
+
+/// Whether `topic` is `prefix` or below it.
+pub fn under_prefix(topic: &str, prefix: &str) -> bool {
+    topic
+        .strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 #[derive(Clone)]

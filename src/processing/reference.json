@@ -4,8 +4,14 @@
       "name": "from",
       "summary": "Picks the Brokers to read. Always the first line.",
       "forms": [
-        { "syntax": "from all", "does": "Every connected Broker." },
-        { "syntax": "from \"Dev Broker\"", "does": "One Broker, by its name." },
+        {
+          "syntax": "from all",
+          "does": "Every connected Broker."
+        },
+        {
+          "syntax": "from \"Dev Broker\"",
+          "does": "One Broker, by its name."
+        },
         {
           "syntax": "from \"Dev Broker\", \"Office\"",
           "does": "Several Brokers."
@@ -48,7 +54,12 @@
     {
       "name": "map",
       "summary": "Replaces the value with the result of a jq expression.",
-      "forms": [{ "syntax": "map <expression>", "does": "The new value." }],
+      "forms": [
+        {
+          "syntax": "map <expression>",
+          "does": "The new value."
+        }
+      ],
       "details": "An expression with several results sends each on as its own value; one with no results drops the value.",
       "snippet": "map ${expression}",
       "examples": [
@@ -62,7 +73,10 @@
       "name": "changes",
       "summary": "Passes a value only when it differs from the previous one.",
       "forms": [
-        { "syntax": "changes", "does": "Compared per original topic." },
+        {
+          "syntax": "changes",
+          "does": "Compared per original topic."
+        },
         {
           "syntax": "changes by <key>",
           "does": "Compared per key, a jq expression: for example two sensors that report one room."
@@ -75,7 +89,10 @@
       "name": "throttle",
       "summary": "At most one value per interval; the latest wins.",
       "forms": [
-        { "syntax": "throttle <duration>", "does": "Per original topic." },
+        {
+          "syntax": "throttle <duration>",
+          "does": "Per original topic."
+        },
         {
           "syntax": "throttle <duration> by <key>",
           "does": "Per key, a jq expression."
@@ -86,11 +103,92 @@
       "examples": ["throttle 5s", "throttle 500ms", "throttle 1m by .room"]
     },
     {
+      "name": "debounce",
+      "summary": "Sends the latest value once there has been no new one for a while.",
+      "forms": [
+        {
+          "syntax": "debounce <duration>",
+          "does": "Per original topic."
+        },
+        {
+          "syntax": "debounce <duration> by <key>",
+          "does": "Per key, a jq expression."
+        }
+      ],
+      "details": "Good for chatty sensors: you get the value they settle on.",
+      "snippet": "debounce ${2s}",
+      "examples": ["debounce 2s", "debounce 500ms by .room"]
+    },
+    {
+      "name": "scan",
+      "summary": "Carries a result from value to value, and sends each new result.",
+      "forms": [
+        {
+          "syntax": "scan <start> <update>",
+          "does": "In the update, `.` is the new value and `$acc` the previous result (the start, the first time). What it gives is the next result."
+        },
+        {
+          "syntax": "scan <start> <update> by <key>",
+          "does": "A result per key instead of per topic."
+        }
+      ],
+      "details": "The start is one value: 0, null, {}, or anything longer in ( ).",
+      "snippet": "scan ${0} ${($acc + .)}",
+      "examples": [
+        "scan 0 ($acc + .)",
+        "scan 0 ($acc + 1) by .room",
+        "scan null { temp: ., change: (. - ($acc.temp // .)) }"
+      ]
+    },
+    {
+      "name": "window",
+      "summary": "Collects values and sends them as a list when the window closes.",
+      "forms": [
+        {
+          "syntax": "window <duration>",
+          "does": "On the clock: `window 1m` closes at every whole minute."
+        },
+        {
+          "syntax": "window <count>",
+          "does": "Every N values."
+        },
+        {
+          "syntax": "window <size> by <key>",
+          "does": "A window per key; `$key` says which."
+        }
+      ],
+      "details": "Shape the list with map and the list functions, like `map { room: $key, avg: avg(.temp) }`. Empty windows send nothing.",
+      "snippet": "window ${1m}",
+      "examples": ["window 1m", "window 10", "window 1m by .room"]
+    },
+    {
+      "name": "take",
+      "summary": "Passes the first values and no more.",
+      "forms": [
+        {
+          "syntax": "take <count>",
+          "does": "The first N values; then the Pipeline finishes."
+        },
+        {
+          "syntax": "take <count> by <key>",
+          "does": "The first N per key; the Pipeline keeps running."
+        }
+      ],
+      "snippet": "take ${10}",
+      "examples": ["take 10", "take 1 by .room"]
+    },
+    {
       "name": "inspect",
       "summary": "Shows the value in the output panel and passes it on unchanged.",
       "forms": [
-        { "syntax": "inspect", "does": "Labelled with the original topic." },
-        { "syntax": "inspect \"<label>\"", "does": "With your own label." }
+        {
+          "syntax": "inspect",
+          "does": "Labelled with the original topic."
+        },
+        {
+          "syntax": "inspect \"<label>\"",
+          "does": "With your own label."
+        }
       ],
       "snippet": "inspect",
       "examples": ["inspect", "inspect \"after map\""]
@@ -134,11 +232,21 @@
       "name": "$time",
       "does": "When it arrived, in seconds since 1970 (with decimals). `$time | todate` gives a date."
     },
-    { "name": "$qos", "does": "The QoS it arrived with: 0, 1 or 2." },
-    { "name": "$retained", "does": "true for a retained message." },
+    {
+      "name": "$qos",
+      "does": "The QoS it arrived with: 0, 1 or 2."
+    },
+    {
+      "name": "$retained",
+      "does": "true for a retained message."
+    },
     {
       "name": "$properties",
       "does": "MQTT 5 properties, or null: contentType, responseTopic, correlationData, messageExpiryInterval, payloadFormatIndicator, userProperties (a list of [key, value])."
+    },
+    {
+      "name": "$key",
+      "does": "What the latest Stage that keeps state (changes, throttle, debounce, scan, window, take … by) kept the value under: the `by` value, or the topic. null before any."
     }
   ],
   "syntax": [
@@ -147,15 +255,25 @@
       "does": "The current value. `.temperature` is a field of it, `.a.b` a nested one, `.list[0]` an item."
     },
     {
+      "name": "{ a: .x, b: .y, }",
+      "does": "An object. It may span several lines and end with a comma."
+    },
+    {
       "name": "|>",
       "does": "Joins Stages. A new line before it is usual, but not needed."
     },
-    { "name": "#", "does": "A comment, to the end of the line." },
+    {
+      "name": "#",
+      "does": "A comment, to the end of the line."
+    },
     {
       "name": "\"{…}\"",
       "does": "Fills in a value in any string: \"{.temp} °C\", \"hot/{$levels[2]}\". Write {{ and }} for literal braces."
     },
-    { "name": "500ms 5s 1m 1h", "does": "Durations, for throttle." },
+    {
+      "name": "500ms 5s 1m 1h",
+      "does": "Durations, for throttle."
+    },
     {
       "name": "|",
       "does": "Inside an expression, jq's own pipe: `.name | ascii_downcase`."
@@ -246,14 +364,14 @@
     },
     {
       "name": "min",
-      "does": "The smallest item of a list.",
+      "does": "The smallest item of a list. `min(.t)` gives the smallest .t in a list of objects.",
       "example": "min",
       "input": "[3, 1, 2]",
       "output": "1"
     },
     {
       "name": "max",
-      "does": "The largest item of a list.",
+      "does": "The largest item of a list. `max(.t)` gives the largest .t in a list of objects.",
       "example": "max",
       "input": "[3, 1, 2]",
       "output": "3"
@@ -264,6 +382,27 @@
       "example": "add",
       "input": "[1, 2, 3]",
       "output": "6"
+    },
+    {
+      "name": "avg",
+      "does": "The average of something over a list, such as a window; null for an empty list.",
+      "example": "avg(.t)",
+      "input": "[{\"t\": 1}, {\"t\": 3}]",
+      "output": "2"
+    },
+    {
+      "name": "sum",
+      "does": "The total of something over a list.",
+      "example": "sum(.t)",
+      "input": "[{\"t\": 1}, {\"t\": 3}]",
+      "output": "4"
+    },
+    {
+      "name": "count",
+      "does": "How many items a list has; the same as length.",
+      "example": "count",
+      "input": "[1, 2]",
+      "output": "2"
     },
     {
       "name": "sort",

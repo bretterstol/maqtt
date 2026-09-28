@@ -42,7 +42,11 @@ export function OutputPanel({
             aria-selected={view === "live"}
             onClick={() => onView("live")}
           >
-            {status.running ? "Running" : "Stopped"}
+            {status.running
+              ? "Running"
+              : status.finished
+                ? "Finished"
+                : "Stopped"}
           </button>
         </div>
         {view === "preview" ? (
@@ -169,7 +173,9 @@ function LiveOutput({ status }: { status: PipelineStatus }) {
         <p className="pipeline-output__hint">
           {status.running
             ? "Waiting for messages. Add |> inspect after any Stage to see its values here."
-            : "Start the Pipeline to see what |> inspect shows."}
+            : status.finished
+              ? "It finished: its take passed all it would. Start it again for more."
+              : "Start the Pipeline to see what |> inspect shows."}
         </p>
       )}
     </>

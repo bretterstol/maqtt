@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::bus::{Bus, BusEvent};
+use crate::bus::{Bus, BusEvent, under_prefix};
 use crate::connection::ConnectionState;
 use crate::message::{ConnectionId, ConnectionMarker, ReceivedMessage};
 use crate::topics::TopicIndex;
@@ -189,6 +189,24 @@ impl HistoryStore {
         }
     }
 
+    /// Forgets the topics at and under `prefix` on one Connection, with their history.
+    pub fn clear(&mut self, connection_id: ConnectionId, prefix: &str) {
+        self.topics.clear(connection_id, prefix);
+        let Some(history) = self.connections.get_mut(&connection_id) else {
+            return;
+        };
+        let messages = &mut history.messages;
+        history.topics.retain(|topic, seqs| {
+            let keep = !under_prefix(topic, prefix);
+            if !keep {
+                for seq in seqs.iter() {
+                    messages.remove(seq);
+                }
+            }
+            keep
+        });
+    }
+
     pub fn insert_marker(&mut self, marker: Arc<ConnectionMarker>) {
         let markers = &mut self
             .connections
@@ -332,6 +350,10 @@ impl HistoryStore {
                 self.topics.on_connected(status.connection_id);
             }
             BusEvent::ConnectionState(_) => {}
+            BusEvent::TopicsCleared {
+                connection_id,
+                prefix,
+            } => self.clear(connection_id, &prefix),
         }
     }
 }
@@ -582,5 +604,49 @@ mod tests {
         let mut seqs: Vec<u64> = store.newest(2).iter().map(|m| m.seq).collect();
         seqs.sort();
         assert_eq!(seqs, vec![5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn clearing_a_prefix_forgets_its_topics_and_history() {
+        let mut store = HistoryStore::new(HistoryLimits::default());
+        store.insert(message(1, 0, "warm/hot/kitchen", "1"));
+        store.insert(message(2, 0, "warm/hot/garage", "2"));
+        store.insert(message(3, 0, "warmer/x", "3"));
+        store.insert(message(4, 1, "warm/hot/kitchen", "4"));
+        store.clear(ConnectionId(0), "warm");
+
+        let topics: Vec<(u32, String)> = store
+            .topics
+            .snapshot()
+            .iter()
+            .map(|t| (t.connection_id.0, t.topic.to_string()))
+            .collect();
+        assert_eq!(topics.len(), 2, "{topics:?}");
+        assert!(
+            topics.contains(&(0, "warmer/x".into())),
+            "only whole levels match"
+        );
+        assert!(
+            topics.contains(&(1, "warm/hot/kitchen".into())),
+            "other Connections keep theirs"
+        );
+        assert!(
+            store
+                .topic_history(ConnectionId(0), "warm/hot/kitchen")
+                .is_empty()
+        );
+        assert!(store.get(ConnectionId(0), 1).is_none());
+        assert_eq!(
+            store.topics.take_cleared(),
+            vec![(ConnectionId(0), "warm".to_string())]
+        );
+        assert!(
+            store
+                .topics
+                .take_changed()
+                .iter()
+                .all(|t| t.connection_id.0 == 1 || !t.topic.starts_with("warm/")),
+            "cleared topics aren't reported as changed"
+        );
     }
 }

@@ -60,6 +60,14 @@ impl<T> Keyed<T> {
         value
     }
 
+    pub fn remove(&mut self, key: &str) -> Option<T> {
+        self.entries.remove(key).map(|(value, _)| value)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &T)> {
+        self.entries.iter().map(|(key, (value, _))| (key, value))
+    }
+
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
         self.entries.values_mut().map(|(value, _)| value)
     }
