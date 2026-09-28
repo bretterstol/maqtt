@@ -107,7 +107,10 @@ function PreviewOutput({
   }
   const rows: [string, PreviewValue][] = [
     ...preview.inspected.map((v): [string, PreviewValue] => ["inspect", v]),
-    ...preview.results.map((v): [string, PreviewValue] => ["to app", v]),
+    ...preview.results.map((v): [string, PreviewValue] => [
+      v.sink ?? "to app",
+      v,
+    ]),
   ];
   if (rows.length === 0) {
     return (
@@ -140,6 +143,11 @@ function LiveCounts({ status }: { status: PipelineStatus }) {
       {status.missed > 0 && (
         <span title="Messages that arrived faster than the Pipeline could handle them">
           {status.missed.toLocaleString()} missed
+        </span>
+      )}
+      {status.returned > 0 && (
+        <span title="Messages this Pipeline republished that came back from a Broker. They were left out, so the Pipeline doesn't feed itself.">
+          {status.returned.toLocaleString()} came back
         </span>
       )}
       {status.errors > 0 && (

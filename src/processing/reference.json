@@ -34,19 +34,25 @@
           "does": "A jq condition on the current value. Anything but false and null keeps it."
         },
         {
-          "syntax": "filter topic \"<mqtt filter>\"",
-          "does": "The original topic matches an MQTT filter: + is one level, # is the rest."
+          "syntax": "filter topic \"<mqtt filter>\", …",
+          "does": "The original topic matches any of the MQTT filters: + is one level, # is the rest."
         },
         {
-          "syntax": "filter not topic \"<mqtt filter>\"",
-          "does": "The original topic doesn't match."
+          "syntax": "filter not topic \"<mqtt filter>\", …",
+          "does": "The original topic matches none of them."
+        },
+        {
+          "syntax": "filter topic \"home/+room/#rest\"",
+          "does": "Names a wildcard: + or # followed by a name. From here on $room is the level + matched, and $rest the levels # matched (null for none)."
         }
       ],
-      "details": "Put `filter topic` first: Preview uses the leading ones to pick its sample messages.",
+      "details": "Put `filter topic` first: Preview uses the leading ones to pick its sample messages. A named wildcard matches like a plain one; with several filters, a name the matching one lacks is null.",
       "snippet": "filter ${condition}",
       "examples": [
         "filter .temperature > 22",
         "filter topic \"home/+/climate\"",
+        "filter topic \"home/#\", \"office/#\"",
+        "filter topic \"maqtt/home/+room/#\"",
         "filter not topic \"+/status\"",
         "filter $levels[1] == \"kitchen\" and .battery < 20"
       ]
@@ -200,14 +206,19 @@
         {
           "syntax": "to app \"<topic>\"",
           "does": "A Derived Topic in the Topic Tree, under Pipelines ▸ <this Pipeline> ▸ <topic>."
+        },
+        {
+          "syntax": "to broker \"<Broker>\" \"<topic>\"",
+          "does": "Republishes on a connected Broker, QoS 0 and not retained. A topic the Pipeline would read back is refused: narrow what it reads with filter topic right after from. Copies that come back anyway, through another Broker Profile for the same Broker, are left out and counted as came back."
         }
       ],
-      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values.",
+      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send without sending it.",
       "snippet": "to app \"${topic}\"",
       "examples": [
         "to app \"hot\"",
         "to app \"hot/{.room}\"",
-        "to app \"{$levels[1]}/battery\""
+        "to app \"{$levels[1]}/battery\"",
+        "to broker \"Office\" \"alerts/{$levels[1]}\""
       ]
     }
   ],

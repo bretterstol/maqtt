@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::jq;
-use crate::profile::validate_topic_filter;
+use crate::profile::{topic_matches, validate_topic_filter};
 
 /// A problem in a Pipeline's source, for the editor.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -30,12 +30,117 @@ pub enum Connections {
 }
 
 /// A Stage as written, with its jq expressions already rewritten for jq (see [`to_jq`]).
+/// `filter topic "a", "b"`: passes a topic matching any of the MQTT filters; with `not`, a
+/// topic matching none of them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopicFilter {
+    pub patterns: Vec<TopicPattern>,
+    pub negate: bool,
+}
+
+/// One MQTT filter as written, which may name its wildcards: `home/+room/#rest`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopicPattern {
+    /// The plain MQTT filter, names taken out: `home/+/#`.
+    pub filter: String,
+    pub captures: Vec<Capture>,
+}
+
+/// A named wildcard: the topic level (or, for `#`, the levels from there on) it stands for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Capture {
+    pub name: String,
+    pub level: usize,
+    pub rest: bool,
+}
+
+impl TopicFilter {
+    pub fn passes(&self, topic: &str) -> bool {
+        self.matching(topic).is_some() != self.negate
+    }
+
+    /// The first pattern the topic matches.
+    pub fn matching(&self, topic: &str) -> Option<&TopicPattern> {
+        self.patterns
+            .iter()
+            .find(|p| topic_matches(&p.filter, topic))
+    }
+
+    /// The wildcard names any of its patterns declare, each once.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+        for capture in self.patterns.iter().flat_map(|p| &p.captures) {
+            if !names.contains(&capture.name.as_str()) {
+                names.push(&capture.name);
+            }
+        }
+        names
+    }
+}
+
+impl TopicPattern {
+    /// What each named wildcard stands for in a topic this pattern matches. A `#` that matched
+    /// no levels gives `None`.
+    pub fn captured<'a>(&'a self, topic: &str) -> Vec<(&'a str, Option<String>)> {
+        let levels: Vec<&str> = topic.split('/').collect();
+        self.captures
+            .iter()
+            .map(|c| {
+                let value = if c.rest {
+                    (c.level < levels.len()).then(|| levels[c.level..].join("/"))
+                } else {
+                    levels.get(c.level).map(|l| l.to_string())
+                };
+                (c.name.as_str(), value)
+            })
+            .collect()
+    }
+}
+
+/// Reads one filter, taking out the names of its wildcards: `+room` is `+` named `room`.
+fn topic_pattern(text: &str) -> Result<TopicPattern, String> {
+    let mut levels = Vec::new();
+    let mut captures: Vec<Capture> = Vec::new();
+    for (level, part) in text.split('/').enumerate() {
+        let wildcard = part.chars().next().filter(|c| matches!(c, '+' | '#'));
+        let (Some(wildcard), Some(name)) = (wildcard, part.get(1..).filter(|n| !n.is_empty()))
+        else {
+            levels.push(part);
+            continue;
+        };
+        let identifier = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !identifier {
+            return Err(format!(
+                "`{part}`: a wildcard's name uses letters, digits and `_`, like `{wildcard}room`"
+            ));
+        }
+        if name.starts_with("__")
+            || name == "acc"
+            || jq::VARIABLES.contains(&format!("${name}").as_str())
+        {
+            return Err(format!(
+                "`${name}` is already a variable; give `{part}` another name"
+            ));
+        }
+        if captures.iter().any(|c| c.name == name) {
+            return Err(format!("`{name}` names two wildcards in {text}"));
+        }
+        captures.push(Capture {
+            name: name.to_string(),
+            level,
+            rest: wildcard == '#',
+        });
+        levels.push(if wildcard == '#' { "#" } else { "+" });
+    }
+    let filter = levels.join("/");
+    validate_topic_filter(&filter)?;
+    Ok(TopicPattern { filter, captures })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stage {
-    FilterTopic {
-        filter: String,
-        negate: bool,
-    },
+    FilterTopic(TopicFilter),
     Filter(String),
     Map(String),
     /// With an optional key (a jq expression); without one, state is per incoming topic.
@@ -53,6 +158,12 @@ pub enum Stage {
     Inspect(Option<String>),
     /// The Derived Topic, as a jq expression that yields a string.
     ToApp(String),
+    /// Republishing on a Connection, named as in `from`; the topic is a jq expression that
+    /// yields a string.
+    ToBroker {
+        broker: String,
+        topic: String,
+    },
 }
 
 /// When a window closes: on the clock every interval, or every N values.
@@ -66,6 +177,8 @@ pub enum WindowSize {
 pub struct Pipeline {
     pub from: Connections,
     pub stages: Vec<Stage>,
+    /// The named wildcards its `filter topic` Stages declare, in order: extra jq variables.
+    pub names: Vec<String>,
     /// Where the `from` line and then each Stage end in the source (byte offsets), for Preview
     /// to show what each Stage did.
     pub ends: Vec<usize>,
@@ -106,7 +219,12 @@ pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
     }
 
     match (from, problems.list.is_empty()) {
-        (Some(from), true) => Ok(Pipeline { from, stages, ends }),
+        (Some(from), true) => Ok(Pipeline {
+            from,
+            stages,
+            names: problems.names,
+            ends,
+        }),
         _ => {
             if problems.list.is_empty() {
                 problems.at(0, 1, "A Pipeline needs a `from` line");
@@ -128,9 +246,12 @@ struct Word<'a> {
     span: Span,
 }
 
+/// The problems found so far, and the named wildcards declared so far, which the expressions
+/// after them may use.
 struct Problems<'a> {
     source: &'a str,
     list: Vec<Diagnostic>,
+    names: Vec<String>,
 }
 
 impl<'a> Problems<'a> {
@@ -138,6 +259,7 @@ impl<'a> Problems<'a> {
         Self {
             source,
             list: Vec::new(),
+            names: Vec::new(),
         }
     }
 
@@ -184,37 +306,65 @@ fn parse_from(code: &str, arg: Span, problems: &mut Problems) -> Option<Connecti
     if text == "all" {
         return Some(Connections::All);
     }
-    let mut names = Vec::new();
-    let mut rest = arg;
+    match string_list(code, arg) {
+        Ok(names) => Some(Connections::Named(
+            names.into_iter().map(|(name, _)| name).collect(),
+        )),
+        Err(ListError::NotAString(at)) => {
+            problems.at(
+                at.start,
+                at.end.max(at.start + 1),
+                "`from` takes `all` or Connection names in quotes, for example `from \"Dev Broker\"`",
+            );
+            None
+        }
+        Err(ListError::Unseparated(at)) => {
+            problems.at(at.start, at.end, "Separate Connection names with commas");
+            None
+        }
+    }
+}
+
+enum ListError {
+    /// Where a quoted string should have been.
+    NotAString(Span),
+    /// Text after a string that isn't a comma.
+    Unseparated(Span),
+}
+
+/// Strings in quotes separated by commas, each with where it is in the source.
+fn string_list(code: &str, span: Span) -> Result<Vec<(String, Span)>, ListError> {
+    let mut items = Vec::new();
+    let mut rest = span;
     loop {
-        match string_literal(code, rest) {
-            Some((name, after)) => {
-                names.push(name);
-                let tail = code[after.start..after.end].trim_start();
-                if let Some(next) = tail.strip_prefix(',') {
-                    rest = Span {
-                        start: after.end - next.len(),
-                        end: after.end,
-                    };
-                } else if tail.is_empty() {
-                    return Some(Connections::Named(names));
-                } else {
-                    problems.at(
-                        after.end - tail.len(),
-                        after.end,
-                        "Separate Connection names with commas",
-                    );
-                    return None;
-                }
-            }
-            None => {
-                problems.at(
-                    rest.start,
-                    rest.end.max(rest.start + 1),
-                    "`from` takes `all` or Connection names in quotes, for example `from \"Dev Broker\"`",
-                );
-                return None;
-            }
+        let text = &code[rest.start..rest.end];
+        let start = rest.start + (text.len() - text.trim_start().len());
+        let Some((value, after)) = string_literal(code, rest) else {
+            return Err(ListError::NotAString(Span {
+                start,
+                end: rest.end,
+            }));
+        };
+        items.push((
+            value,
+            Span {
+                start,
+                end: after.start,
+            },
+        ));
+        let tail = code[after.start..after.end].trim_start();
+        if let Some(next) = tail.strip_prefix(',') {
+            rest = Span {
+                start: after.end - next.len(),
+                end: after.end,
+            };
+        } else if tail.is_empty() {
+            return Ok(items);
+        } else {
+            return Err(ListError::Unseparated(Span {
+                start: after.end - tail.len(),
+                end: after.end,
+            }));
         }
     }
 }
@@ -235,27 +385,46 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                     start: offset_in(code, after),
                     end: arg.end,
                 };
-                let Some((filter, trailing)) = string_literal(code, topic_span) else {
+                let filters = match string_list(code, topic_span) {
+                    Ok(filters) => filters,
+                    Err(ListError::NotAString(at)) => {
+                        problems.at(
+                            at.start,
+                            at.end.max(at.start + 1),
+                            "`filter topic` takes topic filters in quotes, like `\"home/#\"` or `\"home/#\", \"office/#\"`",
+                        );
+                        return None;
+                    }
+                    Err(ListError::Unseparated(at)) => {
+                        problems.at(at.start, at.end, "Separate topic filters with commas");
+                        return None;
+                    }
+                };
+                let mut patterns = Vec::new();
+                for (filter, at) in &filters {
+                    match topic_pattern(filter) {
+                        Ok(pattern) => patterns.push(pattern),
+                        Err(err) => {
+                            problems.at(at.start, at.end, err);
+                            return None;
+                        }
+                    }
+                }
+                let filter = TopicFilter { patterns, negate };
+                if negate && !filter.names().is_empty() {
                     problems.at(
                         topic_span.start,
                         arg.end,
-                        "`filter topic` takes a topic filter in quotes, like `\"home/#\"`",
-                    );
-                    return None;
-                };
-                if !code[trailing.start..trailing.end].trim().is_empty() {
-                    problems.at(
-                        trailing.start,
-                        trailing.end,
-                        "Unexpected text after the topic filter",
+                        "Named wildcards need a match to name: use them in `filter topic`, not `filter not topic`",
                     );
                     return None;
                 }
-                if let Err(err) = validate_topic_filter(&filter) {
-                    problems.at(topic_span.start, arg.end, err);
-                    return None;
+                for name in filter.names() {
+                    if !problems.names.iter().any(|n| n == name) {
+                        problems.names.push(name.to_string());
+                    }
                 }
-                return Some(Stage::FilterTopic { filter, negate });
+                return Some(Stage::FilterTopic(filter));
             }
             if negate {
                 problems.at(
@@ -355,11 +524,23 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
             let (sink, sink_arg) = keyword(code, arg);
             match sink.text {
                 "app" => expression(code, sink_arg, problems, "to app").map(Stage::ToApp),
+                "broker" => {
+                    let Some((broker, rest)) = string_literal(code, sink_arg) else {
+                        problems.at(
+                            sink.span.start,
+                            sink_arg.end.max(sink.span.end),
+                            "`to broker` takes a Broker's name in quotes and a topic, for example `to broker \"Office\" \"hot/{.room}\"`",
+                        );
+                        return None;
+                    };
+                    expression(code, rest, problems, "to broker")
+                        .map(|topic| Stage::ToBroker { broker, topic })
+                }
                 "" => {
                     problems.at(
                         arg_start,
                         arg.end.max(arg_start + 1),
-                        "`to` needs a Sink, for example `to app \"hot/{$levels[2]}\"`",
+                        "`to` needs a Sink: `to app \"hot/{$levels[2]}\"` or `to broker \"Office\" \"hot/{$levels[2]}\"`",
                     );
                     None
                 }
@@ -367,7 +548,9 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                     problems.at(
                         sink.span.start,
                         sink.span.end,
-                        format!("`to {other}` isn't available yet; only `to app` is"),
+                        format!(
+                            "`to {other}` isn't available yet; only `to app` and `to broker` are"
+                        ),
                     );
                     None
                 }
@@ -683,7 +866,7 @@ fn expression_in(
     }
     let (jq_code, original_offsets) = to_jq(&drop_trailing_commas(text));
     let (prefix, suffix) = wrap;
-    match jq::compile(&format!("{prefix}{jq_code}{suffix}")) {
+    match jq::compile(&format!("{prefix}{jq_code}{suffix}"), &problems.names) {
         Ok(_) => Some(jq_code),
         Err(err) => {
             let at = start
@@ -924,6 +1107,13 @@ mod tests {
         parse(source).unwrap_or_else(|e| panic!("{e:?}")).stages
     }
 
+    fn topics(filters: &[&str], negate: bool) -> Stage {
+        Stage::FilterTopic(TopicFilter {
+            patterns: filters.iter().map(|f| topic_pattern(f).unwrap()).collect(),
+            negate,
+        })
+    }
+
     fn first_problem(source: &str) -> (usize, usize, String) {
         let d = &parse(source).unwrap_err()[0];
         (d.line, d.column, d.message.clone())
@@ -946,10 +1136,7 @@ from "Dev Broker"
         assert_eq!(
             pipeline.stages,
             vec![
-                Stage::FilterTopic {
-                    filter: "home/+/climate-1".into(),
-                    negate: false
-                },
+                topics(&["home/+/climate-1"], false),
                 Stage::Map("{ temp: .temperature, room: $levels[2] }".into()),
                 Stage::Filter(".temp > 22".into()),
                 Stage::Changes(None),
@@ -973,10 +1160,7 @@ from "Dev Broker"
         assert_eq!(
             stages(r#"from all |> filter topic "home/#" |> map "a |> b # c""#),
             vec![
-                Stage::FilterTopic {
-                    filter: "home/#".into(),
-                    negate: false
-                },
+                topics(&["home/#"], false),
                 Stage::Map(r#""a |> b # c""#.into()),
             ]
         );
@@ -998,10 +1182,7 @@ from "Dev Broker"
         assert_eq!(
             stages(r#"from all |> filter not topic "+/status" |> inspect |> inspect "after""#),
             vec![
-                Stage::FilterTopic {
-                    filter: "+/status".into(),
-                    negate: true
-                },
+                topics(&["+/status"], true),
                 Stage::Inspect(None),
                 Stage::Inspect(Some("after".into())),
             ]
@@ -1053,7 +1234,7 @@ from "Dev Broker"
         assert_eq!(first_problem("from all\n|> sort .a").1, 4);
         assert_eq!(
             first_problem("from all |> to file \"x\"").2,
-            "`to file` isn't available yet; only `to app` is"
+            "`to file` isn't available yet; only `to app` and `to broker` are"
         );
         assert_eq!(
             first_problem("from all |> filter topic \"a/#/b\"").2,
@@ -1081,13 +1262,7 @@ from "Dev Broker"
     fn stages_split_over_lines() {
         assert_eq!(
             stages("from all\n  |> filter topic \"a/#\"\n  |> changes\n"),
-            vec![
-                Stage::FilterTopic {
-                    filter: "a/#".into(),
-                    negate: false
-                },
-                Stage::Changes(None)
-            ]
+            vec![topics(&["a/#"], false), Stage::Changes(None)]
         );
     }
 
@@ -1250,5 +1425,136 @@ from "Dev Broker"
         ] {
             assert!(parse(source).is_err(), "{source}");
         }
+    }
+
+    #[test]
+    fn to_broker_takes_a_name_and_a_topic() {
+        assert_eq!(
+            stages(r#"from all |> to broker "Office" "hot/{.room}""#),
+            vec![Stage::ToBroker {
+                broker: "Office".into(),
+                topic: r#""hot/\(.room)""#.into(),
+            }]
+        );
+        for source in [
+            "from all |> to broker",
+            "from all |> to broker Office \"x\"",
+        ] {
+            assert!(
+                first_problem(source)
+                    .2
+                    .starts_with("`to broker` takes a Broker's name"),
+                "{source}"
+            );
+        }
+        assert_eq!(
+            first_problem(r#"from all |> to broker "Office""#).2,
+            "`to broker` needs an expression"
+        );
+    }
+
+    #[test]
+    fn filter_topic_takes_several_filters() {
+        assert_eq!(
+            stages(
+                r#"from all |> filter topic "home/#", "office/+" |> filter not topic "+/status","$SYS/#""#
+            ),
+            vec![
+                topics(&["home/#", "office/+"], false),
+                topics(&["+/status", "$SYS/#"], true),
+            ]
+        );
+        let any = TopicFilter {
+            patterns: vec![
+                topic_pattern("home/#").unwrap(),
+                topic_pattern("office/+").unwrap(),
+            ],
+            negate: false,
+        };
+        assert!(any.passes("home/a/b") && any.passes("office/a") && !any.passes("garage/a"));
+        let none = TopicFilter {
+            negate: true,
+            ..any
+        };
+        assert!(!none.passes("home/a") && !none.passes("office/a") && none.passes("garage/a"));
+
+        assert_eq!(
+            first_problem(r#"from all |> filter topic "a" "b""#).2,
+            "Separate topic filters with commas"
+        );
+        assert!(
+            first_problem(r#"from all |> filter topic "a","#)
+                .2
+                .starts_with("`filter topic` takes topic filters in quotes")
+        );
+        // The problem is marked on the filter that has it.
+        let d = &parse(r#"from all |> filter topic "a/#", "b/#/c""#).unwrap_err()[0];
+        assert_eq!((d.column, d.end - d.start), (33, 7));
+    }
+
+    #[test]
+    fn named_wildcards_capture_levels_and_become_variables() {
+        let pipeline = parse(
+            r#"from all
+|> filter topic "maqtt/home/+room/#rest", "maqtt/office/+room"
+|> window 1m by $room
+|> map { room: $key, rest: $rest }"#,
+        )
+        .unwrap();
+        assert_eq!(pipeline.names, ["room", "rest"]);
+        let Stage::FilterTopic(filter) = &pipeline.stages[0] else {
+            panic!("{:?}", pipeline.stages[0]);
+        };
+        assert_eq!(filter.patterns[0].filter, "maqtt/home/+/#");
+
+        let captured = |topic: &str| filter.matching(topic).unwrap().captured(topic);
+        assert_eq!(
+            captured("maqtt/home/kitchen/climate/1"),
+            [
+                ("room", Some("kitchen".to_string())),
+                ("rest", Some("climate/1".to_string()))
+            ]
+        );
+        // `#` also matches no levels at all.
+        assert_eq!(captured("maqtt/home/kitchen")[1], ("rest", None));
+        assert_eq!(
+            captured("maqtt/office/desk"),
+            [("room", Some("desk".to_string()))]
+        );
+    }
+
+    #[test]
+    fn named_wildcards_are_checked() {
+        for (source, problem) in [
+            (
+                r#"from all |> filter topic "a/+1x""#,
+                "`+1x`: a wildcard's name uses letters, digits and `_`, like `+room`",
+            ),
+            (
+                r#"from all |> filter topic "a/+topic""#,
+                "`$topic` is already a variable; give `+topic` another name",
+            ),
+            (
+                r#"from all |> filter topic "+a/+a""#,
+                "`a` names two wildcards in +a/+a",
+            ),
+            (
+                r#"from all |> filter topic "a/#rest/b""#,
+                "`#` must be the whole last level in a/#/b",
+            ),
+            (
+                r#"from all |> filter not topic "a/+room""#,
+                "Named wildcards need a match to name: use them in `filter topic`, not `filter not topic`",
+            ),
+        ] {
+            assert_eq!(first_problem(source).2, problem, "{source}");
+        }
+        // Only after the filter that names it.
+        assert_eq!(
+            first_problem(r#"from all |> map $room |> filter topic "+room""#).2,
+            "unknown variable `$room`"
+        );
+        // Plain wildcards stay plain.
+        stages(r##"from all |> filter topic "a/+/b/#", "+", "#""##);
     }
 }

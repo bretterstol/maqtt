@@ -5,7 +5,8 @@ use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, data, unwrap_valr};
 use jaq_json::Val;
 
-/// The variables every expression can use, in the order their values are supplied.
+/// The variables every expression can use, in the order their values are supplied. A
+/// Pipeline's named wildcards (`+room` in `filter topic`) follow them.
 pub const VARIABLES: [&str; 9] = [
     "$payload",
     "$topic",
@@ -39,8 +40,9 @@ pub struct CompileError {
     pub message: String,
 }
 
-/// Compiles one jq expression, or says what is wrong with it.
-pub fn compile(code: &str) -> Result<Filter, CompileError> {
+/// Compiles one jq expression, or says what is wrong with it. `names` are the Pipeline's named
+/// wildcards, without `$`, usable after the built-in variables.
+pub fn compile(code: &str, names: &[String]) -> Result<Filter, CompileError> {
     use jaq_core::load::Error;
 
     let own = jaq_core::load::parse(OWN_DEFS, |p| p.defs()).expect("our own defs parse");
@@ -57,6 +59,11 @@ pub fn compile(code: &str) -> Result<Filter, CompileError> {
             .saturating_sub(code.as_ptr() as usize)
             .min(code.len())
     };
+    let globals: Vec<String> = VARIABLES
+        .iter()
+        .map(|v| v.to_string())
+        .chain(names.iter().map(|n| format!("${n}")))
+        .collect();
     let arena = Arena::default();
     let modules = Loader::new(defs)
         .load(&arena, File { code, path: () })
@@ -87,7 +94,7 @@ pub fn compile(code: &str) -> Result<Filter, CompileError> {
         })?;
     Compiler::default()
         .with_funs(funs)
-        .with_global_vars(VARIABLES)
+        .with_global_vars(globals.iter().map(String::as_str))
         .compile(modules)
         .map_err(|errs| {
             let (name, undefined) = errs
@@ -109,7 +116,7 @@ pub fn compile(code: &str) -> Result<Filter, CompileError> {
 }
 
 /// Runs a compiled expression on `input` with the message variables; every output, or the first error.
-pub fn run(filter: &Filter, input: Val, vars: &[Val; 9]) -> Result<Vec<Val>, String> {
+pub fn run(filter: &Filter, input: Val, vars: &[Val]) -> Result<Vec<Val>, String> {
     let ctx = Ctx::<data::JustLut<Val>>::new(&filter.lut, Vars::new(vars.iter().cloned()));
     let results: Vec<Val> = filter
         .id
@@ -154,13 +161,13 @@ mod tests {
     #[test]
     fn spike_conditions_objects_and_variables() {
         let input = json(r#"{"temperature": 23.5}"#);
-        let cond = compile(".temperature > 22").unwrap();
+        let cond = compile(".temperature > 22", &[]).unwrap();
         assert_eq!(
             run(&cond, input.clone(), &vars("a/b")).unwrap()[0].to_string(),
             "true"
         );
 
-        let shape = compile(r#"{temp: .temperature, room: $levels[1]}"#).unwrap();
+        let shape = compile(r#"{temp: .temperature, room: $levels[1]}"#, &[]).unwrap();
         assert_eq!(
             run(&shape, input, &vars("home/kitchen/t")).unwrap()[0].to_string(),
             r#"{"temp":23.5,"room":"kitchen"}"#
@@ -169,24 +176,26 @@ mod tests {
 
     #[test]
     fn spike_many_results_and_errors() {
-        let fan = compile(".[]").unwrap();
+        let fan = compile(".[]", &[]).unwrap();
         assert_eq!(run(&fan, json("[1,2,3]"), &vars("t")).unwrap().len(), 3);
         assert_eq!(
-            compile(".temperature >").err().map(|e| e.message),
+            compile(".temperature >", &[]).err().map(|e| e.message),
             Some("expected term at the end".into())
         );
         assert_eq!(
-            compile("$nope").err(),
+            compile("$nope", &[]).err(),
             Some(CompileError {
                 offset: 0,
                 message: "unknown variable `$nope`".into()
             })
         );
         assert_eq!(
-            compile(".a | foo(1)").err().map(|e| (e.offset, e.message)),
+            compile(".a | foo(1)", &[])
+                .err()
+                .map(|e| (e.offset, e.message)),
             Some((5, "unknown function `foo/1`".into()))
         );
-        let bad = compile(".a + 1").unwrap();
+        let bad = compile(".a + 1", &[]).unwrap();
         assert!(run(&bad, json(r#"{"a":"x"}"#), &vars("t")).is_err());
     }
 
@@ -194,7 +203,7 @@ mod tests {
     fn aggregates_work_on_lists() {
         let input = json(r#"[{"t": 1}, {"t": 3}, {"t": 2}]"#);
         let out = |code: &str| {
-            run(&compile(code).unwrap(), input.clone(), &vars("a")).unwrap()[0].to_string()
+            run(&compile(code, &[]).unwrap(), input.clone(), &vars("a")).unwrap()[0].to_string()
         };
         assert_eq!(out("avg(.t)"), "2.0");
         assert_eq!(out("sum(.t)"), "6");
@@ -204,7 +213,7 @@ mod tests {
         // jq's own min and max still work.
         assert_eq!(out("map(.t) | max"), "3");
         assert_eq!(
-            run(&compile("avg(.)").unwrap(), json("[]"), &vars("a")).unwrap()[0].to_string(),
+            run(&compile("avg(.)", &[]).unwrap(), json("[]"), &vars("a")).unwrap()[0].to_string(),
             "null"
         );
     }
@@ -212,15 +221,15 @@ mod tests {
     #[test]
     fn acc_exists_only_in_a_wrapped_scan_update() {
         let (prefix, suffix) = SCAN_WRAP;
-        let update = compile(&format!("{prefix}$acc + .{suffix}")).unwrap();
+        let update = compile(&format!("{prefix}$acc + .{suffix}"), &[]).unwrap();
         let out = run(&update, json("[10, 5]"), &vars("a")).unwrap();
         assert_eq!(out[0].to_string(), "15");
-        assert!(compile("$acc + 1").is_err());
+        assert!(compile("$acc + 1", &[]).is_err());
     }
 
     #[test]
     fn an_endless_stream_stops_at_the_limit() {
-        let endless = compile("range(1; infinite)").unwrap();
+        let endless = compile("range(1; infinite)", &[]).unwrap();
         let err = run(&endless, Val::Null, &vars("a")).unwrap_err();
         assert!(err.contains("more than 10000 results"), "{err}");
     }

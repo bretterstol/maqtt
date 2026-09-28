@@ -66,7 +66,7 @@ fn every_function_example_gives_its_output() {
         let name = function["name"].as_str().unwrap();
         let example = function["example"].as_str().unwrap();
         assert!(example.contains(name), "the example for {name} uses it");
-        let filter = match jq::compile(example) {
+        let filter = match jq::compile(example, &[]) {
             Ok(filter) => filter,
             Err(e) => {
                 wrong.push(format!(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assistAt, fieldsAt } from "./assist";
+import { assistAt, fieldsAt, wildcardNames } from "./assist";
 
 const kind = (before: string) => assistAt(before).kind;
 
@@ -16,6 +16,19 @@ describe("what fits at the cursor", () => {
       from: 10,
       first: false,
     });
+  });
+
+  it("offers Brokers after to broker, in or before the quotes", () => {
+    expect(assistAt('from all |> to broker "Off')).toEqual({
+      kind: "broker",
+      from: 22,
+    });
+    expect(assistAt("from all\n|> to broker ")).toEqual({
+      kind: "broker",
+      from: 22,
+    });
+    expect(kind('from all |> to broker "Office" "x/')).toBe("none");
+    expect(kind("from all |> to b")).toBe("sink");
   });
 
   it("offers Stages after |>, adding the space a bare |> needs", () => {
@@ -118,5 +131,18 @@ describe("fields in a sample value", () => {
     expect(fieldsAt('"text"', [])).toEqual([]);
     expect(fieldsAt(null, [])).toEqual([]);
     expect(fieldsAt("not json", [])).toEqual([]);
+  });
+});
+
+describe("named wildcards", () => {
+  it("are found in filter topic lists, each once", () => {
+    const text = `from all
+|> filter topic "home/+room/#rest", "office/+room"
+|> filter not topic "+/status"
+|> map "+nope"`;
+    expect(wildcardNames(text).map((w) => [w.name, w.written])).toEqual([
+      ["room", "+room"],
+      ["rest", "#rest"],
+    ]);
   });
 });

@@ -19,12 +19,20 @@ use crate::connection::{ConnectionState, ConnectionStatus, ConnectionStatuses};
 use crate::message::{ConnectionId, ReceivedMessage, now_ms};
 use crate::profile::ProfileId;
 
+/// Sends a payload to a topic on the Connection with this name, without waiting, for
+/// `to broker`. `lib.rs` backs it with the live Connections.
+pub type Republish = Arc<dyn Fn(&str, &str, Vec<u8>) -> Result<(), String> + Send + Sync>;
+
 /// The pseudo-Connection that Derived Topics come from; real Connections start at 1.
 pub const PIPELINES: ConnectionId = ConnectionId(0);
 const TICK: Duration = Duration::from_millis(50);
 const INSPECTED_KEPT: usize = 50;
 /// How long stopping waits for a Pipeline's thread before giving up on it.
 const STOP_WAIT: Duration = Duration::from_secs(1);
+/// How long a republished message is remembered, to recognise it when a Broker sends it back.
+const ECHO_WINDOW: Duration = Duration::from_secs(10);
+/// At most this many are remembered; past that, the oldest are forgotten.
+const ECHO_KEPT: usize = 10_000;
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,10 +43,12 @@ pub struct PipelineStatus {
     pub finished: bool,
     /// Messages from the Pipeline's Connections that entered it.
     pub received: u64,
-    /// Messages its Sinks sent.
+    /// Messages its Sinks sent: Derived Topics and republished messages.
     pub emitted: u64,
     /// Messages it missed because it fell behind.
     pub missed: u64,
+    /// Its own republished messages that came back from a Broker and were left out.
+    pub returned: u64,
     pub errors: u64,
     pub last_error: Option<String>,
     /// The latest `inspect` values, newest last.
@@ -66,16 +76,18 @@ struct Handle {
 pub struct Runner {
     bus: Bus,
     statuses: ConnectionStatuses,
+    republish: Republish,
     running: Mutex<HashMap<String, Handle>>,
     /// Status of Pipelines that ran and stopped, kept so their counts stay visible.
     stopped: Mutex<HashMap<String, PipelineStatus>>,
 }
 
 impl Runner {
-    pub fn new(bus: Bus, statuses: ConnectionStatuses) -> Self {
+    pub fn new(bus: Bus, statuses: ConnectionStatuses, republish: Republish) -> Self {
         Self {
             bus,
             statuses,
+            republish,
             running: Mutex::new(HashMap::new()),
             stopped: Mutex::new(HashMap::new()),
         }
@@ -105,6 +117,8 @@ impl Runner {
             _done: done_tx,
             pipeline,
             bus: self.bus.clone(),
+            republish: self.republish.clone(),
+            sent: Sent::default(),
             names: self
                 .statuses
                 .snapshot()
@@ -209,11 +223,62 @@ impl Runner {
     }
 }
 
+/// What a Pipeline republished lately, as fingerprints of topic and payload.
+#[derive(Default)]
+struct Sent {
+    order: VecDeque<(Instant, u64)>,
+    counts: HashMap<u64, usize>,
+}
+
+impl Sent {
+    fn fingerprint(topic: &str, payload: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (topic, payload).hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn remember(&mut self, topic: &str, payload: &[u8], now: Instant) {
+        if self.order.len() == ECHO_KEPT {
+            self.forget_oldest();
+        }
+        let print = Self::fingerprint(topic, payload);
+        self.order.push_back((now, print));
+        *self.counts.entry(print).or_default() += 1;
+    }
+
+    /// Whether this is a message it republished within [`ECHO_WINDOW`]. Every copy counts, as
+    /// one message can come back on several Connections.
+    fn recognises(&mut self, topic: &str, payload: &[u8], now: Instant) -> bool {
+        while self
+            .order
+            .front()
+            .is_some_and(|(at, _)| now.duration_since(*at) > ECHO_WINDOW)
+        {
+            self.forget_oldest();
+        }
+        !self.counts.is_empty() && self.counts.contains_key(&Self::fingerprint(topic, payload))
+    }
+
+    fn forget_oldest(&mut self) {
+        if let Some((_, print)) = self.order.pop_front()
+            && let Some(n) = self.counts.get_mut(&print)
+        {
+            *n -= 1;
+            if *n == 0 {
+                self.counts.remove(&print);
+            }
+        }
+    }
+}
+
 /// Everything a Pipeline's thread needs.
 struct Job {
     name: String,
     pipeline: Pipeline,
     bus: Bus,
+    republish: Republish,
+    sent: Sent,
     names: HashMap<ConnectionId, String>,
     rx: tokio::sync::broadcast::Receiver<BusEvent>,
     stop: Arc<Notify>,
@@ -260,6 +325,12 @@ impl Job {
                         if !pipeline.reads(connection) {
                             continue;
                         }
+                        // What it republished comes back on any Connection to that Broker, and
+                        // several profiles can reach one Broker: taking it in again could loop.
+                        if self.sent.recognises(&message.topic, &message.payload, Instant::now()) {
+                            self.status.lock().unwrap().returned += 1;
+                            continue;
+                        }
                         let origin = Origin::new(message, connection);
                         self.status.lock().unwrap().received += 1;
                         pipeline.push(origin, Instant::now(), &mut effects);
@@ -288,7 +359,7 @@ impl Job {
         self.status.lock().unwrap().running = false;
     }
 
-    fn handle(&self, effects: &mut Vec<Effect>) {
+    fn handle(&mut self, effects: &mut Vec<Effect>) {
         if effects.is_empty() {
             return;
         }
@@ -296,7 +367,8 @@ impl Job {
             effects.clear();
             return;
         }
-        let mut status = self.status.lock().unwrap();
+        let status = self.status.clone();
+        let mut status = status.lock().unwrap();
         for effect in effects.drain(..) {
             match effect {
                 Effect::Derived { topic, payload } => {
@@ -313,6 +385,21 @@ impl Job {
                             properties: None,
                         })));
                 }
+                Effect::Republish {
+                    broker,
+                    topic,
+                    payload,
+                } => match (self.republish)(&broker, &topic, payload.clone()) {
+                    Ok(()) => {
+                        status.emitted += 1;
+                        self.sent.remember(&topic, &payload, Instant::now());
+                    }
+                    Err(err) => {
+                        status.errors += 1;
+                        status.last_error =
+                            Some(format!("to broker \"{broker}\" on {topic}: {err}"));
+                    }
+                },
                 Effect::Inspected {
                     label,
                     topic,
@@ -356,7 +443,15 @@ mod tests {
         }))
     }
 
+    type SentLog = Arc<Mutex<Vec<(String, String, Vec<u8>)>>>;
+
     fn setup() -> (Bus, Runner) {
+        let (bus, runner, _) = setup_sending();
+        (bus, runner)
+    }
+
+    /// Also records what `to broker` sends; only "Office" is connected.
+    fn setup_sending() -> (Bus, Runner, SentLog) {
         let bus = Bus::new();
         let statuses = ConnectionStatuses::default();
         statuses.publish(
@@ -369,7 +464,18 @@ mod tests {
                 subscriptions: Vec::new(),
             },
         );
-        (bus.clone(), Runner::new(bus, statuses))
+        let sent: SentLog = Arc::default();
+        let log = sent.clone();
+        let republish: Republish = Arc::new(move |broker, topic, payload| {
+            if broker != "Office" {
+                return Err(format!("{broker} isn't connected"));
+            }
+            log.lock()
+                .unwrap()
+                .push((broker.into(), topic.into(), payload));
+            Ok(())
+        });
+        (bus.clone(), Runner::new(bus, statuses, republish), sent)
     }
 
     fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
@@ -538,5 +644,85 @@ mod tests {
         let status = runner.status("few").unwrap();
         assert!(!status.running && status.emitted == 2, "{status:?}");
         assert!(!runner.is_running("few"));
+    }
+
+    #[test]
+    fn to_broker_republishes_and_reports_what_it_couldnt_send() {
+        let (bus, runner, sent) = setup_sending();
+        runner
+            .start(
+                "copy",
+                parse(
+                    r#"from "Dev Broker" |> to broker "Office" "copy/{$topic}" |> to broker "Home" "x""#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bus.publish(message(&bus, 1, "a/b", r#"{"t": 1}"#));
+        wait_for("sent", || runner.status("copy").unwrap().errors == 1);
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec![("Office".into(), "copy/a/b".into(), br#"{"t":1}"#.to_vec())]
+        );
+        let status = runner.status("copy").unwrap();
+        assert_eq!(status.emitted, 1);
+        assert_eq!(
+            status.last_error.as_deref(),
+            Some(r#"to broker "Home" on x: Home isn't connected"#)
+        );
+        runner.stop("copy");
+    }
+
+    #[test]
+    fn its_own_messages_coming_back_on_another_connection_are_left_out() {
+        // "Office" sends back what it gets as Connection 1, as when two profiles reach one
+        // Broker: the name check can't see that loop.
+        let (bus, runner, sent) = setup_sending();
+        runner
+            .start(
+                "echo",
+                parse(r#"from "Dev Broker" |> to broker "Office" "copy/{$topic}""#).unwrap(),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bus.publish(message(&bus, 1, "a", "1"));
+        wait_for("sent", || sent.lock().unwrap().len() == 1);
+        let (_, topic, payload) = sent.lock().unwrap()[0].clone();
+        for _ in 0..2 {
+            bus.publish(message(
+                &bus,
+                1,
+                &topic,
+                std::str::from_utf8(&payload).unwrap(),
+            ));
+        }
+        // Another message with the same payload on another topic is still taken in.
+        bus.publish(message(&bus, 1, "b", "1"));
+        wait_for("counts", || {
+            let s = runner.status("echo").unwrap();
+            s.returned == 2 && s.received == 2
+        });
+        let topics: Vec<String> = sent.lock().unwrap().iter().map(|s| s.1.clone()).collect();
+        assert_eq!(topics, ["copy/a", "copy/b"]);
+        runner.stop("echo");
+    }
+
+    #[test]
+    fn sent_messages_are_forgotten_after_the_window_or_past_the_limit() {
+        let now = Instant::now();
+        let mut sent = Sent::default();
+        sent.remember("t", b"1", now);
+        assert!(sent.recognises("t", b"1", now + Duration::from_secs(1)));
+        assert!(!sent.recognises("t", b"2", now));
+        assert!(!sent.recognises("t", b"1", now + ECHO_WINDOW + Duration::from_secs(1)));
+        assert!(sent.counts.is_empty() && sent.order.is_empty());
+
+        for i in 0..=ECHO_KEPT {
+            sent.remember(&i.to_string(), b"", now);
+        }
+        assert_eq!(sent.order.len(), ECHO_KEPT);
+        assert!(!sent.recognises("0", b"", now));
+        assert!(sent.recognises("1", b"", now));
     }
 }

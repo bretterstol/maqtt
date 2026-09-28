@@ -11,6 +11,8 @@ export type Assist =
   | { kind: "stage"; from: number; prefix: string; alsoFunctions: boolean }
   /** After `from`: `all` or a Broker's name. */
   | { kind: "sources"; from: number; first: boolean }
+  /** After `to broker`: a Broker's name. */
+  | { kind: "broker"; from: number }
   | { kind: "variable"; from: number }
   /** A field of the value entering Stage `stage` (1 = the first after `from`), or of $payload. */
   | {
@@ -80,6 +82,12 @@ export function assistAt(before: string): Assist {
   const pos = before.length;
   const { modes, pipes, segmentStart } = scan(before);
   const top = modes[modes.length - 1];
+  if (pipes > 0 && modes.length <= 2) {
+    const name = /^to\s+broker\s+("[^"]*)?$/.exec(
+      before.slice(segmentStart).trimStart(),
+    );
+    if (name) return { kind: "broker", from: pos - (name[1]?.length ?? 0) };
+  }
   // A string is no place for suggestions, except a Broker's name after `from`.
   const naming = top === "string" && modes.length === 2 && pipes === 0;
   if (top === "comment" || (top === "string" && !naming)) {
@@ -167,4 +175,29 @@ export function fieldsAt(json: string | null, path: string[]): string[] {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? Object.keys(value)
     : [];
+}
+
+/** A named wildcard in a `filter topic`, such as `+room`, which is `$room` from there on. */
+export interface WildcardName {
+  name: string;
+  /** As written in the filter: `+room` or `#rest`. */
+  written: string;
+  filter: string;
+}
+
+/** The named wildcards the `filter topic` Stages in `text` declare, each once, in order. */
+export function wildcardNames(text: string): WildcardName[] {
+  const found: WildcardName[] = [];
+  const stage = /filter\s+topic\s+("[^"]*"(?:\s*,\s*"[^"]*")*)/g;
+  for (const [, list] of text.matchAll(stage)) {
+    for (const [, filter] of list.matchAll(/"([^"]*)"/g)) {
+      for (const level of filter.split("/")) {
+        const named = /^[+#]([A-Za-z_]\w*)$/.exec(level);
+        if (named && !found.some((w) => w.name === named[1])) {
+          found.push({ name: named[1], written: level, filter });
+        }
+      }
+    }
+  }
+  return found;
 }

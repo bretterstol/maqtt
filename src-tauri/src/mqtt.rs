@@ -156,6 +156,19 @@ impl Client {
         }
     }
 
+    /// Queues a plain message (QoS 0, not retained) without waiting; fails when the request
+    /// queue is full.
+    pub fn try_publish(&self, topic: &str, payload: Vec<u8>) -> Result<(), String> {
+        match self {
+            Client::V311(c) => c
+                .try_publish(topic, v311_qos(0), false, payload)
+                .map_err(|err| err.to_string()),
+            Client::V5(c) => c
+                .try_publish(topic, v5_qos(0), false, payload)
+                .map_err(|err| err.to_string()),
+        }
+    }
+
     pub fn try_unsubscribe(&self, filter: &str) -> Result<(), String> {
         match self {
             Client::V311(c) => c.try_unsubscribe(filter).map_err(|err| err.to_string()),

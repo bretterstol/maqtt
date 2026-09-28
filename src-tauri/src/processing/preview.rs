@@ -36,7 +36,8 @@ pub struct Preview {
     pub ends: Vec<usize>,
     /// One per Stage, after `from`.
     pub stages: Vec<StageTrace>,
-    /// The latest values that reached `to app`, oldest first.
+    /// The latest values that reached a Sink, oldest first. Nothing is sent: `to broker`
+    /// values only show here.
     pub results: Vec<PreviewValue>,
     pub inspected: Vec<PreviewValue>,
 }
@@ -44,6 +45,8 @@ pub struct Preview {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewValue {
+    /// For results: the Sink, as written (`to app`, `to broker "Office"`).
+    pub sink: Option<String>,
     pub label: Option<String>,
     pub topic: String,
     pub value: String,
@@ -118,6 +121,17 @@ pub fn preview(
     for effect in effects {
         match effect {
             Effect::Derived { topic, payload } => preview.results.push(PreviewValue {
+                sink: Some("to app".into()),
+                label: None,
+                topic,
+                value: String::from_utf8_lossy(&payload).into_owned(),
+            }),
+            Effect::Republish {
+                broker,
+                topic,
+                payload,
+            } => preview.results.push(PreviewValue {
+                sink: Some(format!("to broker \"{broker}\"")),
                 label: None,
                 topic,
                 value: String::from_utf8_lossy(&payload).into_owned(),
@@ -127,6 +141,7 @@ pub fn preview(
                 topic,
                 value,
             } => preview.inspected.push(PreviewValue {
+                sink: None,
                 label,
                 topic,
                 value,
@@ -209,6 +224,7 @@ mod tests {
         assert_eq!(
             p.results,
             vec![PreviewValue {
+                sink: Some("to app".into()),
                 label: None,
                 topic: "hot/b".into(),
                 value: "25".into()
@@ -231,6 +247,75 @@ mod tests {
         // 0 passes; then every 3 s the latest held back comes out, and 9 at the end.
         let values: Vec<&str> = p.results.iter().map(|r| r.value.as_str()).collect();
         assert_eq!(values, vec!["0", "2", "5", "8", "9"]);
+    }
+
+    #[test]
+    fn to_broker_shows_what_it_would_send_and_refuses_a_loop() {
+        let recent = history(vec![
+            message(1, 1, "home/a", r#"{"t": 20}"#, 0),
+            message(2, 2, "home/a", r#"{"t": 21}"#, 10),
+        ]);
+        let p = preview(
+            r#"from "Dev" |> filter topic "home/#" |> map .t |> to broker "Office" "copy/{$levels[1]}""#,
+            &names(),
+            &recent,
+        );
+        assert_eq!(
+            p.results,
+            vec![PreviewValue {
+                sink: Some(r#"to broker "Office""#.into()),
+                label: None,
+                topic: "copy/a".into(),
+                value: "20".into()
+            }]
+        );
+
+        // Reading Office too, `copy/a` would come straight back in.
+        let p = preview(
+            r#"from all |> map .t |> to broker "Office" "copy/{$levels[1]}""#,
+            &names(),
+            &recent,
+        );
+        assert!(p.results.is_empty());
+        let sink = p.stages.last().unwrap();
+        assert_eq!(sink.errors, 2);
+        assert!(
+            sink.first_error
+                .as_deref()
+                .unwrap()
+                .contains("would come back into this Pipeline"),
+            "{:?}",
+            sink.first_error
+        );
+    }
+
+    #[test]
+    fn several_topic_filters_pick_samples_and_guard_several_outputs() {
+        let recent = history(vec![
+            message(1, 1, "home/a", "1", 0),
+            message(2, 1, "office/a", "2", 10),
+            message(3, 1, "garage/a", "3", 20),
+        ]);
+        let p = preview(
+            r#"from "Dev" |> filter topic "home/#", "office/#" |> to app "x""#,
+            &names(),
+            &recent,
+        );
+        assert_eq!(p.messages, 2, "home and office, not garage");
+
+        // Reading Dev but not out/ or alerts/: both outputs go, anything else is refused.
+        let p = preview(
+            r#"from "Dev"
+|> filter not topic "out/#", "alerts/#"
+|> to broker "Dev" "out/{$topic}"
+|> to broker "Dev" "alerts/{$topic}"
+|> to broker "Dev" "other/{$topic}""#,
+            &names(),
+            &recent,
+        );
+        let errors: Vec<usize> = p.stages.iter().map(|s| s.errors).collect();
+        assert_eq!(errors, vec![0, 0, 0, 3]);
+        assert_eq!(p.results.len(), 6);
     }
 
     #[test]

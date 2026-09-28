@@ -30,6 +30,8 @@ export interface PipelineStatus {
   received: number;
   emitted: number;
   missed: number;
+  /** Its own republished messages that came back from a Broker and were left out. */
+  returned: number;
   errors: number;
   lastError: string | null;
   inspected: Inspected[];
@@ -74,6 +76,8 @@ export interface StageTrace {
 }
 
 export interface PreviewValue {
+  /** For results: the Sink, as written (`to app`, `to broker "Office"`). */
+  sink: string | null;
   label: string | null;
   topic: string;
   value: string;

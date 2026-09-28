@@ -10,9 +10,9 @@ use jaq_json::Val;
 
 use super::jq;
 use super::keyed::Keyed;
-use super::lang::{Connections, Pipeline, Stage, WindowSize};
+use super::lang::{Connections, Pipeline, Stage, TopicFilter, WindowSize};
 use crate::message::ReceivedMessage;
-use crate::profile::topic_matches;
+use crate::profile::validate_topic_name;
 
 /// What running a message (or a tick) produced.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,12 @@ pub enum Effect {
         label: Option<String>,
         topic: String,
         value: String,
+    },
+    /// A message to republish on a Connection, named as in `from`.
+    Republish {
+        broker: String,
+        topic: String,
+        payload: Vec<u8>,
     },
     Error(String),
 }
@@ -84,25 +90,31 @@ impl Origin {
 }
 
 /// A value on its way through the Stages.
+#[derive(Clone)]
 struct Item {
     value: Val,
     origin: Rc<Origin>,
     /// `$key`: what the latest Stage that keeps state kept it under; null before any.
     key: Val,
+    /// The Pipeline's named wildcards, as the `filter topic` Stages it passed set them; null
+    /// until then.
+    captured: Rc<[Val]>,
 }
 
-/// The jq variables for an item: its message's, then `$key`.
-fn vars(item: &Item) -> [Val; 9] {
-    std::array::from_fn(|i| match item.origin.vars.get(i) {
-        Some(value) => value.clone(),
-        None => item.key.clone(),
-    })
+/// The jq variables for an item: its message's, `$key`, then the named wildcards.
+fn vars(item: &Item) -> Vec<Val> {
+    let mut vars = Vec::with_capacity(item.origin.vars.len() + 1 + item.captured.len());
+    vars.extend(item.origin.vars.iter().cloned());
+    vars.push(item.key.clone());
+    vars.extend(item.captured.iter().cloned());
+    vars
 }
 
 enum Running {
     FilterTopic {
-        filter: String,
-        negate: bool,
+        filter: TopicFilter,
+        /// Per name the filter declares, where its value goes in [`Item::captured`].
+        slots: Vec<(String, usize)>,
     },
     Filter(jq::Filter),
     Map(jq::Filter),
@@ -139,6 +151,13 @@ enum Running {
     },
     Inspect(Option<String>),
     ToApp(jq::Filter),
+    ToBroker {
+        broker: String,
+        topic: jq::Filter,
+        /// When the Pipeline reads this Broker: the `filter topic` Stages at its start. A topic
+        /// that gets past them would come back into the Pipeline, so it's refused.
+        reads_back: Option<Vec<TopicFilter>>,
+    },
 }
 
 struct Throttled {
@@ -157,16 +176,13 @@ struct Window {
 impl Window {
     /// The window's values as one list, sent on as a value of the newest message.
     fn close(self) -> Item {
-        let origin = self
-            .items
-            .last()
-            .expect("windows are never empty")
-            .origin
-            .clone();
+        let newest = self.items.last().expect("windows are never empty");
+        let (origin, captured) = (newest.origin.clone(), newest.captured.clone());
         Item {
             value: self.items.into_iter().map(|item| item.value).collect(),
             origin,
             key: self.key,
+            captured,
         }
     }
 }
@@ -175,6 +191,8 @@ impl Window {
 /// thread.
 pub struct Runtime {
     from: Connections,
+    /// How many named wildcards the Pipeline declares.
+    names: usize,
     stages: Vec<Running>,
     trace: Option<Vec<StageTrace>>,
     /// A moment on both clocks, from the first message: time windows follow the messages'
@@ -184,15 +202,27 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new(pipeline: &Pipeline) -> Result<Self, String> {
-        let compile = |code: &str| jq::compile(code).map_err(|e| e.message);
+        let compile = |code: &str| jq::compile(code, &pipeline.names).map_err(|e| e.message);
+        let slot = |name: &str| {
+            let at = pipeline.names.iter().position(|n| n == name);
+            (name.to_string(), at.expect("the parser lists every name"))
+        };
+        let leading_filters: Vec<TopicFilter> = pipeline
+            .stages
+            .iter()
+            .map_while(|stage| match stage {
+                Stage::FilterTopic(filter) => Some(filter.clone()),
+                _ => None,
+            })
+            .collect();
         let stages = pipeline
             .stages
             .iter()
             .map(|stage| {
                 Ok(match stage {
-                    Stage::FilterTopic { filter, negate } => Running::FilterTopic {
+                    Stage::FilterTopic(filter) => Running::FilterTopic {
+                        slots: filter.names().into_iter().map(slot).collect(),
                         filter: filter.clone(),
-                        negate: *negate,
                     },
                     Stage::Filter(code) => Running::Filter(compile(code)?),
                     Stage::Map(code) => Running::Map(compile(code)?),
@@ -231,11 +261,17 @@ impl Runtime {
                     },
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
+                    Stage::ToBroker { broker, topic } => Running::ToBroker {
+                        broker: broker.clone(),
+                        topic: compile(topic)?,
+                        reads_back: reads(&pipeline.from, broker).then(|| leading_filters.clone()),
+                    },
                 })
             })
             .collect::<Result<_, String>>()?;
         Ok(Self {
             from: pipeline.from.clone(),
+            names: pipeline.names.len(),
             stages,
             trace: None,
             epoch: None,
@@ -260,18 +296,15 @@ impl Runtime {
                 .stages
                 .iter()
                 .map_while(|stage| match stage {
-                    Running::FilterTopic { filter, negate } => Some((filter, *negate)),
+                    Running::FilterTopic { filter, .. } => Some(filter),
                     _ => None,
                 })
-                .all(|(filter, negate)| topic_matches(filter, topic) != negate)
+                .all(|filter| filter.passes(topic))
     }
 
     /// Whether messages from this Connection are the Pipeline's to handle.
     pub fn reads(&self, connection: &str) -> bool {
-        match &self.from {
-            Connections::All => true,
-            Connections::Named(names) => names.iter().any(|n| n == connection),
-        }
+        reads(&self.from, connection)
     }
 
     pub fn push(&mut self, origin: Origin, now: Instant, out: &mut Vec<Effect>) {
@@ -285,6 +318,7 @@ impl Runtime {
             value: origin.payload(),
             origin,
             key: Val::Null,
+            captured: vec![Val::Null; self.names].into(),
         };
         self.run_from(0, vec![item], now, out);
     }
@@ -416,10 +450,27 @@ fn apply(
     out: &mut Vec<Effect>,
 ) {
     match stage {
-        Running::FilterTopic { filter, negate } => {
-            if topic_matches(filter, item.origin.topic()) != *negate {
-                next.push(item);
+        Running::FilterTopic { filter, slots } => {
+            if !filter.passes(item.origin.topic()) {
+                return;
             }
+            let mut item = item;
+            if !slots.is_empty() {
+                let mut captured = item.captured.to_vec();
+                // A name only some of the listed filters have is null when another matched.
+                for (_, at) in slots.iter() {
+                    captured[*at] = Val::Null;
+                }
+                if let Some(pattern) = filter.matching(item.origin.topic()) {
+                    for (name, value) in pattern.captured(item.origin.topic()) {
+                        if let Some((_, at)) = slots.iter().find(|(n, _)| n == name) {
+                            captured[*at] = value.map_or(Val::Null, Val::from);
+                        }
+                    }
+                }
+                item.captured = captured.into();
+            }
+            next.push(item);
         }
         Running::Filter(filter) => match jq::run(filter, item.value.clone(), &vars(&item)) {
             Ok(results) => {
@@ -433,8 +484,7 @@ fn apply(
             // Each result is its own message downstream; none drops it.
             Ok(results) => next.extend(results.into_iter().map(|value| Item {
                 value,
-                origin: item.origin.clone(),
-                key: item.key.clone(),
+                ..item.clone()
             })),
             Err(err) => out.push(error(&item, "map", err)),
         },
@@ -552,30 +602,63 @@ fn apply(
             next.push(item);
         }
         Running::ToApp(filter) => {
-            match jq::run(filter, item.value.clone(), &vars(&item)) {
-                Ok(results) => match results.first() {
-                    Some(Val::TStr(topic)) => {
-                        match derived_topic(&String::from_utf8_lossy(topic)) {
-                            Ok(topic) => out.push(Effect::Derived {
-                                topic,
-                                payload: payload_bytes(&item.value),
-                            }),
-                            Err(err) => out.push(error(&item, "to app", err)),
-                        }
-                    }
-                    other => out.push(error(
-                        &item,
-                        "to app",
-                        format!(
-                            "the topic must be a string, not {}",
-                            other.map_or("nothing".into(), |v| v.to_string())
-                        ),
-                    )),
-                },
+            match sink_topic(filter, &item).and_then(|topic| derived_topic(&topic)) {
+                Ok(topic) => out.push(Effect::Derived {
+                    topic,
+                    payload: payload_bytes(&item.value),
+                }),
                 Err(err) => out.push(error(&item, "to app", err)),
             }
             next.push(item);
         }
+        Running::ToBroker {
+            broker,
+            topic,
+            reads_back,
+        } => {
+            let stage = format!("to broker \"{broker}\"");
+            let checked = sink_topic(topic, &item).and_then(|topic| {
+                validate_topic_name(&topic).map_err(|e| {
+                    if topic.is_empty() { e } else { format!("{e}: `{topic}`") }
+                })?;
+                match reads_back {
+                    Some(filters) if filters.iter().all(|filter| filter.passes(&topic)) =>
+                    {
+                        Err(format!(
+                            "`{topic}` would come back into this Pipeline, which reads {broker}. Keep it out with `filter not topic` right after `from`"
+                        ))
+                    }
+                    _ => Ok(topic),
+                }
+            });
+            match checked {
+                Ok(topic) => out.push(Effect::Republish {
+                    broker: broker.clone(),
+                    topic,
+                    payload: payload_bytes(&item.value),
+                }),
+                Err(err) => out.push(error(&item, &stage, err)),
+            }
+            next.push(item);
+        }
+    }
+}
+
+/// The topic a Sink's expression gives for this item: its first result, which must be a string.
+fn sink_topic(filter: &jq::Filter, item: &Item) -> Result<String, String> {
+    match jq::run(filter, item.value.clone(), &vars(item))?.first() {
+        Some(Val::TStr(topic)) => Ok(String::from_utf8_lossy(topic).into_owned()),
+        other => Err(format!(
+            "the topic must be a string, not {}",
+            other.map_or("nothing".into(), |v| v.to_string())
+        )),
+    }
+}
+
+fn reads(from: &Connections, connection: &str) -> bool {
+    match from {
+        Connections::All => true,
+        Connections::Named(names) => names.iter().any(|n| n == connection),
     }
 }
 
@@ -1161,5 +1244,41 @@ mod tests {
             nesting_at_most(br#""\"[[[[""#, 1),
             "escaped quotes stay in the string"
         );
+    }
+
+    #[test]
+    fn named_wildcards_key_a_window_and_survive_it() {
+        let mut rt = runtime(
+            r#"from all
+|> filter topic "maqtt/home/+room/#"
+|> window 2 by $room
+|> map { room: $room, key: $key, sum: sum(.t) }
+|> to app "rooms/{$room}""#,
+        );
+        let out = run(
+            &mut rt,
+            &[
+                ("maqtt/home/kitchen/climate", r#"{"t": 1}"#),
+                ("maqtt/home/office/climate", r#"{"t": 10}"#),
+                ("maqtt/home/kitchen/other", r#"{"t": 2}"#),
+                ("maqtt/garage/x/climate", r#"{"t": 99}"#),
+            ],
+        );
+        assert_eq!(
+            out,
+            vec![derived(
+                "rooms/kitchen",
+                r#"{"room":"kitchen","key":"kitchen","sum":3}"#
+            )]
+        );
+    }
+
+    #[test]
+    fn a_name_the_matching_filter_lacks_is_null() {
+        let mut rt = runtime(
+            r#"from all |> filter topic "home/+room/+sensor", "office/+room" |> map [$room, $sensor] |> to app "x""#,
+        );
+        let out = run(&mut rt, &[("home/kitchen/t1", "1"), ("office/desk", "1")]);
+        assert_eq!(values(&out), [r#"["kitchen","t1"]"#, r#"["desk",null]"#]);
     }
 }
