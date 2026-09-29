@@ -298,6 +298,91 @@ pub(super) fn parse_csv_record(line: &str) -> Vec<String> {
     columns
 }
 
+/// A file in the Pipeline files folder, for the list in the tab.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    /// Relative to the folder, with `/` between levels: what `from file` takes.
+    pub name: String,
+    pub size: u64,
+    pub modified_ms: u64,
+}
+
+/// Files listed at most, so a folder full of rotated files stays quick to show.
+pub const MAX_LISTED: usize = 2_000;
+
+/// Every file under `dir`, sorted by name; none if the folder doesn't exist yet.
+pub fn list(dir: &Path) -> Vec<FileEntry> {
+    let mut found = Vec::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            let path = entry.path();
+            if meta.is_dir() {
+                folders.push(path);
+            } else if meta.is_file() && found.len() < MAX_LISTED {
+                let Ok(relative) = path.strip_prefix(dir) else {
+                    continue;
+                };
+                let name = relative
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let modified_ms = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_millis() as u64);
+                found.push(FileEntry {
+                    name,
+                    size: meta.len(),
+                    modified_ms,
+                });
+            }
+        }
+    }
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found
+}
+
+/// The last `lines` lines of a file in the folder, read from its end so a large file is quick.
+/// Only names inside the folder are allowed.
+pub fn tail(dir: &Path, name: &str, lines: usize) -> Result<String, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let inside = !name.is_empty()
+        && Path::new(name)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if !inside {
+        return Err(format!("{name} isn't in the Pipeline files folder"));
+    }
+    let path = dir.join(name);
+    let mut file = File::open(&path).map_err(|e| format!("Couldn't read {name}: {e}"))?;
+    let size = file.metadata().map_or(0, |m| m.len());
+    // Enough for the lines asked for, unless they're very long.
+    const WINDOW: u64 = 256 * 1024;
+    let start = size.saturating_sub(WINDOW);
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| format!("Couldn't read {name}: {e}"))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| format!("Couldn't read {name}: {e}"))?;
+    let text = String::from_utf8_lossy(&bytes);
+    // Started mid-file: the first line is likely cut off.
+    let text = if start > 0 {
+        text.split_once('\n').map_or("", |(_, rest)| rest)
+    } else {
+        &text
+    };
+    let all: Vec<&str> = text.lines().collect();
+    Ok(all[all.len().saturating_sub(lines)..].join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,5 +544,32 @@ mod tests {
         sink.flush().unwrap();
         drop(sink);
         assert_eq!(read(&dir.join("0.jsonl")), "0\n");
+    }
+
+    #[test]
+    fn the_folder_lists_every_file_and_shows_a_files_end() {
+        let dir = dir("list");
+        std::fs::create_dir_all(dir.join("rooms")).unwrap();
+        std::fs::write(dir.join("rooms/kitchen.csv"), "room,t\nkitchen,21\n").unwrap();
+        let lines: String = (1..=100).map(|i| format!("{i}\n")).collect();
+        std::fs::write(dir.join("a.jsonl"), lines).unwrap();
+        let names: Vec<(String, u64)> = list(&dir).into_iter().map(|f| (f.name, f.size)).collect();
+        assert_eq!(
+            names,
+            [
+                ("a.jsonl".to_string(), 292),
+                ("rooms/kitchen.csv".to_string(), 18)
+            ]
+        );
+        assert!(list(&dir.join("nothing")).is_empty());
+
+        assert_eq!(tail(&dir, "a.jsonl", 3).unwrap(), "98\n99\n100");
+        assert_eq!(
+            tail(&dir, "rooms/kitchen.csv", 50).unwrap(),
+            "room,t\nkitchen,21"
+        );
+        for outside in ["../x", "/etc/passwd", ""] {
+            assert!(tail(&dir, outside, 3).is_err(), "{outside}");
+        }
     }
 }

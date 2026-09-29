@@ -221,6 +221,21 @@ pub fn pipelines_folder(state: State<'_, Processing>) -> String {
     state.files.dir().display().to_string()
 }
 
+/// The files in the Pipeline files folder.
+#[tauri::command]
+pub fn list_pipeline_files(state: State<'_, Processing>) -> Vec<files::FileEntry> {
+    files::list(&state.files_dir)
+}
+
+/// The end of a file in the Pipeline files folder, for looking into it.
+#[tauri::command]
+pub fn tail_pipeline_file(state: State<'_, Processing>, name: String) -> Result<String, String> {
+    files::tail(&state.files_dir, &name, TAIL_LINES)
+}
+
+/// How much of a file the tab shows.
+const TAIL_LINES: usize = 50;
+
 /// Where `to file` writes names that aren't absolute, for showing it to the user.
 #[tauri::command]
 pub fn pipeline_files_folder(state: State<'_, Processing>) -> String {

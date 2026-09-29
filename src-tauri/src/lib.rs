@@ -493,6 +493,8 @@ pub fn run() {
             processing::preview_pipeline,
             processing::pipelines_folder,
             processing::pipeline_files_folder,
+            processing::list_pipeline_files,
+            processing::tail_pipeline_file,
             subscribe,
             unsubscribe
         ])

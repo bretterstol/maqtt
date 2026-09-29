@@ -67,6 +67,21 @@ export const stopPipeline = (name: string): Promise<void> =>
 export const pipelinesFolder = (): Promise<string> =>
   invoke("pipelines_folder");
 
+/** A file in the Pipeline files folder. */
+export interface PipelineFile {
+  /** Relative to the folder: what `from file` takes. */
+  name: string;
+  size: number;
+  modifiedMs: number;
+}
+
+export const listPipelineFiles = (): Promise<PipelineFile[]> =>
+  invoke("list_pipeline_files");
+
+/** The file's last lines. */
+export const tailPipelineFile = (name: string): Promise<string> =>
+  invoke("tail_pipeline_file", { name });
+
 /** Where `to file` writes names that aren't absolute. */
 export const pipelineFilesFolder = (): Promise<string> =>
   invoke("pipeline_files_folder");

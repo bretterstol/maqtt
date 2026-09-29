@@ -18,6 +18,7 @@ import {
 import type { Hints } from "./editor/assistExtension";
 import { PipelineEditor } from "./editor/PipelineEditor";
 import { Reference } from "./Reference";
+import { FileList, FileView, usePipelineFiles } from "./PipelineFiles";
 import { OutputPanel, type OutputView } from "./OutputPanel";
 import { stageNotes, type StageNote } from "./stageNotes";
 import "./PipelinesTab.css";
@@ -92,6 +93,9 @@ export default function PipelinesTab() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [folder, setFolder] = useState("");
   const [filesFolder, setFilesFolder] = useState("");
+  const files = usePipelineFiles();
+  // A file being looked at, in place of the selected Pipeline.
+  const [viewing, setViewing] = useState<string | null>(null);
   const [brokers, setBrokers] = useState<string[]>([]);
   const [referenceOpen, setReferenceOpen] = useState(referenceWasOpen);
 
@@ -250,6 +254,7 @@ export default function PipelinesTab() {
     try {
       await savePipeline(name, TEMPLATE);
       setSelected(name);
+      setViewing(null);
       await refresh();
       setRenaming(name);
     } catch (error) {
@@ -303,12 +308,13 @@ export default function PipelinesTab() {
             <li key={p.name}>
               <button
                 className={
-                  p.name === selected
+                  p.name === selected && viewing === null
                     ? "pipelines__item pipelines__item--selected"
                     : "pipelines__item"
                 }
                 onClick={() => {
                   setSelected(p.name);
+                  setViewing(null);
                   setConfirmingDelete(false);
                 }}
               >
@@ -353,6 +359,7 @@ export default function PipelinesTab() {
             Nothing runs until you start it.
           </p>
         )}
+        <FileList files={files} viewing={viewing} onView={setViewing} />
         {folder && (
           <div className="pipelines__folder">
             <p title={folder}>Saved as .pipe files in {folder}</p>
@@ -365,7 +372,13 @@ export default function PipelinesTab() {
         )}
       </aside>
 
-      {current ? (
+      {viewing !== null ? (
+        <FileView
+          name={viewing}
+          file={files.find((f) => f.name === viewing) ?? null}
+          folder={filesFolder}
+        />
+      ) : current ? (
         <section className="pipelines__work">
           <header className="pipelines__header">
             {renaming === current.name ? (
