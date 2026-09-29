@@ -4,6 +4,7 @@
 //! counts them, instead of holding anyone else up.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -12,6 +13,7 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use tokio::sync::broadcast::error::RecvError;
 
+use super::files::FileSink;
 use super::lang::Pipeline;
 use super::stages::{Effect, Origin, Runtime};
 use crate::bus::{Bus, BusEvent};
@@ -77,17 +79,25 @@ pub struct Runner {
     bus: Bus,
     statuses: ConnectionStatuses,
     republish: Republish,
+    /// Where `to file` writes names that aren't absolute.
+    files_dir: PathBuf,
     running: Mutex<HashMap<String, Handle>>,
     /// Status of Pipelines that ran and stopped, kept so their counts stay visible.
     stopped: Mutex<HashMap<String, PipelineStatus>>,
 }
 
 impl Runner {
-    pub fn new(bus: Bus, statuses: ConnectionStatuses, republish: Republish) -> Self {
+    pub fn new(
+        bus: Bus,
+        statuses: ConnectionStatuses,
+        republish: Republish,
+        files_dir: PathBuf,
+    ) -> Self {
         Self {
             bus,
             statuses,
             republish,
+            files_dir,
             running: Mutex::new(HashMap::new()),
             stopped: Mutex::new(HashMap::new()),
         }
@@ -119,6 +129,7 @@ impl Runner {
             bus: self.bus.clone(),
             republish: self.republish.clone(),
             sent: Sent::default(),
+            files: FileSink::new(self.files_dir.clone()),
             names: self
                 .statuses
                 .snapshot()
@@ -279,6 +290,7 @@ struct Job {
     bus: Bus,
     republish: Republish,
     sent: Sent,
+    files: FileSink,
     names: HashMap<ConnectionId, String>,
     rx: tokio::sync::broadcast::Receiver<BusEvent>,
     stop: Arc<Notify>,
@@ -369,6 +381,7 @@ impl Job {
         }
         let status = self.status.clone();
         let mut status = status.lock().unwrap();
+        let mut wrote = false;
         for effect in effects.drain(..) {
             match effect {
                 Effect::Derived { topic, payload } => {
@@ -400,6 +413,24 @@ impl Job {
                             Some(format!("to broker \"{broker}\" on {topic}: {err}"));
                     }
                 },
+                Effect::Write {
+                    path,
+                    format,
+                    rotate,
+                    record,
+                } => {
+                    wrote = true;
+                    match self
+                        .files
+                        .write(&path, format, rotate, &record, &jiff::Zoned::now())
+                    {
+                        Ok(_) => status.emitted += 1,
+                        Err(err) => {
+                            status.errors += 1;
+                            status.last_error = Some(format!("to file: {err}"));
+                        }
+                    }
+                }
                 Effect::Inspected {
                     label,
                     topic,
@@ -420,6 +451,10 @@ impl Job {
                     status.last_error = Some(err);
                 }
             }
+        }
+        if wrote && let Err(err) = self.files.flush() {
+            status.errors += 1;
+            status.last_error = Some(format!("to file: {err}"));
         }
     }
 }
@@ -475,7 +510,11 @@ mod tests {
                 .push((broker.into(), topic.into(), payload));
             Ok(())
         });
-        (bus.clone(), Runner::new(bus, statuses, republish), sent)
+        (
+            bus.clone(),
+            Runner::new(bus, statuses, republish, std::env::temp_dir()),
+            sent,
+        )
     }
 
     fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
@@ -724,5 +763,40 @@ mod tests {
         assert_eq!(sent.order.len(), ECHO_KEPT);
         assert!(!sent.recognises("0", b"", now));
         assert!(sent.recognises("1", b"", now));
+    }
+
+    #[test]
+    fn to_file_writes_what_a_started_pipeline_sends() {
+        let dir = std::env::temp_dir().join(format!("maqtt-runner-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (bus, _) = setup();
+        let statuses = ConnectionStatuses::default();
+        let runner = Runner::new(
+            bus.clone(),
+            statuses,
+            Arc::new(|_, _, _| Ok(())),
+            dir.clone(),
+        );
+        runner
+            .start(
+                "log",
+                parse(r#"from all |> filter topic "home/+room" |> map { room: $room, t: .t } |> to file "{$room}.csv""#)
+                    .unwrap(),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 21}"#));
+        bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 22}"#));
+        bus.publish(message(&bus, 1, "home/office", r#"{"t": 19}"#));
+        wait_for("written", || runner.status("log").unwrap().emitted == 3);
+        runner.stop("log");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("kitchen.csv")).unwrap(),
+            "room,t\nkitchen,21\nkitchen,22\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("office.csv")).unwrap(),
+            "room,t\noffice,19\n"
+        );
     }
 }

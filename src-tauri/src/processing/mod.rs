@@ -4,6 +4,7 @@
 //! Bus, the Connection names it reads, a read-only view of recent messages for Preview, a way to
 //! send on a Connection for `to broker`, and the commands below, which `lib.rs` registers.
 
+pub mod files;
 pub mod jq;
 pub mod keyed;
 pub mod lang;
@@ -32,6 +33,8 @@ use store::PipelineFiles;
 pub struct Processing {
     runner: Runner,
     files: PipelineFiles,
+    /// Where `to file` writes names that aren't absolute.
+    files_dir: PathBuf,
     statuses: ConnectionStatuses,
     recent: RecentMessages,
     /// Previews running now. A Preview stuck on an endless expression never ends, so this
@@ -46,10 +49,12 @@ impl Processing {
         dir: PathBuf,
         recent: RecentMessages,
         republish: Republish,
+        files_dir: PathBuf,
     ) -> Self {
         Self {
-            runner: Runner::new(bus, statuses.clone(), republish),
+            runner: Runner::new(bus, statuses.clone(), republish, files_dir.clone()),
             files: PipelineFiles::new(dir),
+            files_dir,
             statuses,
             recent,
             previewing: Arc::new(AtomicUsize::new(0)),
@@ -212,4 +217,10 @@ pub async fn preview_pipeline(
 #[tauri::command]
 pub fn pipelines_folder(state: State<'_, Processing>) -> String {
     state.files.dir().display().to_string()
+}
+
+/// Where `to file` writes names that aren't absolute, for showing it to the user.
+#[tauri::command]
+pub fn pipeline_files_folder(state: State<'_, Processing>) -> String {
+    state.files_dir.display().to_string()
 }

@@ -91,7 +91,14 @@
 
 .pipelines__folder {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
   overflow-wrap: anywhere;
+}
+
+.pipelines__folder p {
+  margin: 0;
 }
 
 .pipelines__work {

@@ -67,6 +67,10 @@ export const stopPipeline = (name: string): Promise<void> =>
 export const pipelinesFolder = (): Promise<string> =>
   invoke("pipelines_folder");
 
+/** Where `to file` writes names that aren't absolute. */
+export const pipelineFilesFolder = (): Promise<string> =>
+  invoke("pipeline_files_folder");
+
 /** What one Stage did in a Preview. */
 export interface StageTrace {
   passed: number;

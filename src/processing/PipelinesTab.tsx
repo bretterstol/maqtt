@@ -4,6 +4,7 @@ import {
   brokerNames,
   deletePipeline,
   listPipelines,
+  pipelineFilesFolder,
   pipelinesFolder,
   previewPipeline,
   renamePipeline,
@@ -89,6 +90,7 @@ export default function PipelinesTab() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [folder, setFolder] = useState("");
+  const [filesFolder, setFilesFolder] = useState("");
   const [brokers, setBrokers] = useState<string[]>([]);
   const [referenceOpen, setReferenceOpen] = useState(referenceWasOpen);
 
@@ -125,6 +127,7 @@ export default function PipelinesTab() {
 
   useEffect(() => {
     void pipelinesFolder().then(setFolder);
+    void pipelineFilesFolder().then(setFilesFolder, () => {});
     void brokerNames().then(setBrokers, () => {});
     const poll = () => void refresh();
     poll();
@@ -350,9 +353,14 @@ export default function PipelinesTab() {
           </p>
         )}
         {folder && (
-          <p className="pipelines__folder" title={folder}>
-            Saved as .pipe files in {folder}
-          </p>
+          <div className="pipelines__folder">
+            <p title={folder}>Saved as .pipe files in {folder}</p>
+            {filesFolder && (
+              <p title={filesFolder}>
+                Files from Pipelines go into {filesFolder}
+              </p>
+            )}
+          </div>
         )}
       </aside>
 

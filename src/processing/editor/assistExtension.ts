@@ -251,6 +251,11 @@ function options(
             'broker "${Broker}" "${topic}"',
             "republish on a connected Broker",
           ),
+          keyword(
+            "file",
+            'file "${name}.jsonl"',
+            "append to a JSON Lines or CSV file",
+          ),
         ],
         validFor: IDENT,
       };

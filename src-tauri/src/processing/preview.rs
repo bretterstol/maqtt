@@ -36,8 +36,8 @@ pub struct Preview {
     pub ends: Vec<usize>,
     /// One per Stage, after `from`.
     pub stages: Vec<StageTrace>,
-    /// The latest values that reached a Sink, oldest first. Nothing is sent: `to broker`
-    /// values only show here.
+    /// The latest values that reached a Sink, oldest first. Nothing is sent or written: `to
+    /// broker` and `to file` values only show here.
     pub results: Vec<PreviewValue>,
     pub inspected: Vec<PreviewValue>,
 }
@@ -145,6 +145,12 @@ pub fn preview(
                 label,
                 topic,
                 value,
+            }),
+            Effect::Write { path, record, .. } => preview.results.push(PreviewValue {
+                sink: Some("to file".into()),
+                label: None,
+                topic: path,
+                value: record.to_string(),
             }),
             Effect::Error(_) => {}
         }

@@ -210,15 +210,22 @@
         {
           "syntax": "to broker \"<Broker>\" \"<topic>\"",
           "does": "Republishes on a connected Broker, QoS 0 and not retained. A topic the Pipeline would read back is refused: narrow what it reads with filter topic right after from. Copies that come back anyway, through another Broker Profile for the same Broker, are left out and counted as came back."
+        },
+        {
+          "syntax": "to file \"<name>.jsonl\" [rotate daily|hourly|<size>]",
+          "does": "Appends to a file: .jsonl gets one JSON value per line, .csv one row per value, with columns from the first object's keys. Names go into the files folder shown under the Pipeline list, unless they start with / or ~/. rotate daily or hourly puts the date in the name; rotate 10MB starts a new file when one is full."
         }
       ],
-      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send without sending it.",
+      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send and to file would write, without doing either.",
       "snippet": "to app \"${topic}\"",
       "examples": [
         "to app \"hot\"",
         "to app \"hot/{.room}\"",
         "to app \"{$levels[1]}/battery\"",
-        "to broker \"Office\" \"alerts/{$levels[1]}\""
+        "to broker \"Office\" \"alerts/{$levels[1]}\"",
+        "to file \"temps.jsonl\"",
+        "to file \"rooms/{$levels[2]}.csv\" rotate daily",
+        "to file \"~/mqtt/raw.jsonl\" rotate 100MB"
       ]
     }
   ],

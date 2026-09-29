@@ -83,6 +83,15 @@ When the Pipeline reads that Broker, a topic that gets past its `from` and leadi
 
 That check goes by Connection name, but several Broker Profiles can reach one Broker (the dev profiles are three listeners on one Mosquitto). So a running Pipeline also remembers what it republished in the last 10 s (topic and payload, up to 10,000 messages) and leaves out any copy that comes back, on whichever Connection. Its panel counts them as "came back". Without this, `from "Dev Broker" |> to broker "Dev Broker (TLS)" "test/{$topic}"` republished its own output with one more level each round, until Mosquitto dropped the Connection for a topic over 200 levels deep.
 
+### Files
+
+`to file "temps.jsonl"` appends each value to a file, and passes it on like the other Sinks. The extension decides the format:
+
+- `.jsonl` (or `.ndjson`): one JSON value per line, strings quoted.
+- `.csv`: one row per value. A new file takes its columns from the first value's keys (`value` if it isn't an object) and writes them as a header; a file that already exists keeps its header. Keys without a column are left out of the row and reported as an error, so nothing changes shape silently. Text goes in as is, null as an empty cell, lists and objects as JSON.
+
+The name is a string like a topic, so `to file "rooms/{$room}.csv"` writes a file per room; folders are created as needed. Names go into a `files` folder beside the `pipelines` folder (shown under the Pipeline list), unless they start with `/` or `~/`. `rotate daily` or `rotate hourly` puts the local date in the name (`temps.2026-09-29.jsonl`); `rotate 10MB` (or `KB`, `GB`) renames a full file with a timestamp (`temps.2026-09-29T14-03-12.jsonl`) and starts a new one. A Pipeline keeps at most 32 files open, writes on its own thread, and flushes after each batch. Preview shows what would be written, and writes nothing.
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.
@@ -97,7 +106,8 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
                                                                ├─ app Sink ─► Message Bus
                                                                │  (Derived Topics under the
                                                                │   Pipelines pseudo-Connection)
-                                                               └─ broker Sink ─► a Connection
+                                                               ├─ broker Sink ─► a Connection
+                                                               └─ file Sink ─► files on disk
 ```
 
 - **Derived Topics go back onto the Message Bus** as ordinary messages from a reserved "Pipelines" pseudo-Connection. The History Store, Topic Index, Topic Tree, Message Log, detail panel and exports then work on them with no changes. That is what keeps processing removable.
@@ -182,7 +192,7 @@ Hardening that came with it:
 ### P5: More Sinks
 
 1. **Republish**: `to broker "Office" "topic/{…}"`, with a guard against republishing into something the Pipeline itself reads. Done on the `pipelines-p5` branch; see Republishing above. Checked over WebDriver against the dev Broker: Preview lists what would be sent, a Pipeline reading its own output is refused in Preview, and once started the Broker receives the republished message while its echo isn't taken in again. A broker integration test covers the same round trip.
-2. **File**: JSON Lines or CSV, rotating by size or day
+2. **File**: JSON Lines or CSV, rotating by size or day. Done on the `pipelines-p5-file` branch; see Files above.
 3. **Map**: messages with latitude and longitude on a map (design together first: which map library, and how to pick the fields)
 
 ## Testing

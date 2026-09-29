@@ -2526,6 +2526,7 @@ dependencies = [
  "jaq-core",
  "jaq-json",
  "jaq-std",
+ "jiff",
  "keyring",
  "rumqttc",
  "rustls",

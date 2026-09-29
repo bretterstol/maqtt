@@ -411,6 +411,7 @@ pub fn run() {
     let pipelines_dir = ProfileStore::default_path()
         .expect("config directory")
         .with_file_name("pipelines");
+    let pipeline_files_dir = pipelines_dir.with_file_name("files");
     let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits::default())));
     let (live_filter, _) = watch::channel(LiveFilter::default());
     let connections = Arc::new(Mutex::new(ConnectionManager::default()));
@@ -460,6 +461,7 @@ pub fn run() {
             pipelines_dir,
             recent_messages,
             republish,
+            pipeline_files_dir,
         ))
         .invoke_handler(tauri::generate_handler![
             stream_messages,
@@ -490,6 +492,7 @@ pub fn run() {
             processing::stop_pipeline,
             processing::preview_pipeline,
             processing::pipelines_folder,
+            processing::pipeline_files_folder,
             subscribe,
             unsubscribe
         ])

@@ -1166,6 +1166,7 @@ mod dev_broker_tests {
             bus.clone(),
             statuses.clone(),
             Arc::new(|_, _, _| Err("not in this test".into())),
+            std::env::temp_dir(),
         );
         let source = format!(
             r#"from "pipeline test"
@@ -1238,7 +1239,12 @@ mod dev_broker_tests {
                     .try_publish_by_name(&statuses, name, topic, payload)
             })
         };
-        let runner = Runner::new(bus.clone(), statuses.clone(), republish);
+        let runner = Runner::new(
+            bus.clone(),
+            statuses.clone(),
+            republish,
+            std::env::temp_dir(),
+        );
         // Reads `in/`, writes `out/` on the same Broker; the Broker sends `out/` back to måqtt,
         // which the Pipeline must not take in again.
         let source = format!(
@@ -1307,7 +1313,12 @@ mod dev_broker_tests {
                     .try_publish_by_name(&statuses, name, topic, payload)
             })
         };
-        let runner = Runner::new(bus.clone(), statuses.clone(), republish);
+        let runner = Runner::new(
+            bus.clone(),
+            statuses.clone(),
+            republish,
+            std::env::temp_dir(),
+        );
         // Reads everything on the plain listener and writes through the TLS one: the same
         // Broker, which the names can't tell. Each copy used to come back and grow a level
         // until Mosquitto dropped the Connection as malformed.
