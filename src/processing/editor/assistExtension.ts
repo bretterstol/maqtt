@@ -7,6 +7,7 @@ import {
 } from "@codemirror/autocomplete";
 import { hoverTooltip, type EditorView } from "@codemirror/view";
 import {
+  SINKS,
   assistAt,
   fieldsAt,
   wildcardNames,
@@ -265,20 +266,9 @@ function options(
     case "sink":
       return {
         from: assist.from,
-        options: [
-          keyword("app", 'app "${topic}"', "a Derived Topic in the Topic Tree"),
-          keyword(
-            "broker",
-            'broker "${Broker}" "${topic}"',
-            "republish on a connected Broker",
-          ),
-          keyword(
-            "file",
-            'file "${name}.jsonl"',
-            "append to a JSON Lines or CSV file",
-          ),
-          keyword("geo", "geo", "points { lat, lon, label } on a map"),
-        ],
+        options: SINKS.map((sink) =>
+          keyword(sink.name, sink.snippet, sink.detail),
+        ),
         validFor: IDENT,
       };
     case "function":

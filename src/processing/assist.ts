@@ -31,6 +31,35 @@ export type Assist =
   /** A jq function name inside an expression; `word` may be empty. */
   | { kind: "function"; from: number; word: string };
 
+/** What can follow `to`: every Sink, with a snippet to insert and what it does. */
+export const SINKS: { name: string; snippet: string; detail: string }[] = [
+  {
+    name: "app",
+    snippet: 'app "${topic}"',
+    detail: "a Derived Topic in the Topic Tree",
+  },
+  {
+    name: "broker",
+    snippet: 'broker "${Broker}" "${topic}"',
+    detail: "republish on a connected Broker",
+  },
+  {
+    name: "file",
+    snippet: 'file "${name}.jsonl"',
+    detail: "append to a JSON Lines or CSV file",
+  },
+  {
+    name: "geo",
+    snippet: "geo",
+    detail: "points { lat, lon, label } on a map",
+  },
+  {
+    name: "chart",
+    snippet: "chart",
+    detail: "numbers, or { value, series }, as lines over time",
+  },
+];
+
 type Mode = "code" | "object" | "string" | "fill" | "comment";
 
 interface Scan {

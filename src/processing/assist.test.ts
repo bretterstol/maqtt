@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { assistAt, fieldsAt, wildcardNames } from "./assist";
+import { SINKS, assistAt, fieldsAt, wildcardNames } from "./assist";
+import reference from "./reference.json";
 
 const kind = (before: string) => assistAt(before).kind;
 
@@ -161,5 +162,15 @@ describe("named wildcards", () => {
       ["room", "+room"],
       ["rest", "#rest"],
     ]);
+  });
+});
+
+describe("Sink suggestions", () => {
+  it("offer every Sink the Reference documents", () => {
+    const to = reference.stages.find((s) => s.name === "to")!;
+    const documented = [
+      ...new Set(to.forms.map((f) => f.syntax.split(/\s+/)[1])),
+    ].sort();
+    expect(SINKS.map((s) => s.name).sort()).toEqual(documented);
   });
 });
