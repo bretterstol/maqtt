@@ -33,6 +33,13 @@ export interface Marker {
   atMs: number;
 }
 
+/** `to chart`'s lines: a series each, in the order they first appeared. */
+export interface ChartLines {
+  lines: { name: string; points: [number, number][] }[];
+  /** Series past the chart's limit of 8, not drawn. */
+  hidden: number;
+}
+
 export interface PipelineStatus {
   name: string;
   running: boolean;
@@ -47,6 +54,7 @@ export interface PipelineStatus {
   lastError: string | null;
   inspected: Inspected[];
   markers: Marker[];
+  chart: ChartLines;
 }
 
 export interface PipelineView {
@@ -128,6 +136,7 @@ export interface Preview {
   /** A file Source's file that couldn't be read. */
   note: string | null;
   markers: Marker[];
+  chart: ChartLines;
 }
 
 /** Runs a draft over recent messages without starting it. */

@@ -62,6 +62,10 @@ _Avoid_: Output, target, destination
 `to geo`: a Pipeline's values as points on a map, shown with Map in its output panel. One marker per key, or a list as a snapshot of the whole map.
 _Avoid_: map Sink, `to map` (`map` is the Stage that reshapes values)
 
+**Chart Sink**:
+`to chart`: a Pipeline's numbers as lines over time, shown with Chart in its output panel. One line per series: the topic, `$key`, or the value's own `series`.
+_Avoid_: graph, plot
+
 **Derived Topic**:
 A topic created by a Pipeline's app Sink. It appears in the Topic Tree under the Pipelines root, in a branch per Pipeline, and can be explored like any received topic.
 _Avoid_: Virtual topic, computed topic

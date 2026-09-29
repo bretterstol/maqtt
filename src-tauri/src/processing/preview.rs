@@ -11,6 +11,7 @@ use serde::Serialize;
 use super::file_source::{FileReader, Next};
 use super::lang::Source;
 use super::lang::{self, Diagnostic};
+use super::lines::Lines;
 use super::markers::Markers;
 use super::runner::{FILE_CONNECTION, PIPELINES};
 use super::stages::{self, Effect, Origin, Runtime, StageTrace};
@@ -48,6 +49,8 @@ pub struct Preview {
     pub note: Option<String>,
     /// Where its `to geo` values would put their markers.
     pub markers: Markers,
+    /// Its `to chart` values, a line per series.
+    pub chart: Lines,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -77,6 +80,7 @@ pub fn preview(
         inspected: Vec::new(),
         note: None,
         markers: Markers::default(),
+        chart: Lines::default(),
     };
     let pipeline = match lang::parse(source) {
         Ok(pipeline) => pipeline,
@@ -183,6 +187,11 @@ pub fn preview(
                 at_ms,
             } => preview.markers.place(key, label, lat, lon, at_ms),
             Effect::Snapshot { points, at_ms } => preview.markers.replace(points, at_ms),
+            Effect::Sample {
+                series,
+                value,
+                at_ms,
+            } => preview.chart.add(&series, at_ms, value),
             Effect::Write { path, record, .. } => preview.results.push(PreviewValue {
                 sink: Some("to file".into()),
                 label: None,

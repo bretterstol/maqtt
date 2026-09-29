@@ -1,8 +1,12 @@
 import { lazy, Suspense, useState } from "react";
 import type { PipelineStatus, Preview, PreviewValue } from "./api";
 
-// Leaflet loads only when a map is first shown.
+// Leaflet loads only when a map is first shown; the chart only when it is.
 const MarkerMap = lazy(() => import("./MarkerMap"));
+const LineChart = lazy(() => import("./LineChart"));
+
+/** What shows the output: the list of values, the map or the chart. */
+type Display = "list" | "map" | "chart";
 
 export type OutputView = "preview" | "live";
 
@@ -16,6 +20,8 @@ interface Props {
   onView: (view: OutputView) => void;
   /** The Pipeline has a `to geo`, so a map can be shown instead of the list. */
   hasMap: boolean;
+  /** The Pipeline has a `to chart`, so a chart can be shown instead of the list. */
+  hasChart: boolean;
 }
 
 function clock(atMs: number): string {
@@ -32,9 +38,15 @@ export function OutputPanel({
   view,
   onView,
   hasMap,
+  hasChart,
 }: Props) {
-  const [showMap, setShowMap] = useState(false);
-  const mapShown = hasMap && showMap;
+  const [chosen, setChosen] = useState<Display>("list");
+  const display: Display =
+    (chosen === "map" && !hasMap) || (chosen === "chart" && !hasChart)
+      ? "list"
+      : chosen;
+  const toggle = (which: Display) =>
+    setChosen(display === which ? "list" : which);
   return (
     <section className="pipeline-output" aria-label="Pipeline output">
       <div className="pipeline-output__bar">
@@ -63,27 +75,45 @@ export function OutputPanel({
         ) : (
           <LiveCounts status={status} />
         )}
-        {hasMap && (
-          <button
-            className={
-              mapShown
-                ? "pipeline-output__map is-active"
-                : "pipeline-output__map"
-            }
-            aria-pressed={mapShown}
-            title="Show to geo's points on a map (tiles from OpenStreetMap)"
-            onClick={() => setShowMap((shown) => !shown)}
-          >
-            Map
-          </button>
-        )}
+        <div className="pipeline-output__displays">
+          {hasChart && (
+            <button
+              className={display === "chart" ? "is-active" : undefined}
+              aria-pressed={display === "chart"}
+              title="Show to chart's values as lines over time"
+              onClick={() => toggle("chart")}
+            >
+              Chart
+            </button>
+          )}
+          {hasMap && (
+            <button
+              className={display === "map" ? "is-active" : undefined}
+              aria-pressed={display === "map"}
+              title="Show to geo's points on a map (tiles from OpenStreetMap)"
+              onClick={() => toggle("map")}
+            >
+              Map
+            </button>
+          )}
+        </div>
       </div>
-      {mapShown ? (
+      {display === "map" ? (
         <Suspense fallback={null}>
           <MarkerMap
             source={view}
             markers={
               view === "preview" ? (preview?.markers ?? []) : status.markers
+            }
+          />
+        </Suspense>
+      ) : display === "chart" ? (
+        <Suspense fallback={null}>
+          <LineChart
+            chart={
+              view === "preview"
+                ? (preview?.chart ?? { lines: [], hidden: 0 })
+                : status.chart
             }
           />
         </Suspense>

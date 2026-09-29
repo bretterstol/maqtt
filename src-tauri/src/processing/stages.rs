@@ -34,6 +34,12 @@ pub enum Effect {
         topic: String,
         payload: Vec<u8>,
     },
+    /// A value for `to chart`, on the line for its series.
+    Sample {
+        series: String,
+        value: f64,
+        at_ms: u64,
+    },
     /// A point for `to geo`, kept per key.
     Point {
         key: String,
@@ -185,6 +191,7 @@ enum Running {
         rotate: Option<Rotate>,
     },
     ToGeo,
+    ToChart,
 }
 
 struct Throttled {
@@ -289,6 +296,7 @@ impl Runtime {
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
                     Stage::ToGeo => Running::ToGeo,
+                    Stage::ToChart => Running::ToChart,
                     Stage::ToFile {
                         path,
                         format,
@@ -648,6 +656,13 @@ fn apply(
             }
             next.push(item);
         }
+        Running::ToChart => {
+            match sample(&item) {
+                Ok(effect) => out.push(effect),
+                Err(err) => out.push(error(&item, "to chart", err)),
+            }
+            next.push(item);
+        }
         Running::ToGeo => {
             map_effects(&item, out);
             next.push(item);
@@ -741,6 +756,45 @@ fn map_effects(item: &Item, out: &mut Vec<Effect>) {
         }
     }
     out.push(Effect::Snapshot { points, at_ms });
+}
+
+/// A value for `to chart`: a number on the line for `$key` (or the topic before any `by`), or
+/// `{value, series?}` to name the line.
+fn sample(item: &Item) -> Result<Effect, String> {
+    let record = json_record(&item.value);
+    let (value, series) = match &record {
+        serde_json::Value::Number(n) => (n.as_f64(), None),
+        serde_json::Value::Object(fields) => {
+            let value = match fields.get("value") {
+                Some(serde_json::Value::Number(n)) => n.as_f64(),
+                Some(other) => return Err(format!("`value` must be a number, not {other}")),
+                None => None,
+            };
+            let series = match fields.get("series") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(text)) => Some(text.clone()),
+                Some(other) => Some(other.to_string()),
+            };
+            (value, series)
+        }
+        _ => (None, None),
+    };
+    let Some(value) = value.filter(|v| v.is_finite()) else {
+        return Err(format!(
+            "`to chart` takes a number, or `{{ value, series }}`, not {}",
+            short(&record.to_string())
+        ));
+    };
+    let series = series.unwrap_or_else(|| match &item.key {
+        Val::Null => item.origin.topic().to_string(),
+        Val::TStr(text) => String::from_utf8_lossy(text).into_owned(),
+        other => other.to_string(),
+    });
+    Ok(Effect::Sample {
+        series,
+        value,
+        at_ms: item.origin.message.received_at_ms,
+    })
 }
 
 /// A point's latitude, longitude and label.
@@ -1502,6 +1556,42 @@ mod tests {
                     at_ms: 1_000,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn to_chart_takes_numbers_or_named_values() {
+        let mut rt = runtime(r#"from all |> map .t |> to chart"#);
+        let out = run(
+            &mut rt,
+            &[("home/a", r#"{"t": 21.5}"#), ("home/b", r#"{"t": "hot"}"#)],
+        );
+        assert_eq!(
+            out[0],
+            Effect::Sample {
+                series: "home/a".into(),
+                value: 21.5,
+                at_ms: 1_000,
+            }
+        );
+        assert!(matches!(&out[1], Effect::Error(e) if e.contains("takes a number")));
+
+        let mut rt = runtime(r#"from all |> map { value: .t, series: $levels[1] } |> to chart"#);
+        let out = run(&mut rt, &[("home/kitchen", r#"{"t": 3}"#)]);
+        assert!(
+            matches!(&out[0], Effect::Sample { series, value, .. } if series == "kitchen" && *value == 3.0)
+        );
+
+        let mut rt = runtime(r#"from all |> window 2 by .room |> map avg(.t) |> to chart"#);
+        let out = run(
+            &mut rt,
+            &[
+                ("t", r#"{"room": "a", "t": 1}"#),
+                ("t", r#"{"room": "a", "t": 3}"#),
+            ],
+        );
+        assert!(
+            matches!(&out[0], Effect::Sample { series, value, .. } if series == "a" && *value == 2.0)
         );
     }
 }
