@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FUNCTIONS, STAGES, SYNTAX, VARIABLES } from "./reference";
+import { FUNCTIONS, STAGES, SYNTAX, VARIABLES } from "./referenceData";
 
 function matches(query: string, ...texts: (string | undefined)[]): boolean {
   const q = query.trim().toLowerCase();
