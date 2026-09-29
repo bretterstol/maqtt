@@ -34,6 +34,7 @@ describe("what fits at the cursor", () => {
   it("offers by after delta and pairwise", () => {
     expect(kind("from all |> delta b")).toBe("by");
     expect(kind("from all |> pairwise ")).toBe("by");
+    expect(kind("from all |> join ")).toBe("by");
   });
 
   it("offers Stages after |>, adding the space a bare |> needs", () => {

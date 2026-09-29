@@ -177,6 +177,8 @@ pub enum Stage {
     Delta(Option<String>),
     /// `[previous, current]` for values with the same key; the first sends nothing.
     Pairwise(Option<String>),
+    /// The latest value of each part per key, sent as one object whenever a part arrives.
+    Join(Join),
     Throttle(Duration, Option<String>),
     Debounce(Duration, Option<String>),
     /// A start value and an update, both jq; the update is run wrapped in [`jq::SCAN_WRAP`].
@@ -206,6 +208,19 @@ pub enum Stage {
         format: FileFormat,
         rotate: Option<Rotate>,
     },
+}
+
+/// `join [by <key>] [as <name>] [needs "a", "b"] [within <duration>]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Join {
+    /// Which values belong together (jq); all of them without one.
+    pub key: Option<String>,
+    /// The name of each part in the object (jq); the topic without one.
+    pub name: Option<String>,
+    /// Parts that must all be there before anything is sent.
+    pub needs: Vec<String>,
+    /// Parts older than this are left out.
+    pub within: Option<Duration>,
 }
 
 /// What `to file` writes, from the file name's extension.
@@ -245,8 +260,7 @@ pub struct Pipeline {
     pub ends: Vec<usize>,
 }
 
-const STAGES: &str =
-    "filter, map, changes, delta, pairwise, throttle, debounce, scan, window, take, inspect, to";
+const STAGES: &str = "filter, map, changes, delta, pairwise, join, throttle, debounce, scan, window, take, inspect, to";
 
 /// Parses and checks a Pipeline, reporting every problem found.
 pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
@@ -669,6 +683,7 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
             key_clause(code, rest, problems, "take 1 by .room").map(|key| Stage::Take(count, key))
         }
         "scan" => parse_scan(code, arg, problems),
+        "join" => parse_join(code, arg, problems).map(Stage::Join),
         "inspect" => {
             if arg_text.is_empty() {
                 return Some(Stage::Inspect(None));
@@ -813,13 +828,101 @@ fn leading_duration(
 
 /// `scan <start> <update> [by <key>]`. The start is one value: everything up to the first
 /// space outside brackets and strings.
+/// `join`'s clauses, each at most once and in any order.
+fn parse_join(code: &str, arg: Span, problems: &mut Problems) -> Option<Join> {
+    const EXAMPLE: &str = "for example `join by $room as $sensor`";
+    const WORDS: [&str; 4] = ["by", "as", "needs", "within"];
+    let text = &code[arg.start..arg.end];
+    let start = arg.start + (text.len() - text.trim_start().len());
+    let body = text.trim();
+
+    // Where each clause word stands, outside brackets and strings.
+    let mut clauses: Vec<(usize, &str)> = Vec::new();
+    let mut previous = ' ';
+    scan_code(body, |i, c, top| {
+        if top && previous.is_whitespace() {
+            for word in WORDS {
+                let after = &body[i..];
+                if after.starts_with(word)
+                    && after[word.len()..].starts_with(|c: char| c.is_whitespace())
+                {
+                    clauses.push((i, word));
+                }
+            }
+        }
+        previous = c;
+    });
+    if clauses.first().is_some_and(|(at, _)| *at > 0) || (clauses.is_empty() && !body.is_empty()) {
+        let end = clauses.first().map_or(body.len(), |(at, _)| *at);
+        problems.at(
+            start,
+            start + end,
+            format!("`join` takes `by`, `as`, `needs` and `within`, {EXAMPLE}"),
+        );
+        return None;
+    }
+
+    let mut join = Join {
+        key: None,
+        name: None,
+        needs: Vec::new(),
+        within: None,
+    };
+    let mut seen: Vec<&str> = Vec::new();
+    for (n, (at, word)) in clauses.iter().enumerate() {
+        let span = Span {
+            start: start + at + word.len(),
+            end: clauses
+                .get(n + 1)
+                .map_or(start + body.len(), |(next, _)| start + next),
+        };
+        if seen.contains(word) {
+            problems.at(
+                start + at,
+                start + at + word.len(),
+                format!("`{word}` is given twice"),
+            );
+            return None;
+        }
+        seen.push(word);
+        match *word {
+            "by" => join.key = Some(expression(code, span, problems, "join by")?),
+            "as" => join.name = Some(expression(code, span, problems, "join as")?),
+            "needs" => match string_list(code, span) {
+                Ok(names) => join.needs = names.into_iter().map(|(name, _)| name).collect(),
+                Err(_) => {
+                    problems.at(
+                        span.start,
+                        span.end.max(span.start + 1),
+                        "`needs` takes part names in quotes, like `needs \"temperature\", \"humidity\"`",
+                    );
+                    return None;
+                }
+            },
+            _ => match parse_duration(code[span.start..span.end].trim()) {
+                Some(duration) => join.within = Some(duration),
+                None => {
+                    problems.at(
+                        span.start,
+                        span.end.max(span.start + 1),
+                        "`within` takes a duration, like `within 5m`",
+                    );
+                    return None;
+                }
+            },
+        }
+    }
+    Some(join)
+}
+
 fn parse_scan(code: &str, arg: Span, problems: &mut Problems) -> Option<Stage> {
     const EXAMPLE: &str = "for example `scan 0 ($acc + .)`";
     let text = &code[arg.start..arg.end];
     let lead = text.len() - text.trim_start().len();
+    // Spans only the trimmed text, which may be empty (`scan` with nothing after it).
     let body = Span {
         start: arg.start + lead,
-        end: arg.start + text.trim_end().len(),
+        end: arg.start + lead + text.trim().len(),
     };
     let body_text = &code[body.start..body.end];
     let mut start_end = body_text.len();
@@ -1274,6 +1377,12 @@ fn strip_comments(source: &str) -> String {
                 }
                 continue;
             }
+            // `{{` is a literal brace: keep both, where `step` would consume the second.
+            (Mode::Str, '{') if chars.peek() == Some(&'{') => {
+                chars.next();
+                out.push_str("{{");
+                continue;
+            }
             _ => step(&mut modes, c, &mut chars),
         }
         out.push(c);
@@ -1512,6 +1621,17 @@ from "Dev Broker"
     }
 
     #[test]
+    fn doubled_braces_are_literal_in_a_whole_pipeline() {
+        assert_eq!(
+            stages(r#"from all |> map { s: "{.a}°{{x}}" }"#),
+            vec![Stage::Map(r#"{ s: "\(.a)°{x}" }"#.into())]
+        );
+        // And problems after them are still marked where they are.
+        let d = &parse(r#"from all |> map "{{x}}" |> sort"#).unwrap_err()[0];
+        assert_eq!((d.column, d.end - d.start), (28, 4));
+    }
+
+    #[test]
     fn string_filling_becomes_jq_interpolation() {
         assert_eq!(to_jq(r#""hot/{$levels[2]}""#).0, r#""hot/\($levels[2])""#);
         assert_eq!(to_jq(r#""{{literal}}""#).0, r#""{literal}""#);
@@ -1533,7 +1653,7 @@ from "Dev Broker"
         );
         assert_eq!(
             first_problem("from all\n|> sort .a").2,
-            "Unknown Stage `sort`. Stages are: filter, map, changes, delta, pairwise, throttle, debounce, scan, window, take, inspect, to"
+            "Unknown Stage `sort`. Stages are: filter, map, changes, delta, pairwise, join, throttle, debounce, scan, window, take, inspect, to"
         );
         assert_eq!(first_problem("from all\n|> sort .a").0, 2);
         assert_eq!(first_problem("from all\n|> sort .a").1, 4);
@@ -2033,5 +2153,112 @@ from "Dev Broker"
             first_problem("from all |> delta 5").2,
             "Expected nothing more here, or a key with `by`, for example `delta by .room`"
         );
+    }
+
+    #[test]
+    fn join_takes_its_clauses_in_any_order() {
+        let join = |source: &str| match &stages(source)[0] {
+            Stage::Join(join) => join.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            join(r#"from all |> join by $levels[1] as $levels[-1] needs "t", "h" within 5m"#),
+            Join {
+                key: Some("$levels[1]".into()),
+                name: Some("$levels[-1]".into()),
+                needs: vec!["t".into(), "h".into()],
+                within: Some(Duration::from_secs(300)),
+            }
+        );
+        assert_eq!(
+            join("from all |> join within 10s as (.a as $x | $x) "),
+            Join {
+                key: None,
+                name: Some("(.a as $x | $x)".into()),
+                needs: Vec::new(),
+                within: Some(Duration::from_secs(10)),
+            }
+        );
+        // Nothing after it, or only spaces before the next Stage.
+        assert_eq!(join("from all |> join "), join("from all |> join"));
+        assert_eq!(
+            join("from all |> join"),
+            Join {
+                key: None,
+                name: None,
+                needs: Vec::new(),
+                within: None,
+            }
+        );
+        for (source, problem) in [
+            (
+                "from all |> join .room",
+                "`join` takes `by`, `as`, `needs` and `within`, for example `join by $room as $sensor`",
+            ),
+            ("from all |> join by .a by .b", "`by` is given twice"),
+            (
+                "from all |> join within soon",
+                "`within` takes a duration, like `within 5m`",
+            ),
+            (
+                "from all |> join needs t",
+                "`needs` takes part names in quotes, like `needs \"temperature\", \"humidity\"`",
+            ),
+        ] {
+            assert_eq!(first_problem(source).2, problem, "{source}");
+        }
+    }
+
+    #[test]
+    fn stages_with_only_spaces_after_them_are_problems_not_panics() {
+        for stage in [
+            "scan", "join", "window", "take", "throttle", "debounce", "filter", "map", "to",
+            "inspect", "delta",
+        ] {
+            for source in [
+                format!("from all |> {stage} "),
+                format!("from all |> {stage}  |> map ."),
+            ] {
+                let _ = parse(&source);
+            }
+        }
+    }
+
+    /// Every prefix of these is something the editor sends while you type. None may panic.
+    #[test]
+    fn every_prefix_of_a_pipeline_parses_without_panicking() {
+        let pipelines = [
+            r#"# Rooms
+from "Dev Broker", "Office"
+|> filter topic "maqtt/home/+room/#rest", "x/+"
+|> filter not topic "+/status"
+|> map { temp: .temperature, room: $room, s: "{.a}°{{x}}" }
+|> changes by .room
+|> throttle 10s by .room
+|> debounce 2s
+|> scan 0 ($acc + 1) by .room
+|> window 1m by $room
+|> map { room: $key, avg: avg(.temp), n: count, }
+|> take 5 by .room
+|> delta by .x
+|> pairwise
+|> join by $room as $rest needs "a", "b" within 5m
+|> inspect "after"
+|> to app "hot/{.room}"
+|> to broker "Office" "copy/{$topic}"
+|> to file "rooms/{$room // "x"}.csv" rotate 10MB
+|> to geo
+|> to chart"#,
+            r#"from file "rec.jsonl", "b.csv" follow replay .at |> map .payload"#,
+            r#"from file "a.csv" rate 20/s |> map [.[] | select(. > 1)] |> filter (.a | not)"#,
+        ];
+        for pipeline in pipelines {
+            for (end, _) in pipeline.char_indices().chain([(pipeline.len(), ' ')]) {
+                let prefix = &pipeline[..end];
+                let result = std::panic::catch_unwind(|| parse(prefix));
+                assert!(result.is_ok(), "parsing panicked on {prefix:?}");
+            }
+            parse(pipeline).unwrap_or_else(|e| panic!("{e:?}"));
+        }
     }
 }

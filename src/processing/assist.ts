@@ -149,7 +149,7 @@ export function assistAt(before: string): Assist {
 
   const filter = /^filter\s+(not\s+)?\w*$/.exec(trimmed);
   if (filter) return { kind: "filter", from, negated: Boolean(filter[1]) };
-  if (/^(throttle\s+\S+|changes|delta|pairwise)\s+\w*$/.test(trimmed)) {
+  if (/^(throttle\s+\S+|changes|delta|pairwise|join)\s+\w*$/.test(trimmed)) {
     return { kind: "by", from };
   }
   if (/^to\s+\w*$/.test(trimmed)) return { kind: "sink", from };

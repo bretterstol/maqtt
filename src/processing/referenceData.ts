@@ -16,6 +16,8 @@ export interface StageDoc {
   /** A CodeMirror snippet, with ${…} placeholders. */
   snippet: string;
   examples: string[];
+  /** A whole Pipeline showing the Stage at work, from `from` on. */
+  example?: string;
 }
 
 export interface NameDoc {
