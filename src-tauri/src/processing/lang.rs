@@ -192,6 +192,8 @@ pub enum Stage {
         broker: String,
         topic: String,
     },
+    /// Points on the Pipeline's map: the value must be `{lat, lon, label?}`, or a list of them.
+    ToGeo,
     /// Writing to a file; the path is a jq expression that yields a string.
     ToFile {
         path: String,
@@ -690,11 +692,32 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                         .map(|topic| Stage::ToBroker { broker, topic })
                 }
                 "file" => parse_to_file(code, sink, sink_arg, problems),
+                "geo" => {
+                    if code[sink_arg.start..sink_arg.end].trim().is_empty() {
+                        Some(Stage::ToGeo)
+                    } else {
+                        problems.at(
+                            sink_arg.start,
+                            sink_arg.end,
+                            "`to geo` takes nothing more: shape the value first, like `map { lat: .lat, lon: .lng, label: $topic }`",
+                        );
+                        None
+                    }
+                }
+                // `map` is the Stage that reshapes values; points on the map are `to geo`.
+                "map" => {
+                    problems.at(
+                        sink.span.start,
+                        sink.span.end,
+                        "Points on the map are `to geo`: `map` is the Stage that reshapes values",
+                    );
+                    None
+                }
                 "" => {
                     problems.at(
                         arg_start,
                         arg.end.max(arg_start + 1),
-                        "`to` needs a Sink: `to app \"hot/{$levels[2]}\"`, `to broker \"Office\" \"hot/{$levels[2]}\"` or `to file \"hot.jsonl\"`",
+                        "`to` needs a Sink: `to app \"hot/{$levels[2]}\"`, `to broker \"Office\" \"hot/{$levels[2]}\"`, `to file \"hot.jsonl\"` or `to geo`",
                     );
                     None
                 }
@@ -703,7 +726,7 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                         sink.span.start,
                         sink.span.end,
                         format!(
-                            "`to {other}` isn't available yet; there are `to app`, `to broker` and `to file`"
+                            "`to {other}` isn't available yet; there are `to app`, `to broker`, `to file` and `to geo`"
                         ),
                     );
                     None
@@ -1491,8 +1514,8 @@ from "Dev Broker"
         assert_eq!(first_problem("from all\n|> sort .a").0, 2);
         assert_eq!(first_problem("from all\n|> sort .a").1, 4);
         assert_eq!(
-            first_problem("from all |> to map \"x\"").2,
-            "`to map` isn't available yet; there are `to app`, `to broker` and `to file`"
+            first_problem("from all |> to chart \"x\"").2,
+            "`to chart` isn't available yet; there are `to app`, `to broker`, `to file` and `to geo`"
         );
         assert_eq!(
             first_problem("from all |> filter topic \"a/#/b\"").2,
@@ -1943,5 +1966,23 @@ from "Dev Broker"
         ] {
             assert_eq!(first_problem(source).2, problem, "{source}");
         }
+    }
+
+    #[test]
+    fn to_geo_takes_nothing_more() {
+        assert_eq!(
+            stages(r#"from all |> map { lat: .a, lon: .b } |> to geo"#)[1],
+            Stage::ToGeo
+        );
+        assert!(
+            first_problem(r#"from all |> to geo .lat .lon"#)
+                .2
+                .starts_with("`to geo` takes nothing more")
+        );
+        // `map` is the Stage; the Sink has its own name.
+        assert_eq!(
+            first_problem(r#"from all |> to map"#).2,
+            "Points on the map are `to geo`: `map` is the Stage that reshapes values"
+        );
     }
 }

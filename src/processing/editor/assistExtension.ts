@@ -261,6 +261,7 @@ function options(
             'file "${name}.jsonl"',
             "append to a JSON Lines or CSV file",
           ),
+          keyword("geo", "geo", "points { lat, lon, label } on a map"),
         ],
         validFor: IDENT,
       };

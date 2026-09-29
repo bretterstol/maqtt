@@ -497,3 +497,60 @@
   font-variation-settings: var(--mono);
   white-space: pre;
 }
+
+/* `to geo`: the toggle, and the map in place of the output list. */
+.pipeline-output__map {
+  margin-left: auto;
+  padding: 0.05rem 0.5rem;
+}
+
+.pipeline-output__map.is-active {
+  border-color: var(--text);
+  background: var(--select);
+}
+
+.marker-map {
+  position: relative;
+  flex: 1;
+  min-height: 12rem;
+  margin: 0 0.75rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.marker-map__canvas {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-rack);
+}
+
+.marker-map__empty {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 1000;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.marker-map__marker {
+  stroke: var(--bg);
+  stroke-width: 2;
+  fill: var(--lamp);
+  fill-opacity: 1;
+}
+
+.marker-map__trail {
+  stroke: var(--lamp);
+  stroke-width: 3;
+  stroke-opacity: 0.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}

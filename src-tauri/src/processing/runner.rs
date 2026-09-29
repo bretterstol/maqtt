@@ -16,6 +16,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::file_source::{FileReader, Next};
 use super::files::FileSink;
 use super::lang::{FileSource, Pipeline, Source};
+use super::markers::Markers;
 use super::stages::{Effect, Origin, Runtime};
 use crate::bus::{Bus, BusEvent};
 use crate::connection::{ConnectionState, ConnectionStatus, ConnectionStatuses};
@@ -59,6 +60,8 @@ pub struct PipelineStatus {
     pub last_error: Option<String>,
     /// The latest `inspect` values, newest last.
     pub inspected: VecDeque<Inspected>,
+    /// Where its `to geo` values put their markers.
+    pub markers: Markers,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -534,6 +537,20 @@ impl Job {
                             status.last_error = Some(format!("to file: {err}"));
                         }
                     }
+                }
+                Effect::Point {
+                    key,
+                    label,
+                    lat,
+                    lon,
+                    at_ms,
+                } => {
+                    status.emitted += 1;
+                    status.markers.place(key, label, lat, lon, at_ms);
+                }
+                Effect::Snapshot { points, at_ms } => {
+                    status.emitted += 1;
+                    status.markers.replace(points, at_ms);
                 }
                 Effect::Inspected {
                     label,

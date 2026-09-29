@@ -62,6 +62,7 @@ function problemsOnly(problems: Diagnostic[]): Preview {
     results: [],
     inspected: [],
     note: null,
+    markers: [],
   };
 }
 
@@ -478,6 +479,7 @@ export default function PipelinesTab() {
             previewError={draftError}
             view={outputView ?? (current.status.running ? "live" : "preview")}
             onView={setOutputView}
+            hasMap={/\|>\s*to\s+geo\b/.test(text)}
           />
         </section>
       ) : (
