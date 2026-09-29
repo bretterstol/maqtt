@@ -6,7 +6,7 @@ Work happens on the `processing` branch. Each milestone is merged into `main` af
 
 ## Principles
 
-- **Opt-in.** Nothing runs until you start a Pipeline. Nothing starts with the app.
+- **Opt-in.** Nothing runs until you start a Pipeline. Nothing starts with the app unless you have marked it to.
 - **Isolated.** Each Pipeline is its own task with a bounded queue. A Pipeline that falls behind drops messages and says how many; it never slows the Connections, the tree or the log. A Pipeline that fails on a message skips it and reports the error in its own panel.
 - **Removable.** All processing code lives in `src-tauri/src/processing/` and `src/processing/`. It reaches the rest of the app only through the Message Bus, its own commands, and one entry point each in the tab bar and the Topic Tree. Deleting it is a small, local change, and those entry points are where a later setting can hide it.
 
@@ -143,6 +143,14 @@ from "Dev Broker"
 - **Chart** in the output panel shows it, like Map: the draft's lines under Preview, the running Pipeline's under Live. A legend names each line with its latest value (the palette's lighter colours are under 3:1 on the light panel, so the text carries identity), hovering shows every line's value at the nearest time, and the newest value of each line has a dot.
 - Drawn as SVG in the app itself: no chart library, and no network.
 
+### Starting with måqtt
+
+**Start with måqtt** in a Pipeline's header marks it to start whenever the app starts, so a recording with `to file` or a mirror with `to broker` keeps going without anyone pressing Start. Ticking it doesn't start or stop the Pipeline now.
+
+- Marked Pipelines start right after the Brokers set to autoconnect begin connecting. A Pipeline reading a Broker that isn't connected yet simply waits for its messages, as a started one always does.
+- One that can't start (its file was edited into something that doesn't parse) shows "Didn't start with måqtt" and why in its panel. A mark for a file that's gone is dropped.
+- The marks are kept in `settings.json` beside the `.pipe` files, not in the Pipeline's code, so the language stays about what a Pipeline does. Renaming a Pipeline carries its mark; deleting it removes it.
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.
@@ -265,7 +273,6 @@ Hardening that came with it:
 ## Later
 
 - A setting to hide Pipelines entirely
-- Pipelines that start with the app
 - Joining streams (for example matching temperature and humidity from different topics)
 - `from pipelines`, reading other Pipelines' Derived Topics
 - `delta` and `pairwise` as shortcuts built on `scan`

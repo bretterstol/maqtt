@@ -3,6 +3,14 @@
 use std::path::{Path, PathBuf};
 
 const EXTENSION: &str = "pipe";
+/// Beside the `.pipe` files: which Pipelines start with måqtt.
+const SETTINGS: &str = "settings.json";
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct Settings {
+    start_with_app: Vec<String>,
+}
 
 pub struct PipelineFiles {
     dir: PathBuf,
@@ -63,6 +71,41 @@ impl PipelineFiles {
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// The Pipelines marked to start with måqtt, sorted.
+    pub fn starts_with_app(&self) -> Vec<String> {
+        self.settings().start_with_app
+    }
+
+    /// Marks a Pipeline to start with måqtt, or unmarks it.
+    pub fn set_starts_with_app(&self, name: &str, on: bool) -> Result<(), String> {
+        let mut settings = self.settings();
+        settings.start_with_app.retain(|n| n != name);
+        if on {
+            check_name(name)?;
+            settings.start_with_app.push(name.to_string());
+            settings.start_with_app.sort();
+        }
+        self.save_settings(&settings)
+    }
+
+    /// What `settings.json` says; nothing marked when it's missing or unreadable.
+    fn settings(&self) -> Settings {
+        std::fs::read_to_string(self.dir.join(SETTINGS))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_settings(&self, settings: &Settings) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        let path = self.dir.join(SETTINGS);
+        let tmp = path.with_extension("json.tmp");
+        let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+        std::fs::write(&tmp, text + "\n")
+            .and_then(|()| std::fs::rename(&tmp, &path))
+            .map_err(|e| format!("Couldn't save {}: {e}", path.display()))
     }
 }
 
@@ -127,5 +170,22 @@ mod tests {
         for good in ["hot rooms", "fleet-rssi_v2", "Temperatur ÆØÅ"] {
             assert!(check_name(good).is_ok(), "{good:?}");
         }
+    }
+
+    #[test]
+    fn pipelines_can_be_marked_to_start_with_the_app() {
+        let f = files("autostart");
+        assert!(f.starts_with_app().is_empty());
+        f.set_starts_with_app("rec", true).unwrap();
+        f.set_starts_with_app("a", true).unwrap();
+        f.set_starts_with_app("rec", true).unwrap();
+        assert_eq!(f.starts_with_app(), ["a", "rec"]);
+        f.set_starts_with_app("a", false).unwrap();
+        assert_eq!(f.starts_with_app(), ["rec"]);
+        assert!(f.set_starts_with_app("../x", true).is_err());
+        // It lives beside the Pipelines but isn't one.
+        assert!(f.list().is_empty());
+        let text = std::fs::read_to_string(f.dir().join("settings.json")).unwrap();
+        assert_eq!(text, "{\n  \"startWithApp\": [\n    \"rec\"\n  ]\n}\n");
     }
 }

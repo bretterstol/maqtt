@@ -9,6 +9,7 @@ import {
   previewPipeline,
   renamePipeline,
   savePipeline,
+  setPipelineStartsWithApp,
   startPipeline,
   stopPipeline,
   type Diagnostic,
@@ -264,6 +265,15 @@ export default function PipelinesTab() {
     }
   };
 
+  const setStartsWithApp = async (name: string, on: boolean) => {
+    try {
+      await setPipelineStartsWithApp(name, on);
+      await refresh();
+    } catch (error) {
+      toast(`Couldn't change ${name}: ${String(error)}`, true);
+    }
+  };
+
   const rename = async (from: string, to: string) => {
     setRenaming(null);
     to = to.trim();
@@ -327,11 +337,12 @@ export default function PipelinesTab() {
                       : "pipelines__lamp"
                   }
                   title={
-                    p.status.running
+                    (p.status.running
                       ? "Running"
                       : p.status.finished
                         ? "Finished"
-                        : "Stopped"
+                        : "Stopped") +
+                    (p.startsWithApp ? ", starts with måqtt" : "")
                   }
                 />
                 <span className="pipelines__name">
@@ -436,6 +447,19 @@ export default function PipelinesTab() {
                 <button onClick={() => setConfirmingDelete(true)}>
                   Delete
                 </button>
+                <label
+                  className="pipelines__autostart"
+                  title="Start this Pipeline whenever måqtt starts. It follows its Brokers as they connect."
+                >
+                  <input
+                    type="checkbox"
+                    checked={current.startsWithApp}
+                    onChange={(e) =>
+                      void setStartsWithApp(current.name, e.target.checked)
+                    }
+                  />
+                  Start with måqtt
+                </label>
                 <button
                   disabled={!dirty}
                   onClick={() => void save()}

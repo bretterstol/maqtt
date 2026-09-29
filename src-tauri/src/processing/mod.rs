@@ -65,22 +65,54 @@ impl Processing {
     }
 }
 
+impl Processing {
+    /// Starts the Pipelines marked to start with måqtt: once, as the app starts. One that can't
+    /// start says why in its panel; one whose file is gone is unmarked.
+    pub fn start_marked(&self) {
+        for name in self.files.starts_with_app() {
+            let source = match self.files.read(&name) {
+                Ok(source) => source,
+                Err(_) => {
+                    let _ = self.files.set_starts_with_app(&name, false);
+                    continue;
+                }
+            };
+            let started = lang::parse(&source)
+                .map_err(|problems| {
+                    let first = &problems[0];
+                    format!(
+                        "Line {}, column {}: {}",
+                        first.line, first.column, first.message
+                    )
+                })
+                .and_then(|pipeline| self.runner.start(&name, pipeline));
+            if let Err(err) = started {
+                self.runner
+                    .failed(&name, format!("Didn't start with måqtt: {err}"));
+            }
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineView {
     name: String,
     source: String,
     status: PipelineStatus,
+    starts_with_app: bool,
 }
 
 /// Every saved Pipeline with its source and status.
 #[tauri::command]
 pub fn list_pipelines(state: State<'_, Processing>) -> Vec<PipelineView> {
+    let marked = state.files.starts_with_app();
     state
         .files
         .list()
         .into_iter()
         .map(|(name, source)| PipelineView {
+            starts_with_app: marked.contains(&name),
             status: state
                 .runner
                 .status(&name)
@@ -117,7 +149,19 @@ pub fn save_pipeline(
 #[tauri::command]
 pub fn delete_pipeline(state: State<'_, Processing>, name: String) -> Result<(), String> {
     state.runner.forget(&name);
+    state.files.set_starts_with_app(&name, false)?;
     state.files.delete(&name)
+}
+
+/// Marks a Pipeline to start when måqtt starts, or unmarks it. It doesn't start or stop it now.
+#[tauri::command]
+pub fn set_pipeline_starts_with_app(
+    state: State<'_, Processing>,
+    name: String,
+    on: bool,
+) -> Result<(), String> {
+    state.files.read(&name)?;
+    state.files.set_starts_with_app(&name, on)
 }
 
 /// Renames a Pipeline's file; a running Pipeline carries on under the new name.
@@ -136,8 +180,13 @@ pub fn rename_pipeline(
     }
     let source = state.files.read(&from)?;
     let was_running = state.runner.is_running(&from);
+    let marked = state.files.starts_with_app().contains(&from);
     state.files.save(&to, &source)?;
     state.files.delete(&from)?;
+    if marked {
+        state.files.set_starts_with_app(&from, false)?;
+        state.files.set_starts_with_app(&to, true)?;
+    }
     state.runner.forget(&from);
     if was_running && let Ok(pipeline) = lang::parse(&source) {
         state.runner.start(&to, pipeline)?;
@@ -242,4 +291,44 @@ const TAIL_LINES: usize = 50;
 #[tauri::command]
 pub fn pipeline_files_folder(state: State<'_, Processing>) -> String {
     state.files_dir.display().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marked_pipelines_start_with_the_app_or_say_why_not() {
+        let dir = std::env::temp_dir().join(format!("maqtt-autostart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let processing = Processing::new(
+            Bus::new(),
+            ConnectionStatuses::default(),
+            dir.join("pipelines"),
+            Arc::new(|_| Vec::new()),
+            Arc::new(|_, _, _| Ok(())),
+            dir.join("files"),
+        );
+        let files = &processing.files;
+        files.save("good", "from all |> to app \"x\"").unwrap();
+        // Edited outside måqtt into something that doesn't parse.
+        std::fs::write(dir.join("pipelines/broken.pipe"), "from all |> sort").unwrap();
+        for name in ["good", "broken", "gone"] {
+            files.set_starts_with_app(name, true).unwrap();
+        }
+
+        processing.start_marked();
+
+        assert!(processing.runner.is_running("good"));
+        let broken = processing.runner.status("broken").unwrap();
+        assert!(!broken.running);
+        assert!(
+            broken
+                .last_error
+                .unwrap()
+                .starts_with("Didn't start with måqtt: Line 1, column 13: Unknown Stage `sort`")
+        );
+        assert_eq!(files.starts_with_app(), ["broken", "good"]);
+        processing.runner.stop("good");
+    }
 }
