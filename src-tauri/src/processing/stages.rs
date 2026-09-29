@@ -10,7 +10,7 @@ use jaq_json::Val;
 
 use super::jq;
 use super::keyed::Keyed;
-use super::lang::{Connections, Pipeline, Stage, TopicFilter, WindowSize};
+use super::lang::{FileFormat, Pipeline, Rotate, Source, Stage, TopicFilter, WindowSize};
 use crate::message::ReceivedMessage;
 use crate::profile::validate_topic_name;
 
@@ -32,6 +32,13 @@ pub enum Effect {
         broker: String,
         topic: String,
         payload: Vec<u8>,
+    },
+    /// A value for `to file`: the path as the expression gave it, and the value as JSON.
+    Write {
+        path: String,
+        format: FileFormat,
+        rotate: Option<Rotate>,
+        record: serde_json::Value,
     },
     Error(String),
 }
@@ -158,6 +165,11 @@ enum Running {
         /// that gets past them would come back into the Pipeline, so it's refused.
         reads_back: Option<Vec<TopicFilter>>,
     },
+    ToFile {
+        path: jq::Filter,
+        format: FileFormat,
+        rotate: Option<Rotate>,
+    },
 }
 
 struct Throttled {
@@ -190,7 +202,7 @@ impl Window {
 /// A Pipeline ready to run; not `Send` (jq values are reference-counted), so it lives on one
 /// thread.
 pub struct Runtime {
-    from: Connections,
+    from: Source,
     /// How many named wildcards the Pipeline declares.
     names: usize,
     stages: Vec<Running>,
@@ -261,6 +273,15 @@ impl Runtime {
                     },
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
+                    Stage::ToFile {
+                        path,
+                        format,
+                        rotate,
+                    } => Running::ToFile {
+                        path: compile(path)?,
+                        format: *format,
+                        rotate: *rotate,
+                    },
                     Stage::ToBroker { broker, topic } => Running::ToBroker {
                         broker: broker.clone(),
                         topic: compile(topic)?,
@@ -602,12 +623,31 @@ fn apply(
             next.push(item);
         }
         Running::ToApp(filter) => {
-            match sink_topic(filter, &item).and_then(|topic| derived_topic(&topic)) {
+            match sink_topic(filter, &item, "topic").and_then(|topic| derived_topic(&topic)) {
                 Ok(topic) => out.push(Effect::Derived {
                     topic,
                     payload: payload_bytes(&item.value),
                 }),
                 Err(err) => out.push(error(&item, "to app", err)),
+            }
+            next.push(item);
+        }
+        Running::ToFile {
+            path,
+            format,
+            rotate,
+        } => {
+            match sink_topic(path, &item, "file name") {
+                Ok(path) if path.trim().is_empty() => {
+                    out.push(error(&item, "to file", "the file name is empty".into()))
+                }
+                Ok(path) => out.push(Effect::Write {
+                    path,
+                    format: *format,
+                    rotate: *rotate,
+                    record: json_record(&item.value),
+                }),
+                Err(err) => out.push(error(&item, "to file", err)),
             }
             next.push(item);
         }
@@ -617,7 +657,7 @@ fn apply(
             reads_back,
         } => {
             let stage = format!("to broker \"{broker}\"");
-            let checked = sink_topic(topic, &item).and_then(|topic| {
+            let checked = sink_topic(topic, &item, "topic").and_then(|topic| {
                 validate_topic_name(&topic).map_err(|e| {
                     if topic.is_empty() { e } else { format!("{e}: `{topic}`") }
                 })?;
@@ -644,21 +684,30 @@ fn apply(
     }
 }
 
-/// The topic a Sink's expression gives for this item: its first result, which must be a string.
-fn sink_topic(filter: &jq::Filter, item: &Item) -> Result<String, String> {
+/// A jq value as JSON for `to file`; one that isn't JSON (raw bytes) is written as text.
+fn json_record(value: &Val) -> serde_json::Value {
+    let text = value.to_string();
+    serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text))
+}
+
+/// The topic (or file name, `what`) a Sink's expression gives for this item: its first result,
+/// which must be a string.
+fn sink_topic(filter: &jq::Filter, item: &Item, what: &str) -> Result<String, String> {
     match jq::run(filter, item.value.clone(), &vars(item))?.first() {
         Some(Val::TStr(topic)) => Ok(String::from_utf8_lossy(topic).into_owned()),
         other => Err(format!(
-            "the topic must be a string, not {}",
+            "the {what} must be a string, not {}",
             other.map_or("nothing".into(), |v| v.to_string())
         )),
     }
 }
 
-fn reads(from: &Connections, connection: &str) -> bool {
+fn reads(from: &Source, connection: &str) -> bool {
     match from {
-        Connections::All => true,
-        Connections::Named(names) => names.iter().any(|n| n == connection),
+        Source::All => true,
+        Source::Named(names) => names.iter().any(|n| n == connection),
+        // Files aren't Connections; the runner reads them itself.
+        Source::Files(_) => false,
     }
 }
 

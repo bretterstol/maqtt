@@ -4,6 +4,7 @@
 //! counts them, instead of holding anyone else up.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -12,7 +13,9 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::lang::Pipeline;
+use super::file_source::{FileReader, Next};
+use super::files::FileSink;
+use super::lang::{FileSource, Pipeline, Source};
 use super::stages::{Effect, Origin, Runtime};
 use crate::bus::{Bus, BusEvent};
 use crate::connection::{ConnectionState, ConnectionStatus, ConnectionStatuses};
@@ -22,6 +25,9 @@ use crate::profile::ProfileId;
 /// Sends a payload to a topic on the Connection with this name, without waiting, for
 /// `to broker`. `lib.rs` backs it with the live Connections.
 pub type Republish = Arc<dyn Fn(&str, &str, Vec<u8>) -> Result<(), String> + Send + Sync>;
+
+/// `$connection` for messages read from files.
+pub const FILE_CONNECTION: &str = "file";
 
 /// The pseudo-Connection that Derived Topics come from; real Connections start at 1.
 pub const PIPELINES: ConnectionId = ConnectionId(0);
@@ -77,17 +83,25 @@ pub struct Runner {
     bus: Bus,
     statuses: ConnectionStatuses,
     republish: Republish,
+    /// Where `to file` writes names that aren't absolute.
+    files_dir: PathBuf,
     running: Mutex<HashMap<String, Handle>>,
     /// Status of Pipelines that ran and stopped, kept so their counts stay visible.
     stopped: Mutex<HashMap<String, PipelineStatus>>,
 }
 
 impl Runner {
-    pub fn new(bus: Bus, statuses: ConnectionStatuses, republish: Republish) -> Self {
+    pub fn new(
+        bus: Bus,
+        statuses: ConnectionStatuses,
+        republish: Republish,
+        files_dir: PathBuf,
+    ) -> Self {
         Self {
             bus,
             statuses,
             republish,
+            files_dir,
             running: Mutex::new(HashMap::new()),
             stopped: Mutex::new(HashMap::new()),
         }
@@ -119,6 +133,8 @@ impl Runner {
             bus: self.bus.clone(),
             republish: self.republish.clone(),
             sent: Sent::default(),
+            files: FileSink::new(self.files_dir.clone()),
+            reading: Vec::new(),
             names: self
                 .statuses
                 .snapshot()
@@ -279,6 +295,9 @@ struct Job {
     bus: Bus,
     republish: Republish,
     sent: Sent,
+    files: FileSink,
+    /// The files a file Source reads, which `to file` mustn't write.
+    reading: Vec<PathBuf>,
     names: HashMap<ConnectionId, String>,
     rx: tokio::sync::broadcast::Receiver<BusEvent>,
     stop: Arc<Notify>,
@@ -308,6 +327,10 @@ impl Job {
                 return;
             }
         };
+        if let Source::Files(source) = &self.pipeline.from {
+            let source = source.clone();
+            return self.run_files(pipeline, source).await;
+        }
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut effects = Vec::new();
@@ -359,6 +382,92 @@ impl Job {
         self.status.lock().unwrap().running = false;
     }
 
+    /// A Pipeline reading files: records as they're due, until the files end (unless
+    /// followed) or it's stopped.
+    async fn run_files(mut self, mut pipeline: Runtime, source: FileSource) {
+        let mut reader = match FileReader::new(&source, self.files.dir()) {
+            Ok(reader) => reader,
+            Err(err) => {
+                let mut status = self.status.lock().unwrap();
+                status.running = false;
+                status.last_error = Some(err);
+                return;
+            }
+        };
+        self.reading = source
+            .names
+            .iter()
+            .map(|name| self.files.resolve(name))
+            .collect();
+        let mut effects = Vec::new();
+        let mut next_tick = Instant::now() + TICK;
+        let mut seq = 0;
+        loop {
+            if self.halted.load(Ordering::SeqCst) {
+                break;
+            }
+            let now = Instant::now();
+            if now >= next_tick {
+                pipeline.tick(now, &mut effects);
+                next_tick = now + TICK;
+            }
+            match reader.next(now) {
+                Next::Record(record) => {
+                    let mut status = self.status.lock().unwrap();
+                    status.received += 1;
+                    if let Some(problem) = record.problem {
+                        status.errors += 1;
+                        status.last_error = Some(problem);
+                    }
+                    drop(status);
+                    seq += 1;
+                    let message = Arc::new(ReceivedMessage {
+                        seq,
+                        connection_id: PIPELINES,
+                        topic: record.name,
+                        payload: record.payload.into(),
+                        qos: 0,
+                        retain: false,
+                        received_at_ms: now_ms(),
+                        properties: None,
+                    });
+                    pipeline.push(Origin::new(message, FILE_CONNECTION), now, &mut effects);
+                }
+                Next::Problem(problem) => {
+                    let mut status = self.status.lock().unwrap();
+                    status.errors += 1;
+                    status.last_error = Some(problem);
+                }
+                Next::Wait(wait) => {
+                    let wait = wait
+                        .min(next_tick.saturating_duration_since(now))
+                        .max(Duration::from_millis(1));
+                    tokio::select! {
+                        biased;
+                        _ = self.stop.notified() => break,
+                        _ = tokio::time::sleep(wait) => {}
+                    }
+                }
+                Next::Done => {
+                    pipeline.flush(Instant::now(), &mut effects);
+                    self.handle(&mut effects);
+                    self.status.lock().unwrap().finished = true;
+                    break;
+                }
+            }
+            if pipeline.finished() {
+                pipeline.flush(Instant::now(), &mut effects);
+                self.handle(&mut effects);
+                self.status.lock().unwrap().finished = true;
+                break;
+            }
+            self.handle(&mut effects);
+            // Records that are due at once still let a stop through.
+            tokio::task::yield_now().await;
+        }
+        self.status.lock().unwrap().running = false;
+    }
+
     fn handle(&mut self, effects: &mut Vec<Effect>) {
         if effects.is_empty() {
             return;
@@ -369,6 +478,7 @@ impl Job {
         }
         let status = self.status.clone();
         let mut status = status.lock().unwrap();
+        let mut wrote = false;
         for effect in effects.drain(..) {
             match effect {
                 Effect::Derived { topic, payload } => {
@@ -400,6 +510,31 @@ impl Job {
                             Some(format!("to broker \"{broker}\" on {topic}: {err}"));
                     }
                 },
+                Effect::Write {
+                    path,
+                    format,
+                    rotate,
+                    record,
+                } => {
+                    wrote = true;
+                    if self.reading.contains(&self.files.resolve(&path)) {
+                        status.errors += 1;
+                        status.last_error = Some(format!(
+                            "to file: not written to {path}: this Pipeline reads it, so it would read its own output"
+                        ));
+                        continue;
+                    }
+                    match self
+                        .files
+                        .write(&path, format, rotate, &record, &jiff::Zoned::now())
+                    {
+                        Ok(_) => status.emitted += 1,
+                        Err(err) => {
+                            status.errors += 1;
+                            status.last_error = Some(format!("to file: {err}"));
+                        }
+                    }
+                }
                 Effect::Inspected {
                     label,
                     topic,
@@ -420,6 +555,10 @@ impl Job {
                     status.last_error = Some(err);
                 }
             }
+        }
+        if wrote && let Err(err) = self.files.flush() {
+            status.errors += 1;
+            status.last_error = Some(format!("to file: {err}"));
         }
     }
 }
@@ -475,7 +614,11 @@ mod tests {
                 .push((broker.into(), topic.into(), payload));
             Ok(())
         });
-        (bus.clone(), Runner::new(bus, statuses, republish), sent)
+        (
+            bus.clone(),
+            Runner::new(bus, statuses, republish, std::env::temp_dir()),
+            sent,
+        )
     }
 
     fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
@@ -724,5 +867,106 @@ mod tests {
         assert_eq!(sent.order.len(), ECHO_KEPT);
         assert!(!sent.recognises("0", b"", now));
         assert!(sent.recognises("1", b"", now));
+    }
+
+    #[test]
+    fn to_file_writes_what_a_started_pipeline_sends() {
+        let dir = std::env::temp_dir().join(format!("maqtt-runner-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (bus, _) = setup();
+        let statuses = ConnectionStatuses::default();
+        let runner = Runner::new(
+            bus.clone(),
+            statuses,
+            Arc::new(|_, _, _| Ok(())),
+            dir.clone(),
+        );
+        runner
+            .start(
+                "log",
+                parse(r#"from all |> filter topic "home/+room" |> map { room: $room, t: .t } |> to file "{$room}.csv""#)
+                    .unwrap(),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 21}"#));
+        bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 22}"#));
+        bus.publish(message(&bus, 1, "home/office", r#"{"t": 19}"#));
+        wait_for("written", || runner.status("log").unwrap().emitted == 3);
+        runner.stop("log");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("kitchen.csv")).unwrap(),
+            "room,t\nkitchen,21\nkitchen,22\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("office.csv")).unwrap(),
+            "room,t\noffice,19\n"
+        );
+    }
+
+    #[test]
+    fn a_recording_replays_from_a_file_and_the_pipeline_finishes() {
+        let dir = std::env::temp_dir().join(format!("maqtt-runner-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("rec.jsonl"),
+            "{\"topic\":\"home/a\",\"payload\":{\"t\":1}}\n{\"topic\":\"home/b\",\"payload\":{\"t\":2}}\n",
+        )
+        .unwrap();
+        let (bus, _, sent) = setup_sending();
+        let republish: Republish = {
+            let sent = sent.clone();
+            Arc::new(move |broker, topic, payload| {
+                sent.lock()
+                    .unwrap()
+                    .push((broker.into(), topic.into(), payload));
+                Ok(())
+            })
+        };
+        let runner = Runner::new(bus, ConnectionStatuses::default(), republish, dir.clone());
+        runner
+            .start(
+                "replay",
+                parse(
+                    r#"from file "rec.jsonl" rate 100/s
+|> map .payload
+|> to broker "Office" "{$topic}/{$connection}"
+|> to file "rec.jsonl""#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        wait_for("finished", || runner.status("replay").unwrap().finished);
+        let status = runner.status("replay").unwrap();
+        assert_eq!((status.received, status.emitted), (2, 2), "{status:?}");
+        // Writing back into the file it reads is refused.
+        assert_eq!(status.errors, 2);
+        assert!(
+            status
+                .last_error
+                .unwrap()
+                .contains("would read its own output")
+        );
+        let sent: Vec<_> = sent
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| (s.1.clone(), s.2.clone()))
+            .collect();
+        assert_eq!(
+            sent,
+            [
+                ("rec.jsonl/file".to_string(), br#"{"t":1}"#.to_vec()),
+                ("rec.jsonl/file".to_string(), br#"{"t":2}"#.to_vec()),
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("rec.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
     }
 }

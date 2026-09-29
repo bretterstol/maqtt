@@ -83,6 +83,35 @@ When the Pipeline reads that Broker, a topic that gets past its `from` and leadi
 
 That check goes by Connection name, but several Broker Profiles can reach one Broker (the dev profiles are three listeners on one Mosquitto). So a running Pipeline also remembers what it republished in the last 10 s (topic and payload, up to 10,000 messages) and leaves out any copy that comes back, on whichever Connection. Its panel counts them as "came back". Without this, `from "Dev Broker" |> to broker "Dev Broker (TLS)" "test/{$topic}"` republished its own output with one more level each round, until Mosquitto dropped the Connection for a topic over 200 levels deep.
 
+### Files
+
+`to file "temps.jsonl"` appends each value to a file, and passes it on like the other Sinks. The extension decides the format:
+
+- `.jsonl` (or `.ndjson`): one JSON value per line, strings quoted.
+- `.csv`: one row per value. A new file takes its columns from the first value's keys (`value` if it isn't an object) and writes them as a header; a file that already exists keeps its header. Keys without a column are left out of the row and reported as an error, so nothing changes shape silently. Text goes in as is, null as an empty cell, lists and objects as JSON.
+
+The name is a string like a topic, so `to file "rooms/{$room}.csv"` writes a file per room; folders are created as needed. Names go into a `files` folder beside the `pipelines` folder (shown under the Pipeline list), unless they start with `/` or `~/`. `rotate daily` or `rotate hourly` puts the local date in the name (`temps.2026-09-29.jsonl`); `rotate 10MB` (or `KB`, `GB`) renames a full file with a timestamp (`temps.2026-09-29T14-03-12.jsonl`) and starts a new one. A Pipeline keeps at most 32 files open, writes on its own thread, and flushes after each batch. Preview shows what would be written, and writes nothing. The Pipelines tab lists the files in the folder under the Pipelines; picking one shows its size, when it changed, how to read it back (`from file "…"`), and its last 50 lines as they change. Files written with `/` or `~/` names are outside the folder and not listed.
+
+### Reading files
+
+`from file "recording.jsonl"` reads records instead of live messages: one message per JSON line or CSV row, read once, after which the Pipeline finishes. Several files are read one after the other (`from file "a.csv", "b.csv"`). Names resolve like `to file`'s, so a recording made with `to file` is read back by name.
+
+- Each record is the payload. `$topic` is the file's name as written, so `filter topic` can tell files apart; `$connection` is `file`, `$time` when it was read.
+- CSV rows become objects keyed by the header. Empty cells are null; numbers, `true`, `false` and JSON lists and objects come back typed; anything else is text.
+- **Pace.** At most 1,000 records a second by default, so a Broker's request queue keeps up with `to broker`. `rate 200/s` changes that; `replay .at` uses a time in each record and keeps the gaps between records. The time may be seconds (as `$time` gives) or milliseconds since 1970 (numbers past 10^11 are taken as milliseconds), as a number or as text, or a timestamp such as `2026-09-29T12:00:00.25Z` or `2026-09-29 14:00:00+02:00`; one without an offset is local time. So `replay .recordTimestamp` works on an export with ISO timestamps, and `recordTimestamp: ($time | todate)` writes them, so `throttle` and `window` behave as they did when it was recorded. A record without a time goes at once and is reported.
+- `follow` keeps reading lines added later, like `tail -f`, and waits for a line's end before taking it.
+- A Pipeline can't `to file` into a file it reads.
+- Preview runs over the first 100 records, timed as they would be read, and says if a file can't be read.
+
+To record and replay traffic:
+
+```
+# record
+from "Test" |> filter topic "plant/#" |> map { topic: $topic, at: $time, payload: . } |> to file "plant.jsonl"
+# replay into dev, at the original pace
+from file "plant.jsonl" replay .at |> map .payload |> to broker "Dev" "{$payload.topic}"
+```
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.
@@ -97,7 +126,8 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
                                                                ├─ app Sink ─► Message Bus
                                                                │  (Derived Topics under the
                                                                │   Pipelines pseudo-Connection)
-                                                               └─ broker Sink ─► a Connection
+                                                               ├─ broker Sink ─► a Connection
+                                                               └─ file Sink ─► files on disk
 ```
 
 - **Derived Topics go back onto the Message Bus** as ordinary messages from a reserved "Pipelines" pseudo-Connection. The History Store, Topic Index, Topic Tree, Message Log, detail panel and exports then work on them with no changes. That is what keeps processing removable.
@@ -182,7 +212,7 @@ Hardening that came with it:
 ### P5: More Sinks
 
 1. **Republish**: `to broker "Office" "topic/{…}"`, with a guard against republishing into something the Pipeline itself reads. Done on the `pipelines-p5` branch; see Republishing above. Checked over WebDriver against the dev Broker: Preview lists what would be sent, a Pipeline reading its own output is refused in Preview, and once started the Broker receives the republished message while its echo isn't taken in again. A broker integration test covers the same round trip.
-2. **File**: JSON Lines or CSV, rotating by size or day
+2. **File**: JSON Lines or CSV, rotating by size or day. Done on the `pipelines-p5-file` branch; see Files above.
 3. **Map**: messages with latitude and longitude on a map (design together first: which map library, and how to pick the fields)
 
 ## Testing

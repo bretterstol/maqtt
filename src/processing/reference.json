@@ -2,7 +2,7 @@
   "stages": [
     {
       "name": "from",
-      "summary": "Picks the Brokers to read. Always the first line.",
+      "summary": "Picks the Brokers or files to read. Always the first line.",
       "forms": [
         {
           "syntax": "from all",
@@ -15,14 +15,34 @@
         {
           "syntax": "from \"Dev Broker\", \"Office\"",
           "does": "Several Brokers."
+        },
+        {
+          "syntax": "from file \"<name>.jsonl\", …",
+          "does": "Records from JSON Lines or CSV files, one message each, read once; then the Pipeline finishes. $topic is the file's name, $connection is \"file\". CSV rows become objects, with numbers and true/false typed."
+        },
+        {
+          "syntax": "from file \"<name>\" follow",
+          "does": "Then keeps reading lines added to the files."
+        },
+        {
+          "syntax": "from file \"<name>\" rate 200/s",
+          "does": "At most this many records a second; 1000/s unless given."
+        },
+        {
+          "syntax": "from file \"<name>\" replay .at",
+          "does": "On the times the records carry: seconds or milliseconds since 1970, or a timestamp like 2026-09-29T12:00:00.25Z (without an offset it's local time). The gaps between records are kept."
         }
       ],
-      "details": "A Pipeline never reads Derived Topics, so it can't feed itself.",
+      "details": "A Pipeline never reads Derived Topics, so it can't feed itself. File names resolve like to file's, so a recording can be read back by name; a Pipeline can't write to a file it reads.",
       "snippet": "from ${all}",
       "examples": [
         "from all",
         "from \"Dev Broker\"",
-        "from \"Dev Broker\", \"Office\""
+        "from \"Dev Broker\", \"Office\"",
+        "from file \"recording.jsonl\" replay .at",
+        "from file \"rooms/kitchen.csv\", \"rooms/office.csv\" rate 50/s",
+        "from file \"log.jsonl\" follow",
+        "from file \"export.csv\" replay .recordTimestamp"
       ]
     },
     {
@@ -210,15 +230,22 @@
         {
           "syntax": "to broker \"<Broker>\" \"<topic>\"",
           "does": "Republishes on a connected Broker, QoS 0 and not retained. A topic the Pipeline would read back is refused: narrow what it reads with filter topic right after from. Copies that come back anyway, through another Broker Profile for the same Broker, are left out and counted as came back."
+        },
+        {
+          "syntax": "to file \"<name>.jsonl\" [rotate daily|hourly|<size>]",
+          "does": "Appends to a file: .jsonl gets one JSON value per line, .csv one row per value, with columns from the first object's keys. Names go into the files folder shown under the Pipeline list, unless they start with / or ~/. rotate daily or hourly puts the date in the name; rotate 10MB starts a new file when one is full."
         }
       ],
-      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send without sending it.",
+      "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send and to file would write, without doing either.",
       "snippet": "to app \"${topic}\"",
       "examples": [
         "to app \"hot\"",
         "to app \"hot/{.room}\"",
         "to app \"{$levels[1]}/battery\"",
-        "to broker \"Office\" \"alerts/{$levels[1]}\""
+        "to broker \"Office\" \"alerts/{$levels[1]}\"",
+        "to file \"temps.jsonl\"",
+        "to file \"rooms/{$levels[2]}.csv\" rotate daily",
+        "to file \"~/mqtt/raw.jsonl\" rotate 100MB"
       ]
     }
   ],
@@ -582,6 +609,13 @@
       "example": "[1, empty, 2]",
       "input": "null",
       "output": "[1,2]"
+    },
+    {
+      "name": "todate",
+      "does": "Seconds since 1970 as a UTC timestamp, which replay reads back: ($time | todate).",
+      "example": "todate",
+      "input": "1790683200.25",
+      "output": "\"2026-09-29T12:00:00.25Z\""
     }
   ]
 }

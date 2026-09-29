@@ -4,6 +4,8 @@
 //! Bus, the Connection names it reads, a read-only view of recent messages for Preview, a way to
 //! send on a Connection for `to broker`, and the commands below, which `lib.rs` registers.
 
+pub mod file_source;
+pub mod files;
 pub mod jq;
 pub mod keyed;
 pub mod lang;
@@ -32,6 +34,8 @@ use store::PipelineFiles;
 pub struct Processing {
     runner: Runner,
     files: PipelineFiles,
+    /// Where `to file` writes names that aren't absolute.
+    files_dir: PathBuf,
     statuses: ConnectionStatuses,
     recent: RecentMessages,
     /// Previews running now. A Preview stuck on an endless expression never ends, so this
@@ -46,10 +50,12 @@ impl Processing {
         dir: PathBuf,
         recent: RecentMessages,
         republish: Republish,
+        files_dir: PathBuf,
     ) -> Self {
         Self {
-            runner: Runner::new(bus, statuses.clone(), republish),
+            runner: Runner::new(bus, statuses.clone(), republish, files_dir.clone()),
             files: PipelineFiles::new(dir),
+            files_dir,
             statuses,
             recent,
             previewing: Arc::new(AtomicUsize::new(0)),
@@ -190,13 +196,14 @@ pub async fn preview_pipeline(
         .map(|s| (s.connection_id, s.name))
         .collect();
     let recent = state.recent.clone();
+    let files_dir = state.files_dir.clone();
     let (done, result) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("pipeline preview".into())
         .spawn(move || {
             // Counted down however the thread ends, even by a panic.
             let _busy = busy;
-            let _ = done.send(preview::preview(&source, &names, &recent));
+            let _ = done.send(preview::preview(&source, &names, &recent, &files_dir));
         })
         .map_err(|e| format!("Couldn't run the Preview: {e}"))?;
     match tokio::time::timeout(PREVIEW_LIMIT, result).await {
@@ -212,4 +219,25 @@ pub async fn preview_pipeline(
 #[tauri::command]
 pub fn pipelines_folder(state: State<'_, Processing>) -> String {
     state.files.dir().display().to_string()
+}
+
+/// The files in the Pipeline files folder.
+#[tauri::command]
+pub fn list_pipeline_files(state: State<'_, Processing>) -> Vec<files::FileEntry> {
+    files::list(&state.files_dir)
+}
+
+/// The end of a file in the Pipeline files folder, for looking into it.
+#[tauri::command]
+pub fn tail_pipeline_file(state: State<'_, Processing>, name: String) -> Result<String, String> {
+    files::tail(&state.files_dir, &name, TAIL_LINES)
+}
+
+/// How much of a file the tab shows.
+const TAIL_LINES: usize = 50;
+
+/// Where `to file` writes names that aren't absolute, for showing it to the user.
+#[tauri::command]
+pub fn pipeline_files_folder(state: State<'_, Processing>) -> String {
+    state.files_dir.display().to_string()
 }

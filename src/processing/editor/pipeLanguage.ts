@@ -16,7 +16,21 @@ export const STAGE_KEYWORDS = [
   "inspect",
   "to",
 ];
-const MODIFIERS = ["all", "topic", "not", "app", "broker", "by"];
+const MODIFIERS = [
+  "all",
+  "topic",
+  "not",
+  "app",
+  "broker",
+  "file",
+  "rotate",
+  "daily",
+  "hourly",
+  "follow",
+  "rate",
+  "replay",
+  "by",
+];
 
 interface State {
   inString: boolean;

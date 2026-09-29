@@ -91,7 +91,14 @@
 
 .pipelines__folder {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
   overflow-wrap: anywhere;
+}
+
+.pipelines__folder p {
+  margin: 0;
 }
 
 .pipelines__work {
@@ -441,4 +448,52 @@
 .pipe-doc__form span,
 .pipe-doc__details {
   color: var(--text-muted);
+}
+
+/* The files folder: its list under the Pipelines, and one file in place of the editor. */
+.pipeline-files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.pipeline-files__heading {
+  margin: 0;
+  padding: 0 0.45rem;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pipeline-files__meta,
+.pipeline-files__where,
+.pipeline-files__hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pipeline-files__where,
+.pipeline-files__hint {
+  margin: 0;
+  padding: 0.45rem 0.75rem 0;
+  overflow-wrap: anywhere;
+}
+
+.pipeline-files__tail {
+  flex: 1;
+  min-height: 0;
+  margin: 0.45rem 0.75rem 0.75rem;
+  padding: 0.5rem 0.65rem;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-rack);
+  font-size: 12px;
+  font-variation-settings: var(--mono);
+  white-space: pre;
 }

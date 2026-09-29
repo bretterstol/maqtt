@@ -23,11 +23,39 @@ pub struct Diagnostic {
     pub end: usize,
 }
 
+/// Where a Pipeline's messages come from: its `from` line.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Connections {
+pub enum Source {
+    /// Every Connection.
     All,
+    /// The Connections with these names.
     Named(Vec<String>),
+    /// Records read from files.
+    Files(FileSource),
 }
+
+/// `from file "a.jsonl", "b.csv" [follow] [rate 200/s | replay <expr>]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileSource {
+    /// As written: relative names are in the Pipeline files folder, like `to file`'s.
+    pub names: Vec<String>,
+    /// Keep reading lines added after the end, instead of finishing there.
+    pub follow: bool,
+    pub pace: Pace,
+}
+
+/// How fast a file Source hands out its records.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pace {
+    /// At most this many a second.
+    Rate(u32),
+    /// When a jq expression on each record says, in seconds (as `$time` gives), keeping the
+    /// gaps between records.
+    Replay(String),
+}
+
+/// The pace of a file Source that doesn't name one.
+pub const DEFAULT_RATE: u32 = 1_000;
 
 /// A Stage as written, with its jq expressions already rewritten for jq (see [`to_jq`]).
 /// `filter topic "a", "b"`: passes a topic matching any of the MQTT filters; with `not`, a
@@ -164,6 +192,31 @@ pub enum Stage {
         broker: String,
         topic: String,
     },
+    /// Writing to a file; the path is a jq expression that yields a string.
+    ToFile {
+        path: String,
+        format: FileFormat,
+        rotate: Option<Rotate>,
+    },
+}
+
+/// What `to file` writes, from the file name's extension.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FileFormat {
+    /// `.jsonl` or `.ndjson`: one JSON value per line.
+    JsonLines,
+    /// `.csv`: one row per value, columns from the first object's keys.
+    Csv,
+}
+
+/// When `to file` starts a new file.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Rotate {
+    /// A file per day or hour, with the date in its name.
+    Daily,
+    Hourly,
+    /// A new file once this many bytes are written; the full one gets a timestamp.
+    Size(u64),
 }
 
 /// When a window closes: on the clock every interval, or every N values.
@@ -175,7 +228,7 @@ pub enum WindowSize {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pipeline {
-    pub from: Connections,
+    pub from: Source,
     pub stages: Vec<Stage>,
     /// The named wildcards its `filter topic` Stages declare, in order: extra jq variables.
     pub names: Vec<String>,
@@ -301,13 +354,17 @@ fn keyword<'a>(code: &'a str, segment: Span) -> (Word<'a>, Span) {
     )
 }
 
-fn parse_from(code: &str, arg: Span, problems: &mut Problems) -> Option<Connections> {
+fn parse_from(code: &str, arg: Span, problems: &mut Problems) -> Option<Source> {
     let text = code[arg.start..arg.end].trim();
     if text == "all" {
-        return Some(Connections::All);
+        return Some(Source::All);
+    }
+    let (word, rest) = keyword(code, arg);
+    if word.text == "file" {
+        return parse_from_file(code, word, rest, problems).map(Source::Files);
     }
     match string_list(code, arg) {
-        Ok(names) => Some(Connections::Named(
+        Ok(names) => Some(Source::Named(
             names.into_iter().map(|(name, _)| name).collect(),
         )),
         Err(ListError::NotAString(at)) => {
@@ -323,6 +380,102 @@ fn parse_from(code: &str, arg: Span, problems: &mut Problems) -> Option<Connecti
             None
         }
     }
+}
+
+fn parse_from_file(
+    code: &str,
+    word: Word,
+    arg: Span,
+    problems: &mut Problems,
+) -> Option<FileSource> {
+    const OPTIONS: &str = "After the file names: `follow`, `rate 200/s` or `replay` and a time in seconds, like `replay .at`";
+    let (names, mut options) = match string_list(code, arg) {
+        Ok(names) => (names, None),
+        Err(ListError::Unseparated(at)) => {
+            // What follows the names; the list ends at its last complete string.
+            let before = Span {
+                start: arg.start,
+                end: at.start,
+            };
+            let names = string_list(code, before).ok()?;
+            (names, Some(at))
+        }
+        Err(ListError::NotAString(_)) => {
+            problems.at(
+                word.span.start,
+                arg.end.max(word.span.end),
+                "`from file` takes file names in quotes, like `from file \"recording.jsonl\"`",
+            );
+            return None;
+        }
+    };
+    for (name, at) in &names {
+        if !(name.ends_with(".jsonl") || name.ends_with(".ndjson") || name.ends_with(".csv")) {
+            problems.at(
+                at.start,
+                at.end,
+                "`from file` reads JSON Lines or CSV: names end with `.jsonl` or `.csv`",
+            );
+            return None;
+        }
+    }
+    let mut source = FileSource {
+        names: names.into_iter().map(|(name, _)| name).collect(),
+        follow: false,
+        pace: Pace::Rate(DEFAULT_RATE),
+    };
+    while let Some(rest) = options.filter(|r| !code[r.start..r.end].trim().is_empty()) {
+        let (option, after) = keyword(code, rest);
+        match option.text {
+            "follow" => {
+                source.follow = true;
+                options = Some(after);
+            }
+            "rate" => {
+                let (amount, after) = keyword_until_space(code, after);
+                let rate = amount
+                    .strip_suffix("/s")
+                    .and_then(|n| n.parse().ok())
+                    .filter(|&n: &u32| n > 0);
+                let Some(rate) = rate else {
+                    problems.at(
+                        option.span.start,
+                        after.start.max(option.span.end),
+                        "`rate` takes values a second, like `rate 200/s`",
+                    );
+                    return None;
+                };
+                source.pace = Pace::Rate(rate);
+                options = Some(after);
+            }
+            "replay" => {
+                let time = expression(code, after, problems, "replay")?;
+                source.pace = Pace::Replay(time);
+                options = None;
+            }
+            _ => {
+                problems.at(rest.start, rest.end, OPTIONS);
+                return None;
+            }
+        }
+    }
+    Some(source)
+}
+
+/// The next run of text without spaces, and what follows it.
+fn keyword_until_space(code: &str, span: Span) -> (&str, Span) {
+    let text = &code[span.start..span.end];
+    let start = span.start + (text.len() - text.trim_start().len());
+    let len = code[start..span.end]
+        .find(char::is_whitespace)
+        .unwrap_or(span.end - start);
+    (
+        &code[start..start + len],
+        Span {
+            start: start + len,
+            end: span.end,
+        },
+    )
 }
 
 enum ListError {
@@ -536,11 +689,12 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                     expression(code, rest, problems, "to broker")
                         .map(|topic| Stage::ToBroker { broker, topic })
                 }
+                "file" => parse_to_file(code, sink, sink_arg, problems),
                 "" => {
                     problems.at(
                         arg_start,
                         arg.end.max(arg_start + 1),
-                        "`to` needs a Sink: `to app \"hot/{$levels[2]}\"` or `to broker \"Office\" \"hot/{$levels[2]}\"`",
+                        "`to` needs a Sink: `to app \"hot/{$levels[2]}\"`, `to broker \"Office\" \"hot/{$levels[2]}\"` or `to file \"hot.jsonl\"`",
                     );
                     None
                 }
@@ -549,7 +703,7 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                         sink.span.start,
                         sink.span.end,
                         format!(
-                            "`to {other}` isn't available yet; only `to app` and `to broker` are"
+                            "`to {other}` isn't available yet; there are `to app`, `to broker` and `to file`"
                         ),
                     );
                     None
@@ -917,6 +1071,110 @@ fn string_literal(code: &str, span: Span) -> Option<(String, Span)> {
     None
 }
 
+fn parse_to_file(code: &str, sink: Word, arg: Span, problems: &mut Problems) -> Option<Stage> {
+    const EXAMPLE: &str =
+        "like `to file \"temps.jsonl\"` or `to file \"{$room}.csv\" rotate daily`";
+    let start = arg.end - code[arg.start..arg.end].trim_start().len();
+    let Some(length) = quoted_end(&code[start..arg.end]) else {
+        problems.at(
+            sink.span.start,
+            arg.end.max(sink.span.end),
+            format!("`to file` takes a file name in quotes, {EXAMPLE}"),
+        );
+        return None;
+    };
+    let name_span = Span {
+        start,
+        end: start + length,
+    };
+    let rest = Span {
+        start: name_span.end,
+        end: arg.end,
+    };
+    let name = code[name_span.start..name_span.end].trim_end_matches('"');
+    let format = if name.ends_with(".jsonl") || name.ends_with(".ndjson") {
+        FileFormat::JsonLines
+    } else if name.ends_with(".csv") {
+        FileFormat::Csv
+    } else {
+        problems.at(
+            name_span.start,
+            name_span.end,
+            "`to file` writes JSON Lines or CSV: end the name with `.jsonl` or `.csv`",
+        );
+        return None;
+    };
+    let rest_text = code[rest.start..rest.end].trim();
+    let rotate = if rest_text.is_empty() {
+        None
+    } else {
+        let rest_start = rest.end - code[rest.start..rest.end].trim_start().len();
+        let when = rest_text
+            .strip_prefix("rotate")
+            .filter(|w| w.starts_with(char::is_whitespace))
+            .map(str::trim);
+        let rotate = match when {
+            Some("daily") => Some(Rotate::Daily),
+            Some("hourly") => Some(Rotate::Hourly),
+            Some(size) => parse_size(size).map(Rotate::Size),
+            None => None,
+        };
+        let Some(rotate) = rotate else {
+            problems.at(
+                rest_start,
+                rest.end,
+                "After the file name, `rotate daily`, `rotate hourly` or `rotate` and a size like `10MB`",
+            );
+            return None;
+        };
+        Some(rotate)
+    };
+    let path = expression(code, name_span, problems, "to file")?;
+    Some(Stage::ToFile {
+        path,
+        format,
+        rotate,
+    })
+}
+
+/// Where a quoted string at the start of `text` ends (just past its closing quote), following
+/// `{…}` fills and the strings inside them.
+fn quoted_end(text: &str) -> Option<usize> {
+    if !text.starts_with('"') {
+        return None;
+    }
+    let mut modes = vec![Mode::Code { depth: 0 }];
+    let mut iter = text.char_indices().peekable();
+    while let Some((i, c)) = iter.next() {
+        let top = *modes.last().unwrap();
+        if top == Mode::Str
+            && (c == '\\' || (c == '{' && iter.peek().is_some_and(|(_, n)| *n == '{')))
+        {
+            iter.next();
+            continue;
+        }
+        step(&mut modes, c, &mut std::iter::empty().peekable());
+        if modes.len() == 1 {
+            return Some(i + c.len_utf8());
+        }
+    }
+    None
+}
+
+/// `500KB`, `10MB`, `1GB`: sizes in bytes, 1 KB being 1,000 bytes.
+fn parse_size(text: &str) -> Option<u64> {
+    let split = text.find(|c: char| !c.is_ascii_digit())?;
+    let (number, unit) = text.split_at(split);
+    let n: u64 = number.parse().ok().filter(|&n| n > 0)?;
+    let factor = match unit.to_ascii_uppercase().as_str() {
+        "KB" => 1_000,
+        "MB" => 1_000_000,
+        "GB" => 1_000_000_000,
+        _ => return None,
+    };
+    n.checked_mul(factor)
+}
+
 fn parse_duration(text: &str) -> Option<Duration> {
     let split = text.find(|c: char| !c.is_ascii_digit())?;
     let (number, unit) = text.split_at(split);
@@ -1132,7 +1390,7 @@ from "Dev Broker"
 |> to app "hot/{.room}""#,
         )
         .unwrap();
-        assert_eq!(pipeline.from, Connections::Named(vec!["Dev Broker".into()]));
+        assert_eq!(pipeline.from, Source::Named(vec!["Dev Broker".into()]));
         assert_eq!(
             pipeline.stages,
             vec![
@@ -1148,10 +1406,10 @@ from "Dev Broker"
 
     #[test]
     fn from_takes_all_or_several_names() {
-        assert_eq!(parse("from all").unwrap().from, Connections::All);
+        assert_eq!(parse("from all").unwrap().from, Source::All);
         assert_eq!(
             parse(r#"from "A", "B""#).unwrap().from,
-            Connections::Named(vec!["A".into(), "B".into()])
+            Source::Named(vec!["A".into(), "B".into()])
         );
     }
 
@@ -1233,8 +1491,8 @@ from "Dev Broker"
         assert_eq!(first_problem("from all\n|> sort .a").0, 2);
         assert_eq!(first_problem("from all\n|> sort .a").1, 4);
         assert_eq!(
-            first_problem("from all |> to file \"x\"").2,
-            "`to file` isn't available yet; only `to app` and `to broker` are"
+            first_problem("from all |> to map \"x\"").2,
+            "`to map` isn't available yet; there are `to app`, `to broker` and `to file`"
         );
         assert_eq!(
             first_problem("from all |> filter topic \"a/#/b\"").2,
@@ -1556,5 +1814,134 @@ from "Dev Broker"
         );
         // Plain wildcards stay plain.
         stages(r##"from all |> filter topic "a/+/b/#", "+", "#""##);
+    }
+
+    #[test]
+    fn to_file_takes_a_name_its_format_and_rotation() {
+        assert_eq!(
+            stages(r#"from all |> to file "temps.jsonl""#),
+            vec![Stage::ToFile {
+                path: r#""temps.jsonl""#.into(),
+                format: FileFormat::JsonLines,
+                rotate: None,
+            }]
+        );
+        assert_eq!(
+            stages(r#"from all |> to file "rooms/{$levels[1]}.csv" rotate daily"#),
+            vec![Stage::ToFile {
+                path: r#""rooms/\($levels[1]).csv""#.into(),
+                format: FileFormat::Csv,
+                rotate: Some(Rotate::Daily),
+            }]
+        );
+        // A fill may hold strings of its own.
+        assert_eq!(
+            stages(r#"from all |> to file "{$topic // "none"}.jsonl" rotate 1GB"#),
+            vec![Stage::ToFile {
+                path: r#""\($topic // "none").jsonl""#.into(),
+                format: FileFormat::JsonLines,
+                rotate: Some(Rotate::Size(1_000_000_000)),
+            }]
+        );
+        let rotate = |source: &str| match &stages(source)[0] {
+            Stage::ToFile { rotate, .. } => *rotate,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            rotate(r#"from all |> to file "a.ndjson" rotate hourly"#),
+            Some(Rotate::Hourly)
+        );
+        assert_eq!(
+            rotate(r#"from all |> to file "a.csv" rotate 10MB"#),
+            Some(Rotate::Size(10_000_000))
+        );
+
+        for (source, problem) in [
+            (
+                r#"from all |> to file temps"#,
+                "`to file` takes a file name in quotes, like `to file \"temps.jsonl\"` or `to file \"{$room}.csv\" rotate daily`",
+            ),
+            (
+                r#"from all |> to file "temps.jsonl"#,
+                "`to file` takes a file name in quotes, like `to file \"temps.jsonl\"` or `to file \"{$room}.csv\" rotate daily`",
+            ),
+            (
+                r#"from all |> to file "temps.txt""#,
+                "`to file` writes JSON Lines or CSV: end the name with `.jsonl` or `.csv`",
+            ),
+            (
+                r#"from all |> to file "a.csv" rotate weekly"#,
+                "After the file name, `rotate daily`, `rotate hourly` or `rotate` and a size like `10MB`",
+            ),
+            (
+                r#"from all |> to file "a.csv" rotate 0MB"#,
+                "After the file name, `rotate daily`, `rotate hourly` or `rotate` and a size like `10MB`",
+            ),
+        ] {
+            assert_eq!(first_problem(source).2, problem, "{source}");
+        }
+    }
+
+    #[test]
+    fn from_file_takes_names_and_how_to_read_them() {
+        assert_eq!(
+            parse(r#"from file "rec.jsonl""#).unwrap().from,
+            Source::Files(FileSource {
+                names: vec!["rec.jsonl".into()],
+                follow: false,
+                pace: Pace::Rate(DEFAULT_RATE),
+            })
+        );
+        assert_eq!(
+            parse(r#"from file "a.csv", "b.ndjson" follow rate 50/s"#)
+                .unwrap()
+                .from,
+            Source::Files(FileSource {
+                names: vec!["a.csv".into(), "b.ndjson".into()],
+                follow: true,
+                pace: Pace::Rate(50),
+            })
+        );
+        assert_eq!(
+            parse("from file \"rec.jsonl\" follow replay .at\n|> map .t")
+                .unwrap()
+                .from,
+            Source::Files(FileSource {
+                names: vec!["rec.jsonl".into()],
+                follow: true,
+                pace: Pace::Replay(".at".into()),
+            })
+        );
+        // The record-and-replay example in docs/processing-plan.md.
+        stages(
+            r#"from "Test" |> filter topic "plant/#" |> map { topic: $topic, at: $time, payload: . } |> to file "plant.jsonl""#,
+        );
+        stages(
+            r#"from file "plant.jsonl" replay .at |> map .payload |> to broker "Dev" "{$payload.topic}""#,
+        );
+        for (source, problem) in [
+            (
+                "from file rec.jsonl",
+                "`from file` takes file names in quotes, like `from file \"recording.jsonl\"`",
+            ),
+            (
+                r#"from file "rec.txt""#,
+                "`from file` reads JSON Lines or CSV: names end with `.jsonl` or `.csv`",
+            ),
+            (
+                r#"from file "rec.jsonl" rate fast"#,
+                "`rate` takes values a second, like `rate 200/s`",
+            ),
+            (
+                r#"from file "rec.jsonl" loop"#,
+                "After the file names: `follow`, `rate 200/s` or `replay` and a time in seconds, like `replay .at`",
+            ),
+            (
+                r#"from file "rec.jsonl" replay"#,
+                "`replay` needs an expression",
+            ),
+        ] {
+            assert_eq!(first_problem(source).2, problem, "{source}");
+        }
     }
 }

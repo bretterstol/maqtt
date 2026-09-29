@@ -4,6 +4,7 @@ import {
   brokerNames,
   deletePipeline,
   listPipelines,
+  pipelineFilesFolder,
   pipelinesFolder,
   previewPipeline,
   renamePipeline,
@@ -17,6 +18,7 @@ import {
 import type { Hints } from "./editor/assistExtension";
 import { PipelineEditor } from "./editor/PipelineEditor";
 import { Reference } from "./Reference";
+import { FileList, FileView, usePipelineFiles } from "./PipelineFiles";
 import { OutputPanel, type OutputView } from "./OutputPanel";
 import { stageNotes, type StageNote } from "./stageNotes";
 import "./PipelinesTab.css";
@@ -59,6 +61,7 @@ function problemsOnly(problems: Diagnostic[]): Preview {
     stages: [],
     results: [],
     inspected: [],
+    note: null,
   };
 }
 
@@ -89,6 +92,10 @@ export default function PipelinesTab() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [folder, setFolder] = useState("");
+  const [filesFolder, setFilesFolder] = useState("");
+  const files = usePipelineFiles();
+  // A file being looked at, in place of the selected Pipeline.
+  const [viewing, setViewing] = useState<string | null>(null);
   const [brokers, setBrokers] = useState<string[]>([]);
   const [referenceOpen, setReferenceOpen] = useState(referenceWasOpen);
 
@@ -125,6 +132,7 @@ export default function PipelinesTab() {
 
   useEffect(() => {
     void pipelinesFolder().then(setFolder);
+    void pipelineFilesFolder().then(setFilesFolder, () => {});
     void brokerNames().then(setBrokers, () => {});
     const poll = () => void refresh();
     poll();
@@ -246,6 +254,7 @@ export default function PipelinesTab() {
     try {
       await savePipeline(name, TEMPLATE);
       setSelected(name);
+      setViewing(null);
       await refresh();
       setRenaming(name);
     } catch (error) {
@@ -299,12 +308,13 @@ export default function PipelinesTab() {
             <li key={p.name}>
               <button
                 className={
-                  p.name === selected
+                  p.name === selected && viewing === null
                     ? "pipelines__item pipelines__item--selected"
                     : "pipelines__item"
                 }
                 onClick={() => {
                   setSelected(p.name);
+                  setViewing(null);
                   setConfirmingDelete(false);
                 }}
               >
@@ -349,14 +359,26 @@ export default function PipelinesTab() {
             Nothing runs until you start it.
           </p>
         )}
+        <FileList files={files} viewing={viewing} onView={setViewing} />
         {folder && (
-          <p className="pipelines__folder" title={folder}>
-            Saved as .pipe files in {folder}
-          </p>
+          <div className="pipelines__folder">
+            <p title={folder}>Saved as .pipe files in {folder}</p>
+            {filesFolder && (
+              <p title={filesFolder}>
+                Files from Pipelines go into {filesFolder}
+              </p>
+            )}
+          </div>
         )}
       </aside>
 
-      {current ? (
+      {viewing !== null ? (
+        <FileView
+          name={viewing}
+          file={files.find((f) => f.name === viewing) ?? null}
+          folder={filesFolder}
+        />
+      ) : current ? (
         <section className="pipelines__work">
           <header className="pipelines__header">
             {renaming === current.name ? (
