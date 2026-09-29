@@ -309,4 +309,4 @@ Hardening that came with it:
 
 ## Later
 
-- A setting to hide Pipelines entirely
+- A setting to hide Pipelines entirely: now part of the [settings plan](./settings-plan.md) (S1)

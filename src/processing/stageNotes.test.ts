@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Preview } from "./api";
-import { stageNotes } from "./stageNotes";
+import { noSample, sampleCount, stageNotes } from "./stageNotes";
 
 const base: Preview = {
   problems: [],
@@ -10,6 +10,7 @@ const base: Preview = {
   stages: [],
   results: [],
   inspected: [],
+  sampled: "messages",
   note: null,
   markers: [],
   chart: { lines: [], hidden: 0 },
@@ -76,5 +77,20 @@ describe("stage notes", () => {
         problems: [{ message: "x", line: 1, column: 1, start: 0, end: 1 }],
       }),
     ).toEqual([]);
+  });
+});
+
+describe("sample wording", () => {
+  it("counts what the Source reads in its own words", () => {
+    expect(sampleCount({ ...base, messages: 1 })).toBe("1 recent message");
+    expect(sampleCount({ ...base, sampled: "records", messages: 3 })).toBe(
+      "3 records",
+    );
+    expect(sampleCount({ ...base, sampled: "derived", messages: 90 })).toBe(
+      "90 recent Derived Topics",
+    );
+    expect(noSample({ ...base, sampled: "records", messages: 0 })).toBe(
+      "no records in the files",
+    );
   });
 });

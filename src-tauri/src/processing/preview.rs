@@ -45,6 +45,8 @@ pub struct Preview {
     /// broker` and `to file` values only show here.
     pub results: Vec<PreviewValue>,
     pub inspected: Vec<PreviewValue>,
+    /// What the sample is: recent messages, records from files, or Derived Topics.
+    pub sampled: Sampled,
     /// Why a file Source gave fewer records than it might: a file that couldn't be read.
     pub note: Option<String>,
     /// Where its `to geo` values would put their markers.
@@ -64,6 +66,18 @@ pub struct PreviewValue {
 }
 
 /// `files_dir` is where a file Source's relative names are.
+/// What a Preview ran over, which is how the tab words it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Sampled {
+    /// Recent messages from Brokers.
+    Messages,
+    /// The first records of files.
+    Records,
+    /// Recent Derived Topics of other Pipelines.
+    Derived,
+}
+
 pub fn preview(
     source: &str,
     names: &HashMap<ConnectionId, String>,
@@ -78,6 +92,7 @@ pub fn preview(
         stages: Vec::new(),
         results: Vec::new(),
         inspected: Vec::new(),
+        sampled: Sampled::Messages,
         note: None,
         markers: Markers::default(),
         chart: Lines::default(),
@@ -108,10 +123,12 @@ pub fn preview(
     let sample: Vec<(Arc<ReceivedMessage>, String)> = match &pipeline.from {
         Source::Files(source) => {
             let (sample, note) = file_sample(source, files_dir);
+            preview.sampled = Sampled::Records;
             preview.note = note;
             sample
         }
         Source::Pipelines(names) => {
+            preview.sampled = Sampled::Derived;
             let mut sample: Vec<_> = recent(SCAN)
                 .into_iter()
                 .filter(|m| m.connection_id == PIPELINES)
@@ -460,6 +477,7 @@ mod tests {
         assert_eq!(p.messages, 2);
         let values: Vec<&str> = p.results.iter().map(|r| r.value.as_str()).collect();
         assert_eq!(values, ["21", "19"]);
+        assert_eq!(p.sampled, Sampled::Records);
         assert!(p.note.unwrap().contains("gone.jsonl"));
     }
 
@@ -503,6 +521,7 @@ mod tests {
             p.messages, 2,
             "only clean's Derived Topics, not a Broker's topic that looks alike"
         );
+        assert_eq!(p.sampled, Sampled::Derived);
         let values: Vec<&str> = p.results.iter().map(|r| r.value.as_str()).collect();
         assert_eq!(
             values,

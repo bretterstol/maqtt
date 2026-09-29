@@ -38,13 +38,16 @@ fn every_stage_example_parses() {
                 parses(&format!("from all |> {example}"));
             }
         }
-        if let Some(pipeline) = stage["example"].as_str() {
-            assert!(
-                pipeline.contains(&format!("|> {name}")),
-                "the {name} example Pipeline uses it"
-            );
-            parses(pipeline);
-        }
+        let pipeline = stage["example"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} has a whole example Pipeline"));
+        let uses = if name == "from" {
+            pipeline.lines().any(|l| l.starts_with("from "))
+        } else {
+            pipeline.contains(&format!("|> {name}"))
+        };
+        assert!(uses, "the {name} example Pipeline uses it");
+        parses(pipeline);
     }
 }
 
