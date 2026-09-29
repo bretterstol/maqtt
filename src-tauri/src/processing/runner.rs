@@ -194,6 +194,18 @@ impl Runner {
         }
     }
 
+    /// Notes why a Pipeline that should be running couldn't start, for its panel.
+    pub fn failed(&self, name: &str, error: String) {
+        self.stopped.lock().unwrap().insert(
+            name.to_string(),
+            PipelineStatus {
+                name: name.to_string(),
+                last_error: Some(error),
+                ..PipelineStatus::default()
+            },
+        );
+    }
+
     /// Stops a Pipeline for good (deleted or renamed), and clears its Derived Topics.
     pub fn forget(&self, name: &str) {
         self.stop(name);

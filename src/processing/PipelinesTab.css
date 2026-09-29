@@ -137,6 +137,16 @@
   flex: 1;
 }
 
+.pipelines__autostart {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0 0.25rem;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .pipelines__confirm {
   color: var(--bad);
   font-weight: 600;

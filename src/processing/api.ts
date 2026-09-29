@@ -61,6 +61,8 @@ export interface PipelineView {
   name: string;
   source: string;
   status: PipelineStatus;
+  /** Starts whenever måqtt starts. */
+  startsWithApp: boolean;
 }
 
 export const listPipelines = (): Promise<PipelineView[]> =>
@@ -74,6 +76,12 @@ export const savePipeline = (
 
 export const deletePipeline = (name: string): Promise<void> =>
   invoke("delete_pipeline", { name });
+
+/** Marks a Pipeline to start with måqtt, or unmarks it; doesn't start or stop it now. */
+export const setPipelineStartsWithApp = (
+  name: string,
+  on: boolean,
+): Promise<void> => invoke("set_pipeline_starts_with_app", { name, on });
 
 export const renamePipeline = (from: string, to: string): Promise<void> =>
   invoke("rename_pipeline", { from, to });

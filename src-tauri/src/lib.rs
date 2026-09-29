@@ -439,6 +439,7 @@ pub fn run() {
             move |app| {
                 history::spawn_recorder(&bus, history);
                 autoconnect(&app.state::<AppState>());
+                app.state::<processing::Processing>().start_marked();
                 spawn_sleep_watchdog(app.handle().clone());
                 Ok(())
             }
@@ -493,6 +494,7 @@ pub fn run() {
             processing::preview_pipeline,
             processing::pipelines_folder,
             processing::pipeline_files_folder,
+            processing::set_pipeline_starts_with_app,
             processing::list_pipeline_files,
             processing::tail_pipeline_file,
             subscribe,
