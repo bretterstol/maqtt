@@ -22,7 +22,7 @@ import {
   type FunctionDoc,
   type NameDoc,
   type StageDoc,
-} from "../reference";
+} from "../referenceData";
 
 /** What the editor knows about real data, for suggestions. */
 export interface Hints {
