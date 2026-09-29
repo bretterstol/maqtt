@@ -112,6 +112,40 @@
       "examples": ["changes", "changes by .room"]
     },
     {
+      "name": "delta",
+      "summary": "Sends the change since the previous number with the same key.",
+      "forms": [
+        {
+          "syntax": "delta",
+          "does": "Per incoming topic: this number minus the previous one. The first per topic sends nothing."
+        },
+        {
+          "syntax": "delta by <key>",
+          "does": "Per key instead of per topic; $key is the key afterwards."
+        }
+      ],
+      "details": "For counters and meters: turn running totals into increments. Only numbers; map to one first.",
+      "snippet": "delta",
+      "examples": ["delta", "delta by .meter"]
+    },
+    {
+      "name": "pairwise",
+      "summary": "Sends [previous, current] for values with the same key.",
+      "forms": [
+        {
+          "syntax": "pairwise",
+          "does": "Per incoming topic: the previous value and this one, as a list. The first per topic sends nothing."
+        },
+        {
+          "syntax": "pairwise by <key>",
+          "does": "Per key instead of per topic; $key is the key afterwards."
+        }
+      ],
+      "details": "Compare a value with the one before it, any shape. A rate per second: map { v: ., t: $time } |> pairwise |> map ((.[1].v - .[0].v) / (.[1].t - .[0].t)).",
+      "snippet": "pairwise",
+      "examples": ["pairwise", "pairwise by .room"]
+    },
+    {
       "name": "throttle",
       "summary": "At most one value per interval; the latest wins.",
       "forms": [

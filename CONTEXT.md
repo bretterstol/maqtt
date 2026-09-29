@@ -47,7 +47,7 @@ A piece of code, written in måqtt's pipeline language, that takes messages from
 _Avoid_: Script, rule, flow, job
 
 **Stage**:
-One step of a Pipeline, named by a keyword (`from`, `filter`, `map`, `changes`, `throttle`, `debounce`, `scan`, `window`, `take`, `inspect`, `to`) and joined to the next with `|>`.
+One step of a Pipeline, named by a keyword (`from`, `filter`, `map`, `changes`, `delta`, `pairwise`, `throttle`, `debounce`, `scan`, `window`, `take`, `inspect`, `to`) and joined to the next with `|>`.
 _Avoid_: Operator, step, node
 
 **Source**:

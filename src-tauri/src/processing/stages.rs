@@ -149,6 +149,12 @@ enum Running {
         key: Option<jq::Filter>,
         last: Keyed<Val>,
     },
+    /// `delta` and `pairwise`: the previous value per key, and which of the two to send.
+    Previous {
+        pairwise: bool,
+        key: Option<jq::Filter>,
+        last: Keyed<Val>,
+    },
     Throttle {
         interval: Duration,
         key: Option<jq::Filter>,
@@ -260,6 +266,11 @@ impl Runtime {
                     },
                     Stage::Filter(code) => Running::Filter(compile(code)?),
                     Stage::Map(code) => Running::Map(compile(code)?),
+                    Stage::Delta(key) | Stage::Pairwise(key) => Running::Previous {
+                        pairwise: matches!(stage, Stage::Pairwise(_)),
+                        key: key.as_deref().map(compile).transpose()?,
+                        last: Keyed::default(),
+                    },
                     Stage::Changes(key) => Running::Changes {
                         key: key.as_deref().map(compile).transpose()?,
                         last: Keyed::default(),
@@ -541,6 +552,42 @@ fn apply(
                 last.insert(key, item.value.clone());
                 next.push(item);
             }
+        }
+        Running::Previous {
+            pairwise,
+            key,
+            last,
+        } => {
+            let stage = if *pairwise { "pairwise" } else { "delta" };
+            let Some((key, mut item)) = keyed(key.as_ref(), item, stage, out) else {
+                return;
+            };
+            if !*pairwise && !matches!(item.value, Val::Num(_)) {
+                out.push(error(
+                    &item,
+                    stage,
+                    format!("`delta` takes numbers, not {}", item.value),
+                ));
+                return;
+            }
+            let previous = last.get(&key).cloned();
+            last.insert(key, item.value.clone());
+            let Some(previous) = previous else {
+                return;
+            };
+            item.value = if *pairwise {
+                [previous, item.value].into_iter().collect()
+            } else {
+                // jq's own arithmetic, so whole numbers stay whole.
+                match item.value.clone() - previous {
+                    Ok(change) => change,
+                    Err(err) => {
+                        out.push(error(&item, stage, err.to_string()));
+                        return;
+                    }
+                }
+            };
+            next.push(item);
         }
         Running::Debounce {
             interval,
@@ -1593,5 +1640,55 @@ mod tests {
         assert!(
             matches!(&out[0], Effect::Sample { series, value, .. } if series == "a" && *value == 2.0)
         );
+    }
+
+    #[test]
+    fn delta_and_pairwise_compare_with_the_previous_value_per_key() {
+        let mut rt = runtime(r#"from all |> map .kwh |> delta |> to app "x""#);
+        let out = run(
+            &mut rt,
+            &[
+                ("meter/a", r#"{"kwh": 10}"#),
+                ("meter/b", r#"{"kwh": 100}"#),
+                ("meter/a", r#"{"kwh": 12}"#),
+                ("meter/a", r#"{"kwh": 12.5}"#),
+                ("meter/a", r#"{"kwh": "?"}"#),
+            ],
+        );
+        assert_eq!(
+            values(&out),
+            [
+                "2",
+                "0.5",
+                r#"Error("delta on meter/a: `delta` takes numbers, not \"?\"")"#
+            ]
+        );
+
+        let mut rt = runtime(r#"from all |> pairwise by .room |> map [.[].t] |> to app "{$key}""#);
+        let out = run(
+            &mut rt,
+            &[
+                ("t", r#"{"room": "a", "t": 1}"#),
+                ("t", r#"{"room": "b", "t": 5}"#),
+                ("t", r#"{"room": "a", "t": 2}"#),
+            ],
+        );
+        assert_eq!(out, vec![derived("a", "[1,2]")]);
+    }
+
+    #[test]
+    fn pairwise_gives_a_rate_per_second_as_the_reference_shows() {
+        let mut rt = runtime(
+            r#"from all |> map { v: ., t: $time } |> pairwise |> map ((.[1].v - .[0].v) / (.[1].t - .[0].t)) |> to app "rate""#,
+        );
+        let start = Instant::now();
+        let mut out = Vec::new();
+        rt.push(origin_at("meter", "100", 10_000), start, &mut out);
+        rt.push(
+            origin_at("meter", "130", 12_000),
+            start + Duration::from_secs(2),
+            &mut out,
+        );
+        assert_eq!(values(&out), ["15.0"]);
     }
 }

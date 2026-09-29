@@ -39,11 +39,13 @@ from "Dev Broker"
 | `scan`     | `scan 0 ($acc + .)`, `scan 0 ($acc + 1) by .room`                                              | Carries a result from value to value: `$acc` is the previous result, the update gives the next, and each one is sent on. The start is one value; wrap anything longer in `( )`. |
 | `debounce` | `debounce 2s`, `debounce 2s by .room`                                                          | Sends the latest value once there has been no new one for the interval.                                                                                                         |
 | `take`     | `take 10`, `take 1 by .room`                                                                   | Passes the first N values, then the Pipeline finishes. With `by`: the first N per key, and it keeps running.                                                                    |
+| `delta`    | `delta`, `delta by .meter`                                                                     | The change since the previous number with the same key (the incoming topic, unless `by` names one). The first per key sends nothing.                                            |
+| `pairwise` | `pairwise`, `pairwise by .room`                                                                | `[previous, current]` for values with the same key; the first per key sends nothing.                                                                                            |
 | `window`   | `window 1m`, `window 10`, `window 1m by .room`                                                 | Collects values and sends them as a list when the window closes: every minute on the clock (12:00–12:01), or every N values. Empty windows send nothing.                        |
 
 A wildcard in `filter topic` can be named by writing a name right after it: `filter topic "maqtt/home/+room/#"` matches like `maqtt/home/+/#`, and from then on `$room` is the level the `+` matched, so `window 1m by $room` keeps a window per room. `#rest` gives the levels `#` matched as one string (`"climate/1"`), or null when it matched none. With several filters, a name is taken from the one that matched, and is null if that one doesn't have it. Names can't reuse a built-in variable, and `filter not topic` can't name anything, as nothing matched. The syntax follows the `mqtt-pattern` library; `{room}` would clash with filling in strings.
 
-Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `throttle`, `scan`, `debounce`, `window`, `take … by`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`. After such a Stage, `$key` is the key a value was kept under: the `by` value, or the topic. Each Stage keeps state for at most 10,000 keys; past that, the least recently seen are forgotten.
+Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `delta`, `pairwise`, `throttle`, `scan`, `debounce`, `window`, `take … by`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`. After such a Stage, `$key` is the key a value was kept under: the `by` value, or the topic. Each Stage keeps state for at most 10,000 keys; past that, the least recently seen are forgotten.
 
 A window's list is shaped with an ordinary `map`, helped by aggregate functions and `$key`. Objects may span lines and end with a trailing comma:
 
@@ -275,4 +277,3 @@ Hardening that came with it:
 - A setting to hide Pipelines entirely
 - Joining streams (for example matching temperature and humidity from different topics)
 - `from pipelines`, reading other Pipelines' Derived Topics
-- `delta` and `pairwise` as shortcuts built on `scan`
