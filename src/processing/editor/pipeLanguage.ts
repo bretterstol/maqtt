@@ -12,7 +12,13 @@ export const STAGE_KEYWORDS = [
   "filter",
   "map",
   "changes",
+  "delta",
+  "pairwise",
   "throttle",
+  "debounce",
+  "scan",
+  "window",
+  "take",
   "inspect",
   "to",
 ];

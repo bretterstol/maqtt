@@ -173,6 +173,10 @@ pub enum Stage {
     Map(String),
     /// With an optional key (a jq expression); without one, state is per incoming topic.
     Changes(Option<String>),
+    /// The change in a number since the previous one with the same key; the first sends nothing.
+    Delta(Option<String>),
+    /// `[previous, current]` for values with the same key; the first sends nothing.
+    Pairwise(Option<String>),
     Throttle(Duration, Option<String>),
     Debounce(Duration, Option<String>),
     /// A start value and an update, both jq; the update is run wrapped in [`jq::SCAN_WRAP`].
@@ -241,7 +245,8 @@ pub struct Pipeline {
     pub ends: Vec<usize>,
 }
 
-const STAGES: &str = "filter, map, changes, throttle, debounce, scan, window, take, inspect, to";
+const STAGES: &str =
+    "filter, map, changes, delta, pairwise, throttle, debounce, scan, window, take, inspect, to";
 
 /// Parses and checks a Pipeline, reporting every problem found.
 pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
@@ -594,12 +599,17 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
             expression(code, arg, problems, "filter").map(Stage::Filter)
         }
         "map" => expression(code, arg, problems, "map").map(Stage::Map),
-        "changes" => {
+        "changes" | "delta" | "pairwise" => {
             let rest = Span {
                 start: arg_start,
                 end: arg.end,
             };
-            key_clause(code, rest, problems, "changes by .room").map(Stage::Changes)
+            let example = format!("{} by .room", word.text);
+            key_clause(code, rest, problems, &example).map(match word.text {
+                "changes" => Stage::Changes,
+                "delta" => Stage::Delta,
+                _ => Stage::Pairwise,
+            })
         }
         "throttle" => {
             let (interval, rest) = leading_duration(code, arg, problems, "throttle")?;
@@ -1523,7 +1533,7 @@ from "Dev Broker"
         );
         assert_eq!(
             first_problem("from all\n|> sort .a").2,
-            "Unknown Stage `sort`. Stages are: filter, map, changes, throttle, debounce, scan, window, take, inspect, to"
+            "Unknown Stage `sort`. Stages are: filter, map, changes, delta, pairwise, throttle, debounce, scan, window, take, inspect, to"
         );
         assert_eq!(first_problem("from all\n|> sort .a").0, 2);
         assert_eq!(first_problem("from all\n|> sort .a").1, 4);
@@ -2010,6 +2020,18 @@ from "Dev Broker"
             first_problem(r#"from all |> to chart .t"#)
                 .2
                 .starts_with("`to chart` takes nothing more")
+        );
+    }
+
+    #[test]
+    fn delta_and_pairwise_take_an_optional_key() {
+        assert_eq!(
+            stages("from all |> delta |> pairwise by .room"),
+            vec![Stage::Delta(None), Stage::Pairwise(Some(".room".into()))]
+        );
+        assert_eq!(
+            first_problem("from all |> delta 5").2,
+            "Expected nothing more here, or a key with `by`, for example `delta by .room`"
         );
     }
 }
