@@ -162,13 +162,14 @@
           "does": "Leaves out parts older than that, so a sensor that went quiet drops out."
         }
       ],
-      "details": "Temperature and humidity from different topics, per room: filter topic \"home/+room/+sensor\" |> join by $room as $sensor needs \"temperature\", \"humidity\". Wrap an as or by expression that uses jq's own `as` in ( ).",
+      "details": "Wrap an as or by expression that uses jq's own `as` in ( ).",
       "snippet": "join by ${$room} as ${$sensor}",
       "examples": [
         "join by $levels[1] as $levels[-1]",
         "join by .room as .kind needs \"temperature\", \"humidity\"",
         "join as $topic within 5m"
-      ]
+      ],
+      "example": "# Temperature and humidity per room, from separate topics\nfrom \"Dev Broker\"\n|> filter topic \"home/+room/+sensor\"\n|> join by $room as $sensor needs \"temperature\", \"humidity\" within 5m\n|> to app \"rooms/{$key}\""
     },
     {
       "name": "throttle",

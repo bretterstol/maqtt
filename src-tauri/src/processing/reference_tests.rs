@@ -38,6 +38,13 @@ fn every_stage_example_parses() {
                 parses(&format!("from all |> {example}"));
             }
         }
+        if let Some(pipeline) = stage["example"].as_str() {
+            assert!(
+                pipeline.contains(&format!("|> {name}")),
+                "the {name} example Pipeline uses it"
+            );
+            parses(pipeline);
+        }
     }
 }
 

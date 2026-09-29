@@ -16,6 +16,7 @@ export function Reference({ onClose }: { onClose: () => void }) {
       s.name,
       s.summary,
       s.details,
+      s.example,
       ...s.forms.flatMap((f) => [f.syntax, f.does]),
     ),
   );
@@ -79,6 +80,12 @@ export function Reference({ onClose }: { onClose: () => void }) {
                     .map((e) => (stage.name === "from" ? e : `|> ${e}`))
                     .join("\n")}
                 </pre>
+                {stage.example && (
+                  <>
+                    <p className="reference__details">A whole Pipeline:</p>
+                    <pre>{stage.example}</pre>
+                  </>
+                )}
               </article>
             ))}
           </section>
