@@ -141,13 +141,15 @@ export interface Preview {
   stages: StageTrace[];
   results: PreviewValue[];
   inspected: PreviewValue[];
+  /** What it ran over: recent messages, records from files, or Derived Topics. */
+  sampled: "messages" | "records" | "derived";
   /** A file Source's file that couldn't be read. */
   note: string | null;
   markers: Marker[];
   chart: ChartLines;
 }
 
-/** Runs a draft over recent messages without starting it. */
+/** Runs a draft over what it reads (recent messages, files' records, Derived Topics) without starting it. */
 export const previewPipeline = (source: string): Promise<Preview> =>
   invoke("preview_pipeline", { source });
 

@@ -23,6 +23,26 @@ function reason(error: string): string {
   return match ? match[1] : error;
 }
 
+/** What a Preview ran over, counted in the Source's own words: "3 records". */
+export function sampleCount(preview: Preview): string {
+  const n = preview.messages;
+  const [one, many] = {
+    messages: ["recent message", "recent messages"],
+    records: ["record", "records"],
+    derived: ["recent Derived Topic", "recent Derived Topics"],
+  }[preview.sampled];
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
+/** The note after `from` when Preview found nothing to run over. */
+export function noSample(preview: Preview): string {
+  return {
+    messages: "no recent messages match yet",
+    records: "no records in the files",
+    derived: "no recent Derived Topics from those Pipelines",
+  }[preview.sampled];
+}
+
 /** One note per line of the Pipeline: the sample size after `from`, then each Stage's result. */
 export function stageNotes(text: string, preview: Preview): StageNote[] {
   if (preview.problems.length > 0) return [];
@@ -30,9 +50,7 @@ export function stageNotes(text: string, preview: Preview): StageNote[] {
     const at = byteToIndex(text, end);
     if (i === 0) {
       const text =
-        preview.messages === 0
-          ? "no recent messages match yet"
-          : `${preview.messages.toLocaleString()} recent message${preview.messages === 1 ? "" : "s"}`;
+        preview.messages === 0 ? noSample(preview) : sampleCount(preview);
       return { at, text, title: text, error: false };
     }
     const stage = preview.stages[i - 1];

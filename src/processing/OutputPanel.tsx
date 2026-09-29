@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import type { PipelineStatus, Preview, PreviewValue } from "./api";
+import { sampleCount } from "./stageNotes";
 
 // Leaflet loads only when a map is first shown; the chart only when it is.
 const MarkerMap = lazy(() => import("./MarkerMap"));
@@ -30,7 +31,7 @@ function clock(atMs: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
 }
 
-/** What a Pipeline does: a Preview of the draft on recent messages, or the running Pipeline. */
+/** What a Pipeline does: a Preview of the draft on what it reads, or the running Pipeline. */
 export function OutputPanel({
   status,
   preview,
@@ -130,10 +131,7 @@ function PreviewCounts({ preview }: { preview: Preview | null }) {
   if (!preview) return null;
   return (
     <div className="pipeline-output__counts">
-      <span>
-        {preview.messages.toLocaleString()} recent message
-        {preview.messages === 1 ? "" : "s"} in
-      </span>
+      <span>{sampleCount(preview)} in</span>
       <span>
         {(preview.stages.at(-1)?.passed ?? preview.messages).toLocaleString()}{" "}
         out
@@ -153,8 +151,8 @@ function PreviewOutput({
   if (!preview) {
     return (
       <p className="pipeline-output__hint">
-        Preview runs your draft over recent messages as you type, once it has no
-        problems.
+        Preview runs your draft over recent messages (or the first records of
+        its files) as you type, once it has no problems.
       </p>
     );
   }
@@ -164,9 +162,24 @@ function PreviewOutput({
   if (preview.messages === 0) {
     return (
       <p className="pipeline-output__hint">
-        No recent messages match <code>from</code> and the first{" "}
-        <code>filter topic</code>. Connect, or wait for traffic, and Preview
-        will pick them up.
+        {preview.sampled === "records" ? (
+          <>
+            The files have no records yet. With <code>follow</code>, Preview
+            picks them up as they're written.
+          </>
+        ) : preview.sampled === "derived" ? (
+          <>
+            No recent Derived Topics from those Pipelines match the first{" "}
+            <code>filter topic</code>. Start them, and Preview will pick up what
+            they send.
+          </>
+        ) : (
+          <>
+            No recent messages match <code>from</code> and the first{" "}
+            <code>filter topic</code>. Connect, or wait for traffic, and Preview
+            will pick them up.
+          </>
+        )}
       </p>
     );
   }

@@ -62,6 +62,7 @@ function problemsOnly(problems: Diagnostic[]): Preview {
     stages: [],
     results: [],
     inspected: [],
+    sampled: "messages",
     note: null,
     markers: [],
     chart: { lines: [], hidden: 0 },
