@@ -315,13 +315,45 @@ fn cell(text: &str) -> Value {
     }
 }
 
-/// A `replay` expression's time for a record, in seconds.
+/// A `replay` expression's time for a record, in seconds since 1970.
 fn seconds(time: &jq::Filter, payload: &[u8]) -> Option<f64> {
     let vars: Vec<Val> = (0..jq::VARIABLES.len()).map(|_| Val::Null).collect();
     match jq::run(time, payload_value(payload), &vars).ok()?.first()? {
-        number @ Val::Num(_) => number.to_string().parse().ok(),
+        number @ Val::Num(_) => number.to_string().parse().ok().map(from_number),
+        Val::TStr(text) => time_in_text(&String::from_utf8_lossy(text)),
         _ => None,
     }
+}
+
+/// Past this, a number is taken as milliseconds: as seconds it would be after the year 5000.
+const MILLISECONDS_FROM: f64 = 1e11;
+
+fn from_number(n: f64) -> f64 {
+    if n.abs() >= MILLISECONDS_FROM {
+        n / 1000.0
+    } else {
+        n
+    }
+}
+
+/// A time written as text: a number (seconds, or milliseconds when large), a timestamp with
+/// an offset (`2026-09-29T12:00:00.250Z`, `+02:00`), or a date and time without one, taken as
+/// local time. A space may stand for the `T`.
+fn time_in_text(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if let Ok(n) = text.parse::<f64>() {
+        return Some(from_number(n));
+    }
+    let timestamp = match text.parse::<jiff::Timestamp>() {
+        Ok(timestamp) => timestamp,
+        Err(_) => text
+            .parse::<jiff::civil::DateTime>()
+            .ok()?
+            .to_zoned(jiff::tz::TimeZone::system())
+            .ok()?
+            .timestamp(),
+    };
+    Some(timestamp.as_second() as f64 + f64::from(timestamp.subsec_nanosecond()) / 1e9)
 }
 
 #[cfg(test)]
@@ -466,5 +498,60 @@ mod tests {
         writeln!(file).unwrap();
         now += FOLLOW_EVERY;
         assert_eq!(payloads(&mut reader, now), ["log.jsonl: 3"]);
+    }
+
+    #[test]
+    fn replay_times_can_be_timestamps_or_milliseconds() {
+        assert_eq!(
+            time_in_text("2026-09-29T12:00:00.250Z"),
+            Some(1_790_683_200.25)
+        );
+        assert_eq!(
+            time_in_text("2026-09-29 14:00:00+02:00"),
+            Some(1_790_683_200.0)
+        );
+        assert_eq!(time_in_text("1790683200.5"), Some(1_790_683_200.5));
+        assert_eq!(time_in_text("1790683200500"), Some(1_790_683_200.5));
+        assert_eq!(time_in_text("soon"), None);
+        let local = jiff::civil::date(2026, 9, 29)
+            .at(12, 0, 0, 0)
+            .to_zoned(jiff::tz::TimeZone::system())
+            .unwrap()
+            .timestamp()
+            .as_second() as f64;
+        assert_eq!(time_in_text("2026-09-29 12:00:00"), Some(local));
+
+        let dir = dir("timestamps");
+        std::fs::write(
+            dir.join("t.csv"),
+            "recordTimestamp,v\n2026-09-29T12:00:00Z,1\n2026-09-29T12:00:01.5Z,2\n1790683203000,3\n",
+        )
+        .unwrap();
+        let mut reader = FileReader::new(
+            &source(&["t.csv"], false, Pace::Replay(".recordTimestamp".into())),
+            &dir,
+        )
+        .unwrap();
+        let start = Instant::now();
+        assert!(matches!(reader.next(start), Next::Record(_)));
+        assert_eq!(reader.next(start), Next::Wait(Duration::from_millis(1500)));
+        let at = start + Duration::from_millis(1500);
+        assert!(matches!(reader.next(at), Next::Record(_)));
+        assert_eq!(reader.next(at), Next::Wait(Duration::from_millis(1500)));
+    }
+
+    #[test]
+    fn a_time_written_with_todate_reads_back() {
+        let filter = jq::compile("todate", &[]).unwrap();
+        let vars: Vec<Val> = (0..jq::VARIABLES.len()).map(|_| Val::Null).collect();
+        let written = jq::run(&filter, payload_value(b"1790683200.25"), &vars).unwrap();
+        let Val::TStr(text) = &written[0] else {
+            panic!("{written:?}");
+        };
+        let text = String::from_utf8_lossy(text).into_owned();
+        assert_eq!(
+            time_in_text(&text).map(|t| (t * 1000.0).round()),
+            Some(1_790_683_200_250.0)
+        );
     }
 }

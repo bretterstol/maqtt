@@ -98,7 +98,7 @@ The name is a string like a topic, so `to file "rooms/{$room}.csv"` writes a fil
 
 - Each record is the payload. `$topic` is the file's name as written, so `filter topic` can tell files apart; `$connection` is `file`, `$time` when it was read.
 - CSV rows become objects keyed by the header. Empty cells are null; numbers, `true`, `false` and JSON lists and objects come back typed; anything else is text.
-- **Pace.** At most 1,000 records a second by default, so a Broker's request queue keeps up with `to broker`. `rate 200/s` changes that; `replay .at` uses a time in each record (seconds, as `$time` gives) and keeps the gaps between records, so `throttle` and `window` behave as they did when it was recorded. A record without a time goes at once and is reported.
+- **Pace.** At most 1,000 records a second by default, so a Broker's request queue keeps up with `to broker`. `rate 200/s` changes that; `replay .at` uses a time in each record and keeps the gaps between records. The time may be seconds (as `$time` gives) or milliseconds since 1970 (numbers past 10^11 are taken as milliseconds), as a number or as text, or a timestamp such as `2026-09-29T12:00:00.25Z` or `2026-09-29 14:00:00+02:00`; one without an offset is local time. So `replay .recordTimestamp` works on an export with ISO timestamps, and `recordTimestamp: ($time | todate)` writes them, so `throttle` and `window` behave as they did when it was recorded. A record without a time goes at once and is reported.
 - `follow` keeps reading lines added later, like `tail -f`, and waits for a line's end before taking it.
 - A Pipeline can't `to file` into a file it reads.
 - Preview runs over the first 100 records, timed as they would be read, and says if a file can't be read.
