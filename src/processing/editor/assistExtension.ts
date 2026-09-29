@@ -31,6 +31,8 @@ export interface Hints {
   /** The latest value out of each Stage in the last Preview, as JSON. */
   stageValues: (string | null)[];
   brokers: string[];
+  /** The other Pipelines, for `from pipeline`. */
+  pipelines: string[];
 }
 
 function el(tag: string, className: string, text?: string): HTMLElement {
@@ -160,6 +162,11 @@ function options(
                   detail: "records from JSON Lines or CSV files",
                   type: "keyword",
                 }),
+                snippetCompletion('pipeline "${name}"', {
+                  label: "pipeline",
+                  detail: "another Pipeline's Derived Topics",
+                  type: "keyword",
+                }),
               ]
             : []),
           ...hints.brokers.map((name) => ({
@@ -168,6 +175,15 @@ function options(
             type: "constant",
           })),
         ],
+      };
+    case "pipelines":
+      return {
+        from: assist.from,
+        options: hints.pipelines.map((name) => ({
+          label: `"${name}"`,
+          detail: "Pipeline",
+          type: "constant",
+        })),
       };
     case "broker":
       return {

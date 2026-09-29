@@ -13,6 +13,8 @@ export type Assist =
   | { kind: "sources"; from: number; first: boolean }
   /** After `to broker`: a Broker's name. */
   | { kind: "broker"; from: number }
+  /** After `from pipeline`: a Pipeline's name. */
+  | { kind: "pipelines"; from: number }
   | { kind: "variable"; from: number }
   /** A field of the value entering Stage `stage` (1 = the first after `from`), or of $payload. */
   | {
@@ -121,6 +123,11 @@ export function assistAt(before: string): Assist {
     // Comments often come before `from`.
     const code = trimmed.replace(/#[^\n]*/g, "").trimStart();
     if (/^\w*$/.test(code)) return { kind: "from", from };
+    const pipelines = /^from\s+pipelines?\s+(.*)$/s.exec(code);
+    if (pipelines) {
+      const token = pipelines[1].split(",").pop()!.trimStart();
+      return { kind: "pipelines", from: pos - token.length };
+    }
     const sources = /^from\s+(.*)$/s.exec(code);
     if (sources) {
       const token = sources[1].split(",").pop()!.trimStart();

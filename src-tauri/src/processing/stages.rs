@@ -964,8 +964,8 @@ fn reads(from: &Source, connection: &str) -> bool {
     match from {
         Source::All => true,
         Source::Named(names) => names.iter().any(|n| n == connection),
-        // Files aren't Connections; the runner reads them itself.
-        Source::Files(_) => false,
+        // Files and Pipelines aren't Connections; the runner reads them itself.
+        Source::Files(_) | Source::Pipelines(_) => false,
     }
 }
 

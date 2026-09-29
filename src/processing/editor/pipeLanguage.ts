@@ -25,6 +25,8 @@ export const STAGE_KEYWORDS = [
 ];
 const MODIFIERS = [
   "all",
+  "pipeline",
+  "pipelines",
   "topic",
   "not",
   "app",

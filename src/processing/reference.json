@@ -2,7 +2,7 @@
   "stages": [
     {
       "name": "from",
-      "summary": "Picks the Brokers or files to read. Always the first line.",
+      "summary": "Picks what to read: Brokers, files or other Pipelines. Always the first line.",
       "forms": [
         {
           "syntax": "from all",
@@ -31,9 +31,13 @@
         {
           "syntax": "from file \"<name>\" replay .at",
           "does": "On the times the records carry: seconds or milliseconds since 1970, or a timestamp like 2026-09-29T12:00:00.25Z (without an offset it's local time). The gaps between records are kept."
+        },
+        {
+          "syntax": "from pipeline \"<name>\", …",
+          "does": "The Derived Topics of those Pipelines: $topic is the path within that Pipeline (what its to app wrote), $connection its name. A Pipeline can't read itself, and one that would close a loop with running Pipelines won't start."
         }
       ],
-      "details": "A Pipeline never reads Derived Topics, so it can't feed itself. File names resolve like to file's, so a recording can be read back by name; a Pipeline can't write to a file it reads.",
+      "details": "from all never reads Derived Topics; from pipeline does, by name. File names resolve like to file's, so a recording can be read back by name; a Pipeline can't write to a file it reads.",
       "snippet": "from ${all}",
       "examples": [
         "from all",
@@ -42,7 +46,8 @@
         "from file \"recording.jsonl\" replay .at",
         "from file \"rooms/kitchen.csv\", \"rooms/office.csv\" rate 50/s",
         "from file \"log.jsonl\" follow",
-        "from file \"export.csv\" replay .recordTimestamp"
+        "from file \"export.csv\" replay .recordTimestamp",
+        "from pipeline \"clean\""
       ]
     },
     {

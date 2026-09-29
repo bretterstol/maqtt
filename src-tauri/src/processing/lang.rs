@@ -32,6 +32,8 @@ pub enum Source {
     Named(Vec<String>),
     /// Records read from files.
     Files(FileSource),
+    /// The Derived Topics of the Pipelines with these names.
+    Pipelines(Vec<String>),
 }
 
 /// `from file "a.jsonl", "b.csv" [follow] [rate 200/s | replay <expr>]`.
@@ -385,6 +387,26 @@ fn parse_from(code: &str, arg: Span, problems: &mut Problems) -> Option<Source> 
     let (word, rest) = keyword(code, arg);
     if word.text == "file" {
         return parse_from_file(code, word, rest, problems).map(Source::Files);
+    }
+    if word.text == "pipeline" || word.text == "pipelines" {
+        const TAKES: &str =
+            "`from pipeline` takes Pipeline names in quotes, like `from pipeline \"clean\"`";
+        let names = match string_list(code, rest) {
+            Ok(names) => names,
+            Err(ListError::NotAString(at) | ListError::Unseparated(at)) => {
+                problems.at(at.start, at.end.max(at.start + 1), TAKES);
+                return None;
+            }
+        };
+        for (name, at) in &names {
+            if let Err(err) = super::store::check_name(name) {
+                problems.at(at.start, at.end, err);
+                return None;
+            }
+        }
+        return Some(Source::Pipelines(
+            names.into_iter().map(|(name, _)| name).collect(),
+        ));
     }
     match string_list(code, arg) {
         Ok(names) => Some(Source::Named(

@@ -18,6 +18,17 @@ describe("what fits at the cursor", () => {
     });
   });
 
+  it("offers Pipelines after from pipeline", () => {
+    expect(assistAt('from pipeline "cl')).toEqual({
+      kind: "pipelines",
+      from: 14,
+    });
+    expect(assistAt('from pipeline "a", ')).toEqual({
+      kind: "pipelines",
+      from: 19,
+    });
+  });
+
   it("offers Brokers after to broker, in or before the quotes", () => {
     expect(assistAt('from all |> to broker "Off')).toEqual({
       kind: "broker",
