@@ -13,7 +13,7 @@ use super::lang::Source;
 use super::lang::{self, Diagnostic};
 use super::lines::Lines;
 use super::markers::Markers;
-use super::runner::{FILE_CONNECTION, PIPELINES};
+use super::runner::{FILE_CONNECTION, PIPELINES, derived_from};
 use super::stages::{self, Effect, Origin, Runtime, StageTrace};
 use crate::message::{ConnectionId, ReceivedMessage};
 
@@ -109,6 +109,17 @@ pub fn preview(
         Source::Files(source) => {
             let (sample, note) = file_sample(source, files_dir);
             preview.note = note;
+            sample
+        }
+        Source::Pipelines(names) => {
+            let mut sample: Vec<_> = recent(SCAN)
+                .into_iter()
+                .filter(|m| m.connection_id == PIPELINES)
+                .filter_map(|m| derived_from(&m, names))
+                .collect();
+            sample.sort_by_key(|(m, _)| m.seq);
+            let excess = sample.len().saturating_sub(SAMPLE);
+            sample.drain(..excess);
             sample
         }
         _ => {
@@ -472,5 +483,33 @@ mod tests {
             .map(|m| (m.key.clone(), m.lat, m.trail.len()))
             .collect();
         assert_eq!(markers, [("A".to_string(), 2.0, 1)]);
+    }
+
+    #[test]
+    fn from_pipeline_previews_that_pipelines_derived_topics() {
+        let recent = history(vec![
+            message(1, 0, "clean/rooms/kitchen", r#"{"t": 21}"#, 0),
+            message(2, 0, "other/rooms/kitchen", r#"{"t": 99}"#, 10),
+            message(3, 1, "clean/rooms/office", r#"{"t": 99}"#, 20),
+            message(4, 0, "clean/rooms/office", r#"{"t": 19}"#, 30),
+        ]);
+        let p = preview(
+            r#"from pipeline "clean" |> filter topic "rooms/+room" |> map { t: .t, from: $connection, room: $room } |> to app "x""#,
+            &names(),
+            &recent,
+            Path::new("/nowhere"),
+        );
+        assert_eq!(
+            p.messages, 2,
+            "only clean's Derived Topics, not a Broker's topic that looks alike"
+        );
+        let values: Vec<&str> = p.results.iter().map(|r| r.value.as_str()).collect();
+        assert_eq!(
+            values,
+            [
+                r#"{"t":21,"from":"clean","room":"kitchen"}"#,
+                r#"{"t":19,"from":"clean","room":"office"}"#
+            ]
+        );
     }
 }

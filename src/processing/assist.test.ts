@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { assistAt, fieldsAt, wildcardNames } from "./assist";
+import { SINKS, assistAt, fieldsAt, wildcardNames } from "./assist";
+import reference from "./reference.json";
 
 const kind = (before: string) => assistAt(before).kind;
 
@@ -15,6 +16,17 @@ describe("what fits at the cursor", () => {
       kind: "sources",
       from: 10,
       first: false,
+    });
+  });
+
+  it("offers Pipelines after from pipeline", () => {
+    expect(assistAt('from pipeline "cl')).toEqual({
+      kind: "pipelines",
+      from: 14,
+    });
+    expect(assistAt('from pipeline "a", ')).toEqual({
+      kind: "pipelines",
+      from: 19,
     });
   });
 
@@ -150,5 +162,15 @@ describe("named wildcards", () => {
       ["room", "+room"],
       ["rest", "#rest"],
     ]);
+  });
+});
+
+describe("Sink suggestions", () => {
+  it("offer every Sink the Reference documents", () => {
+    const to = reference.stages.find((s) => s.name === "to")!;
+    const documented = [
+      ...new Set(to.forms.map((f) => f.syntax.split(/\s+/)[1])),
+    ].sort();
+    expect(SINKS.map((s) => s.name).sort()).toEqual(documented);
   });
 });

@@ -76,7 +76,7 @@ In every string, including strings inside jq expressions, `{…}` fills in the v
 
 `to app "hot/kitchen"` publishes a Derived Topic that appears in the Topic Tree as **Pipelines ▸ _pipeline name_ ▸ hot ▸ kitchen**. Derived Topics have history, diffs and an activity meter like any topic. They stay when the Pipeline stops (its branch is marked as stopped), and are cleared when it starts again.
 
-`from all` doesn't read Derived Topics, so a Pipeline can't feed itself. Reading another Pipeline's output (`from pipelines`) can come later if needed.
+`from all` doesn't read Derived Topics, so a Pipeline can't feed itself. `from pipeline` reads them by name; see Chaining Pipelines.
 
 ### Republishing
 
@@ -162,6 +162,23 @@ from "Dev Broker"
 - It sends on every value that arrives, with the latest of the others, so the object follows the fastest sensor. `needs` holds everything back until the listed fields are all there.
 - `within` leaves out fields older than the duration, so a dead sensor drops out instead of repeating its last value for ever.
 - The clauses may come in any order; a `by` or `as` expression that uses jq's own `as` goes in `( )`.
+
+### Chaining Pipelines
+
+`from pipeline "clean"` reads another Pipeline's Derived Topics, so one Pipeline can tidy data and others build on it:
+
+```
+# clean: raw readings into one shape
+from "Dev Broker" |> filter topic "raw/+room" |> map { t: .temp_c } |> to app "rooms/{$room}"
+
+# hot: builds on clean
+from pipeline "clean" |> filter topic "rooms/+room" |> filter .t > 25 |> to app "{$room}"
+```
+
+- `$topic` is the Derived Topic's path within that Pipeline (`rooms/kitchen`, what its `to app` wrote), so `filter topic` reads as it was written; `$connection` is the source Pipeline's name. `from pipeline "a", "b"` reads several.
+- Loops are refused at start: a Pipeline can't read itself, and one whose start would close a cycle with running Pipelines (A reads B while B reads A, or through others) doesn't start and says why. As every start is checked, a loop can never be running.
+- Preview samples the named Pipelines' recent Derived Topics from history.
+- A source that isn't running sends nothing; renaming one means updating the `from pipeline` lines that name it.
 
 ### Starting with måqtt
 
@@ -293,4 +310,3 @@ Hardening that came with it:
 ## Later
 
 - A setting to hide Pipelines entirely
-- `from pipelines`, reading other Pipelines' Derived Topics

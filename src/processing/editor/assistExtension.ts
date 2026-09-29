@@ -7,6 +7,7 @@ import {
 } from "@codemirror/autocomplete";
 import { hoverTooltip, type EditorView } from "@codemirror/view";
 import {
+  SINKS,
   assistAt,
   fieldsAt,
   wildcardNames,
@@ -31,6 +32,8 @@ export interface Hints {
   /** The latest value out of each Stage in the last Preview, as JSON. */
   stageValues: (string | null)[];
   brokers: string[];
+  /** The other Pipelines, for `from pipeline`. */
+  pipelines: string[];
 }
 
 function el(tag: string, className: string, text?: string): HTMLElement {
@@ -160,6 +163,11 @@ function options(
                   detail: "records from JSON Lines or CSV files",
                   type: "keyword",
                 }),
+                snippetCompletion('pipeline "${name}"', {
+                  label: "pipeline",
+                  detail: "another Pipeline's Derived Topics",
+                  type: "keyword",
+                }),
               ]
             : []),
           ...hints.brokers.map((name) => ({
@@ -168,6 +176,15 @@ function options(
             type: "constant",
           })),
         ],
+      };
+    case "pipelines":
+      return {
+        from: assist.from,
+        options: hints.pipelines.map((name) => ({
+          label: `"${name}"`,
+          detail: "Pipeline",
+          type: "constant",
+        })),
       };
     case "broker":
       return {
@@ -249,20 +266,9 @@ function options(
     case "sink":
       return {
         from: assist.from,
-        options: [
-          keyword("app", 'app "${topic}"', "a Derived Topic in the Topic Tree"),
-          keyword(
-            "broker",
-            'broker "${Broker}" "${topic}"',
-            "republish on a connected Broker",
-          ),
-          keyword(
-            "file",
-            'file "${name}.jsonl"',
-            "append to a JSON Lines or CSV file",
-          ),
-          keyword("geo", "geo", "points { lat, lon, label } on a map"),
-        ],
+        options: SINKS.map((sink) =>
+          keyword(sink.name, sink.snippet, sink.detail),
+        ),
         validFor: IDENT,
       };
     case "function":

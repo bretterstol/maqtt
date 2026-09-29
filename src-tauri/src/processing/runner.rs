@@ -77,6 +77,8 @@ pub struct Inspected {
 }
 
 struct Handle {
+    /// The Pipelines whose Derived Topics it reads (`from pipeline`), for the loop check.
+    reads: Vec<String>,
     stop: Arc<Notify>,
     /// Set on stop; the thread sends nothing once it's set.
     halted: Arc<AtomicBool>,
@@ -118,6 +120,11 @@ impl Runner {
     pub fn start(&self, name: &str, pipeline: Pipeline) -> Result<(), String> {
         // Compile once here so a problem is reported now rather than from the thread.
         Runtime::new(&pipeline)?;
+        let reads = match &pipeline.from {
+            Source::Pipelines(names) => names.clone(),
+            _ => Vec::new(),
+        };
+        self.check_loops(name, &reads)?;
         self.stop(name);
         // Its Derived Topics start over with this run.
         self.clear_topics(name);
@@ -133,6 +140,7 @@ impl Runner {
         let (done_tx, done) = mpsc::channel();
         let job = Job {
             name: name.to_string(),
+            reads: reads.clone(),
             halted: halted.clone(),
             _done: done_tx,
             pipeline,
@@ -158,6 +166,7 @@ impl Runner {
         self.running.lock().unwrap().insert(
             name.to_string(),
             Handle {
+                reads,
                 stop,
                 halted,
                 status,
@@ -165,6 +174,39 @@ impl Runner {
             },
         );
         self.stopped.lock().unwrap().remove(name);
+        Ok(())
+    }
+
+    /// Refuses a start that would let Pipelines feed each other: reading itself, or reading a
+    /// running Pipeline that (through others) reads it. Checked on every start, so a loop can
+    /// never be running.
+    fn check_loops(&self, name: &str, reads: &[String]) -> Result<(), String> {
+        if reads.iter().any(|r| r == name) {
+            return Err(format!("{name} can't read its own Derived Topics"));
+        }
+        let running = self.running.lock().unwrap();
+        // Each Pipeline to look into, with the one this Pipeline reads that led to it.
+        let mut todo: Vec<(&str, &str)> = reads.iter().map(|r| (r.as_str(), r.as_str())).collect();
+        let mut seen = std::collections::HashSet::new();
+        while let Some((pipeline, via)) = todo.pop() {
+            if pipeline == name || !seen.insert(pipeline) {
+                continue;
+            }
+            let Some(handle) = running.get(pipeline) else {
+                continue;
+            };
+            if !handle.status.lock().unwrap().running {
+                continue;
+            }
+            if handle.reads.iter().any(|r| r == name) {
+                return Err(if pipeline == via {
+                    format!("{name} and {via} would read each other in a loop")
+                } else {
+                    format!("{name} would read itself through {via}, as {pipeline} reads {name}")
+                });
+            }
+            todo.extend(handle.reads.iter().map(|r| (r.as_str(), via)));
+        }
         Ok(())
     }
 
@@ -306,9 +348,26 @@ impl Sent {
     }
 }
 
+/// A Derived Topic of one of `sources`, as a message of that Pipeline's own: its topic without
+/// the Pipeline's name in front, and the name (which is `$connection`).
+pub(super) fn derived_from(
+    message: &ReceivedMessage,
+    sources: &[String],
+) -> Option<(Arc<ReceivedMessage>, String)> {
+    let (pipeline, topic) = message.topic.split_once('/')?;
+    if !sources.iter().any(|s| s == pipeline) {
+        return None;
+    }
+    let mut own = message.clone();
+    own.topic = topic.to_string();
+    Some((Arc::new(own), pipeline.to_string()))
+}
+
 /// Everything a Pipeline's thread needs.
 struct Job {
     name: String,
+    /// The Pipelines it reads with `from pipeline`.
+    reads: Vec<String>,
     pipeline: Pipeline,
     bus: Bus,
     republish: Republish,
@@ -358,8 +417,13 @@ impl Job {
                 _ = self.stop.notified() => break,
                 event = self.rx.recv() => match event {
                     Ok(BusEvent::Message(message)) => {
-                        // Never read Derived Topics: a Pipeline can't feed itself.
+                        // Derived Topics only from the Pipelines named in `from pipeline`; the
+                        // loop check at start keeps a Pipeline from feeding itself.
                         if message.connection_id == PIPELINES {
+                            if let Some((message, source)) = derived_from(&message, &self.reads) {
+                                self.status.lock().unwrap().received += 1;
+                                pipeline.push(Origin::new(message, &source), Instant::now(), &mut effects);
+                            }
                             continue;
                         }
                         let connection = self.names.get(&message.connection_id).map_or("", String::as_str);
@@ -1008,5 +1072,69 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn a_pipeline_reads_another_pipelines_derived_topics() {
+        let (bus, runner) = setup();
+        let mut rx = bus.subscribe();
+        runner
+            .start(
+                "clean",
+                parse(r#"from all |> map .t |> to app "t/{$topic}""#).unwrap(),
+            )
+            .unwrap();
+        runner
+            .start(
+                "hot",
+                parse(
+                    r#"from pipeline "clean" |> filter . > 20 |> to app "{$connection}/{$topic}""#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bus.publish(message(&bus, 1, "kitchen", r#"{"t": 23}"#));
+        bus.publish(message(&bus, 1, "office", r#"{"t": 18}"#));
+        let hot = loop {
+            match rx.blocking_recv().unwrap() {
+                BusEvent::Message(m) if m.topic.starts_with("hot/") => break m,
+                _ => {}
+            }
+        };
+        assert_eq!(hot.topic, "hot/clean/t/kitchen");
+        assert_eq!(&hot.payload[..], b"23");
+        wait_for("counts", || {
+            let s = runner.status("hot").unwrap();
+            s.received == 2 && s.emitted == 1
+        });
+        runner.stop("hot");
+        runner.stop("clean");
+    }
+
+    #[test]
+    fn pipelines_that_would_feed_each_other_are_refused() {
+        let (_, runner) = setup();
+        let reads =
+            |name: &str| parse(&format!(r#"from pipeline "{name}" |> to app "x""#)).unwrap();
+        assert_eq!(
+            runner.start("a", reads("a")).unwrap_err(),
+            "a can't read its own Derived Topics"
+        );
+        runner.start("a", reads("b")).unwrap();
+        assert_eq!(
+            runner.start("b", reads("a")).unwrap_err(),
+            "b and a would read each other in a loop"
+        );
+        runner.start("c", reads("a")).unwrap();
+        assert_eq!(
+            runner.start("b", reads("c")).unwrap_err(),
+            "b would read itself through c, as a reads b"
+        );
+        // Once a stops, nothing loops any more.
+        runner.stop("a");
+        runner.start("b", reads("c")).unwrap();
+        runner.stop("b");
+        runner.stop("c");
     }
 }

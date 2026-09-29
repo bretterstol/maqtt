@@ -158,8 +158,11 @@ export default function PipelinesTab() {
       payload: preview?.preview.payload ?? null,
       stageValues: preview?.preview.stages.map((s) => s.last) ?? [],
       brokers,
+      pipelines: pipelines
+        .map((p) => p.name)
+        .filter((name) => name !== current?.name),
     }),
-    [preview, brokers],
+    [preview, brokers, pipelines, current?.name],
   );
 
   // Preview the text shortly after typing stops, then keep it fresh: each run schedules the

@@ -13,6 +13,8 @@ export type Assist =
   | { kind: "sources"; from: number; first: boolean }
   /** After `to broker`: a Broker's name. */
   | { kind: "broker"; from: number }
+  /** After `from pipeline`: a Pipeline's name. */
+  | { kind: "pipelines"; from: number }
   | { kind: "variable"; from: number }
   /** A field of the value entering Stage `stage` (1 = the first after `from`), or of $payload. */
   | {
@@ -28,6 +30,35 @@ export type Assist =
   | { kind: "sink"; from: number }
   /** A jq function name inside an expression; `word` may be empty. */
   | { kind: "function"; from: number; word: string };
+
+/** What can follow `to`: every Sink, with a snippet to insert and what it does. */
+export const SINKS: { name: string; snippet: string; detail: string }[] = [
+  {
+    name: "app",
+    snippet: 'app "${topic}"',
+    detail: "a Derived Topic in the Topic Tree",
+  },
+  {
+    name: "broker",
+    snippet: 'broker "${Broker}" "${topic}"',
+    detail: "republish on a connected Broker",
+  },
+  {
+    name: "file",
+    snippet: 'file "${name}.jsonl"',
+    detail: "append to a JSON Lines or CSV file",
+  },
+  {
+    name: "geo",
+    snippet: "geo",
+    detail: "points { lat, lon, label } on a map",
+  },
+  {
+    name: "chart",
+    snippet: "chart",
+    detail: "numbers, or { value, series }, as lines over time",
+  },
+];
 
 type Mode = "code" | "object" | "string" | "fill" | "comment";
 
@@ -121,6 +152,11 @@ export function assistAt(before: string): Assist {
     // Comments often come before `from`.
     const code = trimmed.replace(/#[^\n]*/g, "").trimStart();
     if (/^\w*$/.test(code)) return { kind: "from", from };
+    const pipelines = /^from\s+pipelines?\s+(.*)$/s.exec(code);
+    if (pipelines) {
+      const token = pipelines[1].split(",").pop()!.trimStart();
+      return { kind: "pipelines", from: pos - token.length };
+    }
     const sources = /^from\s+(.*)$/s.exec(code);
     if (sources) {
       const token = sources[1].split(",").pop()!.trimStart();
