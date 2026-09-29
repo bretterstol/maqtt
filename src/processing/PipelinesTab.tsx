@@ -63,6 +63,7 @@ function problemsOnly(problems: Diagnostic[]): Preview {
     inspected: [],
     note: null,
     markers: [],
+    chart: { lines: [], hidden: 0 },
   };
 }
 
@@ -480,6 +481,7 @@ export default function PipelinesTab() {
             view={outputView ?? (current.status.running ? "live" : "preview")}
             onView={setOutputView}
             hasMap={/\|>\s*to\s+geo\b/.test(text)}
+            hasChart={/\|>\s*to\s+chart\b/.test(text)}
           />
         </section>
       ) : (

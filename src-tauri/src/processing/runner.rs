@@ -16,6 +16,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::file_source::{FileReader, Next};
 use super::files::FileSink;
 use super::lang::{FileSource, Pipeline, Source};
+use super::lines::Lines;
 use super::markers::Markers;
 use super::stages::{Effect, Origin, Runtime};
 use crate::bus::{Bus, BusEvent};
@@ -62,6 +63,8 @@ pub struct PipelineStatus {
     pub inspected: VecDeque<Inspected>,
     /// Where its `to geo` values put their markers.
     pub markers: Markers,
+    /// Its `to chart` values, a line per series.
+    pub chart: Lines,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -547,6 +550,14 @@ impl Job {
                 } => {
                     status.emitted += 1;
                     status.markers.place(key, label, lat, lon, at_ms);
+                }
+                Effect::Sample {
+                    series,
+                    value,
+                    at_ms,
+                } => {
+                    status.emitted += 1;
+                    status.chart.add(&series, at_ms, value);
                 }
                 Effect::Snapshot { points, at_ms } => {
                     status.emitted += 1;

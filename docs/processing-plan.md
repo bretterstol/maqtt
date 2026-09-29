@@ -126,6 +126,23 @@ from "Fleet" |> filter topic "trucks/+id/gps" |> map { lat: .lat, lon: .lng, lab
 - **Map** in the output panel shows the markers instead of the list: the draft's under Preview, the running Pipeline's under Live. It zooms to the markers when they first appear.
 - The map is Leaflet (loaded only when first shown) with OpenStreetMap's raster tiles. That is the one server besides the Brokers that måqtt contacts, only while a map is on screen, and the app's content security policy allows images from `tile.openstreetmap.org` for it. OpenStreetMap's credit is shown as plain text, since a link would open inside the app.
 
+### Charts
+
+`to chart` draws a Pipeline's numbers as lines over time. The value is a number, or `{value, series?}` to name the line:
+
+```
+from "Dev Broker"
+|> filter topic "maqtt/home/+room/#"
+|> map { value: .temperature, series: $room }
+|> to chart
+```
+
+- One line per series: the value's `series`, or `$key` after a `by`, or the topic. Each keeps its last 600 values. `window 1m by $room |> map avg(.temp) |> to chart` charts per-room averages.
+- One value axis, never two: measures on different scales belong in separate Pipelines (or `series` indexed to a common base).
+- At most 8 lines, the validated categorical palette's size; further series are counted and reported rather than given generated colours. A line's colour follows the order its series first appeared, so a new series never repaints the others.
+- **Chart** in the output panel shows it, like Map: the draft's lines under Preview, the running Pipeline's under Live. A legend names each line with its latest value (the palette's lighter colours are under 3:1 on the light panel, so the text carries identity), hovering shows every line's value at the nearest time, and the newest value of each line has a dot.
+- Drawn as SVG in the app itself: no chart library, and no network.
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.
@@ -142,7 +159,8 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
                                                                │   Pipelines pseudo-Connection)
                                                                ├─ broker Sink ─► a Connection
                                                                ├─ file Sink ─► files on disk
-                                                               └─ map Sink ─► markers in the status
+                                                               ├─ map Sink ─► markers in the status
+                                                               └─ chart Sink ─► lines in the status
 ```
 
 - **Derived Topics go back onto the Message Bus** as ordinary messages from a reserved "Pipelines" pseudo-Connection. The History Store, Topic Index, Topic Tree, Message Log, detail panel and exports then work on them with no changes. That is what keeps processing removable.

@@ -12,6 +12,7 @@ const base: Preview = {
   inspected: [],
   note: null,
   markers: [],
+  chart: { lines: [], hidden: 0 },
 };
 
 describe("stage notes", () => {

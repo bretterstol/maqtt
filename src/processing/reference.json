@@ -238,6 +238,10 @@
         {
           "syntax": "to geo",
           "does": "A point on the Pipeline's map, from a value shaped { lat, lon, label? }: one marker per topic (or per $key after a by), which moves and leaves a short trail. A list of points is a snapshot: the map becomes exactly those, each kept under its label. Show it with Map in the output panel; the tiles come from OpenStreetMap."
+        },
+        {
+          "syntax": "to chart",
+          "does": "A line on the Pipeline's chart, from a number or { value, series? }: one line per topic (or per $key after a by, or per series), its last 600 values over time. At most 8 lines; more are counted, not drawn. Show it with Chart in the output panel."
         }
       ],
       "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send and to file would write, without doing either.",
@@ -250,7 +254,8 @@
         "to file \"temps.jsonl\"",
         "to file \"rooms/{$levels[2]}.csv\" rotate daily",
         "to file \"~/mqtt/raw.jsonl\" rotate 100MB",
-        "to geo"
+        "to geo",
+        "to chart"
       ]
     }
   ],

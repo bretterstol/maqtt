@@ -498,13 +498,18 @@
   white-space: pre;
 }
 
-/* `to geo`: the toggle, and the map in place of the output list. */
-.pipeline-output__map {
+/* `to geo`: the map in place of the output list. */
+.pipeline-output__displays {
+  display: flex;
+  gap: 0.25rem;
   margin-left: auto;
+}
+
+.pipeline-output__displays button {
   padding: 0.05rem 0.5rem;
 }
 
-.pipeline-output__map.is-active {
+.pipeline-output__displays .is-active {
   border-color: var(--text);
   background: var(--select);
 }
@@ -553,4 +558,186 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
+}
+
+/*
+ * `to chart`: lines over time. The eight series colours are the validated categorical
+ * palette (dataviz skill), checked against this panel's own surfaces: light #eef3f2 and dark
+ * #0f2a33 pass the lightness, chroma, colour-blind and normal-vision checks. In light mode
+ * slots 2 to 5 sit under 3:1 against the surface, so the legend always names each line and
+ * shows its latest value in text colour. Colours follow the order a series first appeared,
+ * never its rank.
+ */
+.line-chart {
+  --s1: light-dark(#2a78d6, #3987e5);
+  --s2: light-dark(#eb6834, #d95926);
+  --s3: light-dark(#1baf7a, #199e70);
+  --s4: light-dark(#eda100, #c98500);
+  --s5: light-dark(#e87ba4, #d55181);
+  --s6: light-dark(#008300, #008300);
+  --s7: light-dark(#4a3aa7, #9085e9);
+  --s8: light-dark(#e34948, #e66767);
+
+  flex: 1;
+  min-height: 12rem;
+  display: flex;
+  flex-direction: column;
+  margin: 0 0.75rem 0.75rem;
+}
+
+.line-chart__s1 {
+  --series: var(--s1);
+}
+.line-chart__s2 {
+  --series: var(--s2);
+}
+.line-chart__s3 {
+  --series: var(--s3);
+}
+.line-chart__s4 {
+  --series: var(--s4);
+}
+.line-chart__s5 {
+  --series: var(--s5);
+}
+.line-chart__s6 {
+  --series: var(--s6);
+}
+.line-chart__s7 {
+  --series: var(--s7);
+}
+.line-chart__s8 {
+  --series: var(--s8);
+}
+
+.line-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.line-chart__legend li,
+.line-chart__title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.line-chart__title {
+  margin: 0 0 0.4rem;
+  font-size: 12px;
+}
+
+/* A short stroke of the series colour: identity sits beside the text, never in it. */
+.line-chart__key {
+  width: 14px;
+  height: 2px;
+  flex-shrink: 0;
+  border-radius: 1px;
+  background: var(--series);
+}
+
+.line-chart__name {
+  color: var(--text-muted);
+}
+
+.line-chart__latest {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.line-chart__note {
+  margin: 0 0 0.4rem;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.line-chart__plot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.line-chart__plot svg {
+  position: absolute;
+  inset: 0;
+}
+
+.line-chart__empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.line-chart__grid {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+
+.line-chart__axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.line-chart__tick {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.line-chart__line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* The newest value: an 8px dot with a 2px ring of the surface, so it reads over crossing lines. */
+.line-chart__dot {
+  fill: var(--series);
+  stroke: var(--bg);
+  stroke-width: 2;
+}
+
+.line-chart__cross {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.line-chart__tip {
+  position: absolute;
+  top: 0.4rem;
+  z-index: 1;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  box-shadow: 0 2px 8px var(--shadow);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.line-chart__tip-time {
+  margin-bottom: 0.2rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.line-chart__tip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.line-chart__tip-row strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
