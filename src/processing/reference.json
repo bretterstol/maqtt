@@ -48,7 +48,8 @@
         "from file \"log.jsonl\" follow",
         "from file \"export.csv\" replay .recordTimestamp",
         "from pipeline \"clean\""
-      ]
+      ],
+      "example": "# Replay a recording into the dev Broker, at its original pace\nfrom file \"home.jsonl\" replay .at\n|> map .payload\n|> to broker \"Dev Broker\" \"{$payload.topic}\""
     },
     {
       "name": "filter",
@@ -80,7 +81,8 @@
         "filter topic \"maqtt/home/+room/#\"",
         "filter not topic \"+/status\"",
         "filter $levels[1] == \"kitchen\" and .battery < 20"
-      ]
+      ],
+      "example": "# Batteries under 70%, anywhere in the house\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/#\"\n|> filter .battery < 70\n|> to app \"low battery/{$levels[2]}\""
     },
     {
       "name": "map",
@@ -98,7 +100,8 @@
         "map { temp: .temperature, room: $levels[2] }",
         "map .readings[]",
         "map \"{.temperature} °C\""
-      ]
+      ],
+      "example": "# Just the temperature, per room, with a readable time\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/+\"\n|> filter .temperature != null\n|> map { room: $room, celsius: .temperature, at: ($time | todate) }\n|> to app \"temperature/{$room}\""
     },
     {
       "name": "changes",
@@ -114,7 +117,8 @@
         }
       ],
       "snippet": "changes",
-      "examples": ["changes", "changes by .room"]
+      "examples": ["changes", "changes by .room"],
+      "example": "# A room's battery level only when it changes\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/climate-1\"\n|> map .battery\n|> changes\n|> to app \"battery/{$room}\""
     },
     {
       "name": "delta",
@@ -131,7 +135,8 @@
       ],
       "details": "For counters and meters: turn running totals into increments. Only numbers; map to one first.",
       "snippet": "delta",
-      "examples": ["delta", "delta by .meter"]
+      "examples": ["delta", "delta by .meter"],
+      "example": "# How much the temperature moved since the last reading, per room\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/climate-1\"\n|> map .temperature\n|> delta\n|> map { value: ., series: $room }\n|> to chart"
     },
     {
       "name": "pairwise",
@@ -148,7 +153,8 @@
       ],
       "details": "Compare a value with the one before it, any shape. A rate per second: map { v: ., t: $time } |> pairwise |> map ((.[1].v - .[0].v) / (.[1].t - .[0].t)).",
       "snippet": "pairwise",
-      "examples": ["pairwise", "pairwise by .room"]
+      "examples": ["pairwise", "pairwise by .room"],
+      "example": "# Degrees per minute, from each pair of readings\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/climate-1\"\n|> map { v: .temperature, t: $time }\n|> pairwise\n|> map { value: ((.[1].v - .[0].v) / (.[1].t - .[0].t) * 60), series: $room }\n|> to chart"
     },
     {
       "name": "join",
@@ -191,7 +197,8 @@
       ],
       "details": "The first value passes at once. Later ones wait, and when the interval is up the latest of them goes on.",
       "snippet": "throttle ${5s}",
-      "examples": ["throttle 5s", "throttle 500ms", "throttle 1m by .room"]
+      "examples": ["throttle 5s", "throttle 500ms", "throttle 1m by .room"],
+      "example": "# At most one update per room every 10 s, whichever sensor sends it\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/+\"\n|> throttle 10s by $room\n|> to app \"rooms/{$room}\""
     },
     {
       "name": "debounce",
@@ -208,7 +215,8 @@
       ],
       "details": "Good for chatty sensors: you get the value they settle on.",
       "snippet": "debounce ${2s}",
-      "examples": ["debounce 2s", "debounce 500ms by .room"]
+      "examples": ["debounce 2s", "debounce 500ms by .room"],
+      "example": "# Motion once it has settled: the last report after 30 s of quiet\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/motion-1\"\n|> debounce 30s\n|> to app \"settled/{$room}\""
     },
     {
       "name": "scan",
@@ -229,7 +237,8 @@
         "scan 0 ($acc + .)",
         "scan 0 ($acc + 1) by .room",
         "scan null { temp: ., change: (. - ($acc.temp // .)) }"
-      ]
+      ],
+      "example": "# A running count of messages per room\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/#\"\n|> scan 0 ($acc + 1) by $room\n|> map { value: ., series: $key }\n|> to chart"
     },
     {
       "name": "window",
@@ -250,7 +259,8 @@
       ],
       "details": "Shape the list with map and the list functions, like `map { room: $key, avg: avg(.temp) }`. Empty windows send nothing.",
       "snippet": "window ${1m}",
-      "examples": ["window 1m", "window 10", "window 1m by .room"]
+      "examples": ["window 1m", "window 10", "window 1m by .room"],
+      "example": "# Average temperature per room, per minute\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/+room/+\"\n|> filter .temperature != null\n|> window 1m by $room\n|> map { value: avg(.temperature), series: $key }\n|> to chart"
     },
     {
       "name": "take",
@@ -266,7 +276,8 @@
         }
       ],
       "snippet": "take ${10}",
-      "examples": ["take 10", "take 1 by .room"]
+      "examples": ["take 10", "take 1 by .room"],
+      "example": "# Save the first 1,000 messages to a file, then stop\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/#\"\n|> take 1000\n|> map { topic: $topic, at: $time, payload: . }\n|> to file \"sample.jsonl\""
     },
     {
       "name": "inspect",
@@ -282,7 +293,8 @@
         }
       ],
       "snippet": "inspect",
-      "examples": ["inspect", "inspect \"after map\""]
+      "examples": ["inspect", "inspect \"after map\""],
+      "example": "# See what a filter lets through: before and after\nfrom \"Dev Broker\"\n|> filter topic \"maqtt/home/#\"\n|> inspect \"in\"\n|> filter .battery < 70\n|> inspect \"low battery\""
     },
     {
       "name": "to",
@@ -321,7 +333,8 @@
         "to file \"~/mqtt/raw.jsonl\" rotate 100MB",
         "to geo",
         "to chart"
-      ]
+      ],
+      "example": "# Mirror a test Broker into dev, and keep a daily file of it\nfrom \"Test\"\n|> filter topic \"plant/#\"\n|> to broker \"Dev Broker\" \"{$topic}\"\n|> map { topic: $topic, at: $time, payload: . }\n|> to file \"plant.jsonl\" rotate daily"
     }
   ],
   "variables": [
