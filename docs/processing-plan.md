@@ -27,25 +27,26 @@ from "Dev Broker"
 
 ### Stages
 
-| Stage      | Example                                                                                        | Does                                                                                                                                                                            |
-| ---------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `from`     | `from "Dev Broker"`, `from "Dev Broker", "Office"`, `from all`                                 | Picks the Connections to read. Always first.                                                                                                                                    |
-| `filter`   | `filter .temperature > 22`, `filter topic "home/#", "office/#"`, `filter not topic "+/status"` | Keeps messages where the jq condition is true, or whose topic matches any of the MQTT filters (with `not`: none of them).                                                       |
-| `map`      | `map { temp: .temperature / 10 }`                                                              | Replaces the current value with the jq result.                                                                                                                                  |
-| `changes`  | `changes`, `changes by .room`                                                                  | Passes a message only if its value differs from the previous one with the same key (the incoming topic, unless `by` names one).                                                 |
-| `throttle` | `throttle 5s`, `throttle 5s by .room`                                                          | At most one message per interval per key (the incoming topic, unless `by` names one); the latest wins.                                                                          |
-| `inspect`  | `inspect`, `inspect "after map"`                                                               | Shows the value in the Pipeline's panel and passes it on unchanged.                                                                                                             |
-| `to`       | `to app "hot/{$levels[2]}"`, `to broker "Office" "hot/{.room}"`                                | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline.                                                                                        |
-| `scan`     | `scan 0 ($acc + .)`, `scan 0 ($acc + 1) by .room`                                              | Carries a result from value to value: `$acc` is the previous result, the update gives the next, and each one is sent on. The start is one value; wrap anything longer in `( )`. |
-| `debounce` | `debounce 2s`, `debounce 2s by .room`                                                          | Sends the latest value once there has been no new one for the interval.                                                                                                         |
-| `take`     | `take 10`, `take 1 by .room`                                                                   | Passes the first N values, then the Pipeline finishes. With `by`: the first N per key, and it keeps running.                                                                    |
-| `delta`    | `delta`, `delta by .meter`                                                                     | The change since the previous number with the same key (the incoming topic, unless `by` names one). The first per key sends nothing.                                            |
-| `pairwise` | `pairwise`, `pairwise by .room`                                                                | `[previous, current]` for values with the same key; the first per key sends nothing.                                                                                            |
-| `window`   | `window 1m`, `window 10`, `window 1m by .room`                                                 | Collects values and sends them as a list when the window closes: every minute on the clock (12:00–12:01), or every N values. Empty windows send nothing.                        |
+| Stage      | Example                                                                                        | Does                                                                                                                                                                                                                                                     |
+| ---------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`     | `from "Dev Broker"`, `from "Dev Broker", "Office"`, `from all`                                 | Picks the Connections to read. Always first.                                                                                                                                                                                                             |
+| `filter`   | `filter .temperature > 22`, `filter topic "home/#", "office/#"`, `filter not topic "+/status"` | Keeps messages where the jq condition is true, or whose topic matches any of the MQTT filters (with `not`: none of them).                                                                                                                                |
+| `map`      | `map { temp: .temperature / 10 }`                                                              | Replaces the current value with the jq result.                                                                                                                                                                                                           |
+| `changes`  | `changes`, `changes by .room`                                                                  | Passes a message only if its value differs from the previous one with the same key (the incoming topic, unless `by` names one).                                                                                                                          |
+| `throttle` | `throttle 5s`, `throttle 5s by .room`                                                          | At most one message per interval per key (the incoming topic, unless `by` names one); the latest wins.                                                                                                                                                   |
+| `inspect`  | `inspect`, `inspect "after map"`                                                               | Shows the value in the Pipeline's panel and passes it on unchanged.                                                                                                                                                                                      |
+| `to`       | `to app "hot/{$levels[2]}"`, `to broker "Office" "hot/{.room}"`                                | Sends the value to a Sink and passes it on, so several Sinks can sit along one Pipeline.                                                                                                                                                                 |
+| `scan`     | `scan 0 ($acc + .)`, `scan 0 ($acc + 1) by .room`                                              | Carries a result from value to value: `$acc` is the previous result, the update gives the next, and each one is sent on. The start is one value; wrap anything longer in `( )`.                                                                          |
+| `debounce` | `debounce 2s`, `debounce 2s by .room`                                                          | Sends the latest value once there has been no new one for the interval.                                                                                                                                                                                  |
+| `take`     | `take 10`, `take 1 by .room`                                                                   | Passes the first N values, then the Pipeline finishes. With `by`: the first N per key, and it keeps running.                                                                                                                                             |
+| `delta`    | `delta`, `delta by .meter`                                                                     | The change since the previous number with the same key (the incoming topic, unless `by` names one). The first per key sends nothing.                                                                                                                     |
+| `pairwise` | `pairwise`, `pairwise by .room`                                                                | `[previous, current]` for values with the same key; the first per key sends nothing.                                                                                                                                                                     |
+| `join`     | `join by $room as $sensor`, `join … needs "t", "h"`, `join … within 5m`                        | Keeps the latest value of each part (named by `as`, else the topic) per `by` key, and sends them as one object whenever a part arrives. `needs` waits for listed parts; `within` drops parts gone quiet. Without `by`, everything joins into one object. |
+| `window`   | `window 1m`, `window 10`, `window 1m by .room`                                                 | Collects values and sends them as a list when the window closes: every minute on the clock (12:00–12:01), or every N values. Empty windows send nothing.                                                                                                 |
 
 A wildcard in `filter topic` can be named by writing a name right after it: `filter topic "maqtt/home/+room/#"` matches like `maqtt/home/+/#`, and from then on `$room` is the level the `+` matched, so `window 1m by $room` keeps a window per room. `#rest` gives the levels `#` matched as one string (`"climate/1"`), or null when it matched none. With several filters, a name is taken from the one that matched, and is null if that one doesn't have it. Names can't reuse a built-in variable, and `filter not topic` can't name anything, as nothing matched. The syntax follows the `mqtt-pattern` library; `{room}` would clash with filling in strings.
 
-Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `delta`, `pairwise`, `throttle`, `scan`, `debounce`, `window`, `take … by`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`. After such a Stage, `$key` is the key a value was kept under: the `by` value, or the topic. Each Stage keeps state for at most 10,000 keys; past that, the least recently seen are forgotten.
+Durations are written `500ms`, `5s`, `1m`, `1h`. State (`changes`, `delta`, `pairwise`, `join`, `throttle`, `scan`, `debounce`, `window`, `take … by`) is kept **per incoming topic**, so sensors don't mix. When several topics feed one result, such as two sensors in one room, `by` gives the key to keep state by instead: `throttle 5s by .room`. After such a Stage, `$key` is the key a value was kept under: the `by` value, or the topic. Each Stage keeps state for at most 10,000 keys; past that, the least recently seen are forgotten.
 
 A window's list is shaped with an ordinary `map`, helped by aggregate functions and `$key`. Objects may span lines and end with a trailing comma:
 
@@ -144,6 +145,23 @@ from "Dev Broker"
 - At most 8 lines, the validated categorical palette's size; further series are counted and reported rather than given generated colours. A line's colour follows the order its series first appeared, so a new series never repaints the others.
 - **Chart** in the output panel shows it, like Map: the draft's lines under Preview, the running Pipeline's under Live. A legend names each line with its latest value (the palette's lighter colours are under 3:1 on the light panel, so the text carries identity), hovering shows every line's value at the nearest time, and the newest value of each line has a dot.
 - Drawn as SVG in the app itself: no chart library, and no network.
+
+### Joining streams
+
+`join` combines values from different topics into one object, from the latest value of each part:
+
+```
+from "Dev Broker"
+|> filter topic "home/+room/+sensor"
+|> join by $room as $sensor needs "temperature", "humidity" within 5m
+|> to app "rooms/{$key}"
+```
+
+- `by` says which values belong together (here one object per room, with `$key` the room); without it, everything joins into one object, as per topic each object would hold one part.
+- `as` names each part; without it, the topic does. The object's fields keep the order the parts first arrived in.
+- It sends on every part that arrives, with the latest of the others, so the object follows the fastest sensor. `needs` holds everything back until the listed parts are all there.
+- `within` leaves out parts older than the duration, so a dead sensor drops out instead of repeating its last value for ever.
+- The clauses may come in any order; a `by` or `as` expression that uses jq's own `as` goes in `( )`.
 
 ### Starting with måqtt
 
@@ -275,5 +293,4 @@ Hardening that came with it:
 ## Later
 
 - A setting to hide Pipelines entirely
-- Joining streams (for example matching temperature and humidity from different topics)
 - `from pipelines`, reading other Pipelines' Derived Topics

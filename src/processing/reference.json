@@ -146,6 +146,31 @@
       "examples": ["pairwise", "pairwise by .room"]
     },
     {
+      "name": "join",
+      "summary": "Combines the latest value of each part into one object.",
+      "forms": [
+        {
+          "syntax": "join by <key> as <name>",
+          "does": "Keeps the latest value of each part (named by as, else the topic) per key, and sends them together as an object each time a part arrives; $key is the key. Without by, everything joins into one object."
+        },
+        {
+          "syntax": "join … needs \"a\", \"b\"",
+          "does": "Sends nothing until those parts are all there."
+        },
+        {
+          "syntax": "join … within 5m",
+          "does": "Leaves out parts older than that, so a sensor that went quiet drops out."
+        }
+      ],
+      "details": "Temperature and humidity from different topics, per room: filter topic \"home/+room/+sensor\" |> join by $room as $sensor needs \"temperature\", \"humidity\". Wrap an as or by expression that uses jq's own `as` in ( ).",
+      "snippet": "join by ${$room} as ${$sensor}",
+      "examples": [
+        "join by $levels[1] as $levels[-1]",
+        "join by .room as .kind needs \"temperature\", \"humidity\"",
+        "join as $topic within 5m"
+      ]
+    },
+    {
       "name": "throttle",
       "summary": "At most one value per interval; the latest wins.",
       "forms": [

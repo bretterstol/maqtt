@@ -149,6 +149,14 @@ enum Running {
         key: Option<jq::Filter>,
         last: Keyed<Val>,
     },
+    Join {
+        key: Option<jq::Filter>,
+        name: Option<jq::Filter>,
+        needs: Vec<String>,
+        within: Option<Duration>,
+        /// Per key: each part's latest value and when it came, in the order parts first came.
+        parts: Keyed<Vec<(String, Val, Instant)>>,
+    },
     /// `delta` and `pairwise`: the previous value per key, and which of the two to send.
     Previous {
         pairwise: bool,
@@ -266,6 +274,13 @@ impl Runtime {
                     },
                     Stage::Filter(code) => Running::Filter(compile(code)?),
                     Stage::Map(code) => Running::Map(compile(code)?),
+                    Stage::Join(join) => Running::Join {
+                        key: join.key.as_deref().map(compile).transpose()?,
+                        name: join.name.as_deref().map(compile).transpose()?,
+                        needs: join.needs.clone(),
+                        within: join.within,
+                        parts: Keyed::default(),
+                    },
                     Stage::Delta(key) | Stage::Pairwise(key) => Running::Previous {
                         pairwise: matches!(stage, Stage::Pairwise(_)),
                         key: key.as_deref().map(compile).transpose()?,
@@ -552,6 +567,60 @@ fn apply(
                 last.insert(key, item.value.clone());
                 next.push(item);
             }
+        }
+        Running::Join {
+            key,
+            name,
+            needs,
+            within,
+            parts,
+        } => {
+            let part = match name {
+                None => item.origin.topic().to_string(),
+                Some(name) => match jq::run(name, item.value.clone(), &vars(&item)) {
+                    Ok(results) => match results.into_iter().next() {
+                        Some(Val::TStr(text)) => String::from_utf8_lossy(&text).into_owned(),
+                        Some(other) => other.to_string(),
+                        None => {
+                            out.push(error(&item, "join", "`as` gave no name".into()));
+                            return;
+                        }
+                    },
+                    Err(err) => {
+                        out.push(error(&item, "join", err));
+                        return;
+                    }
+                },
+            };
+            // Without `by`, everything joins into one object: per topic, each would be one part.
+            let (key, mut item) = match key {
+                Some(_) => match keyed(key.as_ref(), item, "join", out) {
+                    Some(keyed) => keyed,
+                    None => return,
+                },
+                None => (String::new(), item),
+            };
+            let held = parts.entry(key, Vec::new);
+            match held.iter_mut().find(|(n, _, _)| *n == part) {
+                Some(slot) => (slot.1, slot.2) = (item.value.clone(), now),
+                None => held.push((part, item.value.clone(), now)),
+            }
+            // A part that has gone quiet drops out.
+            if let Some(within) = within {
+                held.retain(|(_, _, at)| now.saturating_duration_since(*at) <= *within);
+            }
+            if !needs
+                .iter()
+                .all(|need| held.iter().any(|(n, _, _)| n == need))
+            {
+                return;
+            }
+            let mut object = jaq_json::Map::default();
+            for (name, value, _) in held.iter() {
+                object.insert(Val::from(name.clone()), value.clone());
+            }
+            item.value = Val::obj(object);
+            next.push(item);
         }
         Running::Previous {
             pairwise,
@@ -1690,5 +1759,50 @@ mod tests {
             &mut out,
         );
         assert_eq!(values(&out), ["15.0"]);
+    }
+
+    #[test]
+    fn join_combines_the_latest_part_values_per_key() {
+        let mut rt = runtime(
+            r#"from all |> filter topic "home/+room/+sensor" |> join by $room as $sensor needs "t", "h" |> to app "{$key}""#,
+        );
+        let out = run(
+            &mut rt,
+            &[
+                ("home/kitchen/t", "21"),
+                ("home/office/t", "19"),
+                ("home/kitchen/h", "40"),
+                ("home/kitchen/t", "22"),
+                ("home/office/h", "55"),
+            ],
+        );
+        assert_eq!(
+            out,
+            vec![
+                derived("kitchen", r#"{"t":21,"h":40}"#),
+                derived("kitchen", r#"{"t":22,"h":40}"#),
+                derived("office", r#"{"t":19,"h":55}"#),
+            ]
+        );
+
+        // Without `needs`, every part sends what there is so far; without `as`, parts are named
+        // by topic.
+        let mut rt = runtime(r#"from all |> join |> to app "all""#);
+        let out = run(&mut rt, &[("a", "1"), ("b", "2")]);
+        assert_eq!(values(&out), [r#"{"a":1}"#, r#"{"a":1,"b":2}"#]);
+    }
+
+    #[test]
+    fn join_within_drops_parts_that_went_quiet() {
+        let mut rt = runtime(r#"from all |> join as $topic within 5s |> to app "x""#);
+        let start = Instant::now();
+        let mut out = Vec::new();
+        rt.push(origin("a", "1"), start, &mut out);
+        rt.push(origin("b", "2"), start + Duration::from_secs(3), &mut out);
+        rt.push(origin("b", "3"), start + Duration::from_secs(7), &mut out);
+        assert_eq!(
+            values(&out),
+            [r#"{"a":1}"#, r#"{"a":1,"b":2}"#, r#"{"b":3}"#]
+        );
     }
 }
