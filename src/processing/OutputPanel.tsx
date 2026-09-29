@@ -1,4 +1,8 @@
+import { lazy, Suspense, useState } from "react";
 import type { PipelineStatus, Preview, PreviewValue } from "./api";
+
+// Leaflet loads only when a map is first shown.
+const MarkerMap = lazy(() => import("./MarkerMap"));
 
 export type OutputView = "preview" | "live";
 
@@ -10,6 +14,8 @@ interface Props {
   previewError: string | null;
   view: OutputView;
   onView: (view: OutputView) => void;
+  /** The Pipeline has a `to geo`, so a map can be shown instead of the list. */
+  hasMap: boolean;
 }
 
 function clock(atMs: number): string {
@@ -25,7 +31,10 @@ export function OutputPanel({
   previewError,
   view,
   onView,
+  hasMap,
 }: Props) {
+  const [showMap, setShowMap] = useState(false);
+  const mapShown = hasMap && showMap;
   return (
     <section className="pipeline-output" aria-label="Pipeline output">
       <div className="pipeline-output__bar">
@@ -54,8 +63,31 @@ export function OutputPanel({
         ) : (
           <LiveCounts status={status} />
         )}
+        {hasMap && (
+          <button
+            className={
+              mapShown
+                ? "pipeline-output__map is-active"
+                : "pipeline-output__map"
+            }
+            aria-pressed={mapShown}
+            title="Show to geo's points on a map (tiles from OpenStreetMap)"
+            onClick={() => setShowMap((shown) => !shown)}
+          >
+            Map
+          </button>
+        )}
       </div>
-      {view === "preview" ? (
+      {mapShown ? (
+        <Suspense fallback={null}>
+          <MarkerMap
+            source={view}
+            markers={
+              view === "preview" ? (preview?.markers ?? []) : status.markers
+            }
+          />
+        </Suspense>
+      ) : view === "preview" ? (
         <PreviewOutput preview={preview} error={previewError} />
       ) : (
         <LiveOutput status={status} />

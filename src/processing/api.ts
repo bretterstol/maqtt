@@ -22,6 +22,17 @@ export interface Inspected {
   atMs: number;
 }
 
+/** Where one key's `to geo` values put it, and a short trail of where it was. */
+export interface Marker {
+  key: string;
+  label: string | null;
+  lat: number;
+  lon: number;
+  /** Earlier positions, oldest first. */
+  trail: [number, number][];
+  atMs: number;
+}
+
 export interface PipelineStatus {
   name: string;
   running: boolean;
@@ -35,6 +46,7 @@ export interface PipelineStatus {
   errors: number;
   lastError: string | null;
   inspected: Inspected[];
+  markers: Marker[];
 }
 
 export interface PipelineView {
@@ -115,6 +127,7 @@ export interface Preview {
   inspected: PreviewValue[];
   /** A file Source's file that couldn't be read. */
   note: string | null;
+  markers: Marker[];
 }
 
 /** Runs a draft over recent messages without starting it. */

@@ -11,6 +11,7 @@ use jaq_json::Val;
 use super::jq;
 use super::keyed::Keyed;
 use super::lang::{FileFormat, Pipeline, Rotate, Source, Stage, TopicFilter, WindowSize};
+use super::markers::Point;
 use crate::message::ReceivedMessage;
 use crate::profile::validate_topic_name;
 
@@ -32,6 +33,19 @@ pub enum Effect {
         broker: String,
         topic: String,
         payload: Vec<u8>,
+    },
+    /// A point for `to geo`, kept per key.
+    Point {
+        key: String,
+        label: Option<String>,
+        lat: f64,
+        lon: f64,
+        at_ms: u64,
+    },
+    /// A list for `to geo`: the whole map, replacing what was there.
+    Snapshot {
+        points: Vec<Point>,
+        at_ms: u64,
     },
     /// A value for `to file`: the path as the expression gave it, and the value as JSON.
     Write {
@@ -170,6 +184,7 @@ enum Running {
         format: FileFormat,
         rotate: Option<Rotate>,
     },
+    ToGeo,
 }
 
 struct Throttled {
@@ -273,6 +288,7 @@ impl Runtime {
                     },
                     Stage::Inspect(label) => Running::Inspect(label.clone()),
                     Stage::ToApp(code) => Running::ToApp(compile(code)?),
+                    Stage::ToGeo => Running::ToGeo,
                     Stage::ToFile {
                         path,
                         format,
@@ -632,6 +648,10 @@ fn apply(
             }
             next.push(item);
         }
+        Running::ToGeo => {
+            map_effects(&item, out);
+            next.push(item);
+        }
         Running::ToFile {
             path,
             format,
@@ -681,6 +701,74 @@ fn apply(
             }
             next.push(item);
         }
+    }
+}
+
+/// What a value for `to geo` stands for: one point `{lat, lon, label?}`, kept under `$key` (or
+/// the topic before any `by`); or a list of them, a snapshot of the whole map, each kept under
+/// its label (or its place in the list). A snapshot's bad points are reported and left out.
+fn map_effects(item: &Item, out: &mut Vec<Effect>) {
+    let at_ms = item.origin.message.received_at_ms;
+    let record = json_record(&item.value);
+    let serde_json::Value::Array(values) = record else {
+        let key = match &item.key {
+            Val::Null => item.origin.topic().to_string(),
+            Val::TStr(text) => String::from_utf8_lossy(text).into_owned(),
+            other => other.to_string(),
+        };
+        match coordinates(&record) {
+            Ok((lat, lon, label)) => out.push(Effect::Point {
+                key,
+                label,
+                lat,
+                lon,
+                at_ms,
+            }),
+            Err(err) => out.push(error(item, "to geo", err)),
+        }
+        return;
+    };
+    let mut points = Vec::with_capacity(values.len());
+    for (i, value) in values.iter().enumerate() {
+        match coordinates(value) {
+            Ok((lat, lon, label)) => points.push(Point {
+                key: label.clone().unwrap_or_else(|| (i + 1).to_string()),
+                label,
+                lat,
+                lon,
+            }),
+            Err(err) => out.push(error(item, "to geo", format!("point {}: {err}", i + 1))),
+        }
+    }
+    out.push(Effect::Snapshot { points, at_ms });
+}
+
+/// A point's latitude, longitude and label.
+fn coordinates(record: &serde_json::Value) -> Result<(f64, f64, Option<String>), String> {
+    let coordinate = |name: &str, limit: f64| match record.get(name) {
+        Some(serde_json::Value::Number(n)) => n
+            .as_f64()
+            .filter(|v| v.abs() <= limit)
+            .ok_or_else(|| format!("`{name}` must be between -{limit} and {limit}, not {n}")),
+        Some(other) => Err(format!("`{name}` must be a number, not {other}")),
+        None => Err(format!(
+            "the value needs `lat` and `lon`, like `map {{ lat: .lat, lon: .lng }}`, not {}",
+            short(&record.to_string())
+        )),
+    };
+    let (lat, lon) = (coordinate("lat", 90.0)?, coordinate("lon", 180.0)?);
+    let label = match record.get("label") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(text)) => Some(text.clone()),
+        Some(other) => Some(other.to_string()),
+    };
+    Ok((lat, lon, label))
+}
+
+fn short(text: &str) -> String {
+    match text.char_indices().nth(80) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_string(),
     }
 }
 
@@ -1329,5 +1417,91 @@ mod tests {
         );
         let out = run(&mut rt, &[("home/kitchen/t1", "1"), ("office/desk", "1")]);
         assert_eq!(values(&out), [r#"["kitchen","t1"]"#, r#"["desk",null]"#]);
+    }
+
+    #[test]
+    fn to_map_places_points_by_topic_or_key_and_reports_bad_ones() {
+        let mut rt = runtime(r#"from all |> map { lat: .la, lon: .lo, label: .n } |> to geo"#);
+        let out = run(
+            &mut rt,
+            &[
+                ("trucks/1", r#"{"la": 59.9, "lo": 10.7, "n": "T1"}"#),
+                ("trucks/2", r#"{"la": 91, "lo": 0}"#),
+                ("trucks/3", r#"{"la": "x", "lo": 0}"#),
+            ],
+        );
+        assert_eq!(
+            out[0],
+            Effect::Point {
+                key: "trucks/1".into(),
+                label: Some("T1".into()),
+                lat: 59.9,
+                lon: 10.7,
+                at_ms: 1_000,
+            }
+        );
+        let errors: Vec<String> = out[1..]
+            .iter()
+            .map(|e| match e {
+                Effect::Error(e) => e.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            errors,
+            [
+                "to geo on trucks/2: `lat` must be between -90 and 90, not 91",
+                "to geo on trucks/3: `lat` must be a number, not \"x\"",
+            ]
+        );
+
+        let mut rt = runtime(r#"from all |> changes by .id |> to geo"#);
+        let out = run(
+            &mut rt,
+            &[
+                ("gps", r#"{"id": "A", "lat": 1, "lon": 2}"#),
+                ("gps", r#"{"id": "B"}"#),
+            ],
+        );
+        assert!(matches!(&out[0], Effect::Point { key, .. } if key == "A"));
+        assert!(matches!(&out[1], Effect::Error(e) if e.contains("needs `lat` and `lon`")));
+    }
+
+    #[test]
+    fn a_list_for_to_map_is_a_snapshot_with_bad_points_left_out() {
+        let mut rt = runtime(r#"from all |> window 3 |> to geo"#);
+        let out = run(
+            &mut rt,
+            &[
+                ("gps", r#"{"lat": 1, "lon": 2, "label": "A"}"#),
+                ("gps", r#"{"lat": 3, "lon": 4}"#),
+                ("gps", r#"{"lat": 500, "lon": 0, "label": "C"}"#),
+            ],
+        );
+        assert_eq!(
+            out,
+            vec![
+                Effect::Error(
+                    "to geo on gps: point 3: `lat` must be between -90 and 90, not 500".into()
+                ),
+                Effect::Snapshot {
+                    points: vec![
+                        Point {
+                            key: "A".into(),
+                            label: Some("A".into()),
+                            lat: 1.0,
+                            lon: 2.0,
+                        },
+                        Point {
+                            key: "2".into(),
+                            label: None,
+                            lat: 3.0,
+                            lon: 4.0,
+                        },
+                    ],
+                    at_ms: 1_000,
+                },
+            ]
+        );
     }
 }

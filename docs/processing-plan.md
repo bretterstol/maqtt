@@ -112,6 +112,20 @@ from "Test" |> filter topic "plant/#" |> map { topic: $topic, at: $time, payload
 from file "plant.jsonl" replay .at |> map .payload |> to broker "Dev" "{$payload.topic}"
 ```
 
+### Maps
+
+`to geo` puts a point on the Pipeline's map for each value shaped `{lat, lon, label?}`, so fields are picked with an ordinary `map` first:
+
+```
+from "Fleet" |> filter topic "trucks/+id/gps" |> map { lat: .lat, lon: .lng, label: $id } |> to geo
+```
+
+- One marker per topic, or per `$key` after a `by`: it moves as new points come, with a trail of its last 20 positions. At most 1,000 markers are kept; past that, the one quiet longest goes.
+- `lat` must be a number from -90 to 90 and `lon` from -180 to 180; other values are reported as errors.
+- A list of points is a snapshot of the whole map: markers named in it move on (keeping their trails), new ones are placed, and the rest are removed. Each point is kept under its `label`, or its place in the list without one; a bad point is reported and the rest are still used. So `map { lat: .lat, lon: .lng, label: .id } |> window 3s |> to geo` shows exactly the trucks that reported in the last 3 s. Empty windows send nothing, so if every truck goes quiet the last snapshot stays.
+- **Map** in the output panel shows the markers instead of the list: the draft's under Preview, the running Pipeline's under Live. It zooms to the markers when they first appear.
+- The map is Leaflet (loaded only when first shown) with OpenStreetMap's raster tiles. That is the one server besides the Brokers that måqtt contacts, only while a map is on screen, and the app's content security policy allows images from `tile.openstreetmap.org` for it. OpenStreetMap's credit is shown as plain text, since a link would open inside the app.
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.
@@ -127,7 +141,8 @@ One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG
                                                                │  (Derived Topics under the
                                                                │   Pipelines pseudo-Connection)
                                                                ├─ broker Sink ─► a Connection
-                                                               └─ file Sink ─► files on disk
+                                                               ├─ file Sink ─► files on disk
+                                                               └─ map Sink ─► markers in the status
 ```
 
 - **Derived Topics go back onto the Message Bus** as ordinary messages from a reserved "Pipelines" pseudo-Connection. The History Store, Topic Index, Topic Tree, Message Log, detail panel and exports then work on them with no changes. That is what keeps processing removable.
@@ -213,7 +228,7 @@ Hardening that came with it:
 
 1. **Republish**: `to broker "Office" "topic/{…}"`, with a guard against republishing into something the Pipeline itself reads. Done on the `pipelines-p5` branch; see Republishing above. Checked over WebDriver against the dev Broker: Preview lists what would be sent, a Pipeline reading its own output is refused in Preview, and once started the Broker receives the republished message while its echo isn't taken in again. A broker integration test covers the same round trip.
 2. **File**: JSON Lines or CSV, rotating by size or day. Done on the `pipelines-p5-file` branch; see Files above.
-3. **Map**: messages with latitude and longitude on a map (design together first: which map library, and how to pick the fields)
+3. **Map**: messages with latitude and longitude on a map. Decided together: Leaflet with OpenStreetMap tiles, values shaped with `map` first, and the map in the output panel. Named `to geo` rather than `to map`, as `map` is already the Stage that reshapes values; `to map` says so. Done on the `pipelines-p5-map` branch; see Maps above.
 
 ## Testing
 

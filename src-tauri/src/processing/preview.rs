@@ -11,6 +11,7 @@ use serde::Serialize;
 use super::file_source::{FileReader, Next};
 use super::lang::Source;
 use super::lang::{self, Diagnostic};
+use super::markers::Markers;
 use super::runner::{FILE_CONNECTION, PIPELINES};
 use super::stages::{self, Effect, Origin, Runtime, StageTrace};
 use crate::message::{ConnectionId, ReceivedMessage};
@@ -45,6 +46,8 @@ pub struct Preview {
     pub inspected: Vec<PreviewValue>,
     /// Why a file Source gave fewer records than it might: a file that couldn't be read.
     pub note: Option<String>,
+    /// Where its `to geo` values would put their markers.
+    pub markers: Markers,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -73,6 +76,7 @@ pub fn preview(
         results: Vec::new(),
         inspected: Vec::new(),
         note: None,
+        markers: Markers::default(),
     };
     let pipeline = match lang::parse(source) {
         Ok(pipeline) => pipeline,
@@ -171,6 +175,14 @@ pub fn preview(
                 topic,
                 value,
             }),
+            Effect::Point {
+                key,
+                label,
+                lat,
+                lon,
+                at_ms,
+            } => preview.markers.place(key, label, lat, lon, at_ms),
+            Effect::Snapshot { points, at_ms } => preview.markers.replace(points, at_ms),
             Effect::Write { path, record, .. } => preview.results.push(PreviewValue {
                 sink: Some("to file".into()),
                 label: None,
@@ -429,5 +441,27 @@ mod tests {
         let values: Vec<&str> = p.results.iter().map(|r| r.value.as_str()).collect();
         assert_eq!(values, ["21", "19"]);
         assert!(p.note.unwrap().contains("gone.jsonl"));
+    }
+
+    #[test]
+    fn a_windowed_snapshot_drops_trucks_that_stopped_reporting() {
+        let recent = history(vec![
+            message(1, 1, "gps", r#"{"id": "A", "lat": 1, "lon": 1}"#, 0),
+            message(2, 1, "gps", r#"{"id": "B", "lat": 5, "lon": 5}"#, 500),
+            message(3, 1, "gps", r#"{"id": "A", "lat": 2, "lon": 1}"#, 4_000),
+        ]);
+        let p = preview(
+            r#"from all |> map { lat: .lat, lon: .lon, label: .id } |> window 3s |> to geo"#,
+            &names(),
+            &recent,
+            Path::new("/nowhere"),
+        );
+        let markers: Vec<(String, f64, usize)> = p
+            .markers
+            .list()
+            .iter()
+            .map(|m| (m.key.clone(), m.lat, m.trail.len()))
+            .collect();
+        assert_eq!(markers, [("A".to_string(), 2.0, 1)]);
     }
 }

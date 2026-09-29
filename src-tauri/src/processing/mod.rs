@@ -9,6 +9,7 @@ pub mod files;
 pub mod jq;
 pub mod keyed;
 pub mod lang;
+pub mod markers;
 pub mod preview;
 #[cfg(test)]
 mod reference_tests;

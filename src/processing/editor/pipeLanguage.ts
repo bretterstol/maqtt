@@ -23,6 +23,7 @@ const MODIFIERS = [
   "app",
   "broker",
   "file",
+  "geo",
   "rotate",
   "daily",
   "hourly",

@@ -234,6 +234,10 @@
         {
           "syntax": "to file \"<name>.jsonl\" [rotate daily|hourly|<size>]",
           "does": "Appends to a file: .jsonl gets one JSON value per line, .csv one row per value, with columns from the first object's keys. Names go into the files folder shown under the Pipeline list, unless they start with / or ~/. rotate daily or hourly puts the date in the name; rotate 10MB starts a new file when one is full."
+        },
+        {
+          "syntax": "to geo",
+          "does": "A point on the Pipeline's map, from a value shaped { lat, lon, label? }: one marker per topic (or per $key after a by), which moves and leaves a short trail. A list of points is a snapshot: the map becomes exactly those, each kept under its label. Show it with Map in the output panel; the tiles come from OpenStreetMap."
         }
       ],
       "details": "Strings are sent as text; anything else as JSON. Use {…} in the topic to fill in values. Preview shows what to broker would send and to file would write, without doing either.",
@@ -245,7 +249,8 @@
         "to broker \"Office\" \"alerts/{$levels[1]}\"",
         "to file \"temps.jsonl\"",
         "to file \"rooms/{$levels[2]}.csv\" rotate daily",
-        "to file \"~/mqtt/raw.jsonl\" rotate 100MB"
+        "to file \"~/mqtt/raw.jsonl\" rotate 100MB",
+        "to geo"
       ]
     }
   ],

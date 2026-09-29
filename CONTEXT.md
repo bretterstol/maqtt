@@ -58,6 +58,10 @@ _Avoid_: Input, feed
 Where a Pipeline's results go: the app, a Broker (republishing), a file or a map.
 _Avoid_: Output, target, destination
 
+**Geo Sink**:
+`to geo`: a Pipeline's values as points on a map, shown with Map in its output panel. One marker per key, or a list as a snapshot of the whole map.
+_Avoid_: map Sink, `to map` (`map` is the Stage that reshapes values)
+
 **Derived Topic**:
 A topic created by a Pipeline's app Sink. It appears in the Topic Tree under the Pipelines root, in a branch per Pipeline, and can be explored like any received topic.
 _Avoid_: Virtual topic, computed topic
