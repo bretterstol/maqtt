@@ -51,7 +51,7 @@ One step of a Pipeline, named by a keyword (`from`, `filter`, `map`, `changes`, 
 _Avoid_: Operator, step, node
 
 **Source**:
-Where a Pipeline's messages come from: the live messages of the Connections named in its `from` Stage. Topics are narrowed afterwards with `filter topic`.
+Where a Pipeline's messages come from, named in its `from` Stage: the live messages of Connections, or records read from files (`from file`). Topics are narrowed afterwards with `filter topic`.
 _Avoid_: Input, feed
 
 **Sink**:

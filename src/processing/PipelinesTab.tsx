@@ -60,6 +60,7 @@ function problemsOnly(problems: Diagnostic[]): Preview {
     stages: [],
     results: [],
     inspected: [],
+    note: null,
   };
 }
 

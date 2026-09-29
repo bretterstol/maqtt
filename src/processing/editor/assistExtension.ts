@@ -155,6 +155,11 @@ function options(
                   detail: "every connected Broker",
                   type: "keyword",
                 },
+                snippetCompletion('file "${recording}.jsonl"', {
+                  label: "file",
+                  detail: "records from JSON Lines or CSV files",
+                  type: "keyword",
+                }),
               ]
             : []),
           ...hints.brokers.map((name) => ({

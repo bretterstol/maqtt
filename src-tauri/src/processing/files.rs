@@ -38,19 +38,20 @@ impl FileSink {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
-            home: directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf()),
+            home: home(),
             open: HashMap::new(),
             clock: 0,
         }
     }
 
+    /// The folder relative names are in.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// Where a name from `to file` points.
     pub fn resolve(&self, name: &str) -> PathBuf {
-        match (name.strip_prefix("~/"), &self.home) {
-            (Some(rest), Some(home)) => home.join(rest),
-            _ if Path::new(name).is_absolute() => PathBuf::from(name),
-            _ => self.dir.join(name),
-        }
+        resolve(&self.dir, self.home.as_deref(), name)
     }
 
     /// Appends one value; says which file it went to, or what went wrong. A CSV value with
@@ -209,7 +210,7 @@ impl Open {
                 BufReader::new(File::open(path).ok()?)
                     .read_line(&mut first)
                     .ok()?;
-                Some(parse_csv_header(first.trim_end_matches(['\r', '\n'])))
+                Some(parse_csv_record(first.trim_end_matches(['\r', '\n'])))
             })
             .flatten();
         Ok(Self {
@@ -220,6 +221,20 @@ impl Open {
             last_write: 0,
         })
     }
+}
+
+/// Where a file name in a Pipeline points: into `dir`, unless it's absolute or starts with `~/`.
+pub fn resolve(dir: &Path, home: Option<&Path>, name: &str) -> PathBuf {
+    match (name.strip_prefix("~/"), home) {
+        (Some(rest), Some(home)) => home.join(rest),
+        _ if Path::new(name).is_absolute() => PathBuf::from(name),
+        _ => dir.join(name),
+    }
+}
+
+/// The user's home folder, for `~/` in file names.
+pub fn home() -> Option<PathBuf> {
+    directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf())
 }
 
 /// `temps.jsonl` with `2026-09-29` is `temps.2026-09-29.jsonl`.
@@ -261,8 +276,8 @@ fn csv_row(cells: impl Iterator<Item = Value>) -> String {
     format!("{}\n", cells.join(","))
 }
 
-/// Column names from a CSV header line written by [`csv_row`].
-fn parse_csv_header(line: &str) -> Vec<String> {
+/// The cells of one CSV record (RFC 4180), which may span lines inside quotes.
+pub(super) fn parse_csv_record(line: &str) -> Vec<String> {
     let mut columns = Vec::new();
     let mut cell = String::new();
     let mut quoted = false;

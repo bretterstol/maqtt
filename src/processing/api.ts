@@ -98,6 +98,8 @@ export interface Preview {
   stages: StageTrace[];
   results: PreviewValue[];
   inspected: PreviewValue[];
+  /** A file Source's file that couldn't be read. */
+  note: string | null;
 }
 
 /** Runs a draft over recent messages without starting it. */

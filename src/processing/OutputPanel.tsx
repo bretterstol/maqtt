@@ -96,6 +96,9 @@ function PreviewOutput({
       </p>
     );
   }
+  if (preview.note && preview.messages === 0) {
+    return <p className="pipeline-output__error">{preview.note}</p>;
+  }
   if (preview.messages === 0) {
     return (
       <p className="pipeline-output__hint">
@@ -112,26 +115,35 @@ function PreviewOutput({
       v,
     ]),
   ];
+  const note = preview.note && (
+    <p className="pipeline-output__error">{preview.note}</p>
+  );
   if (rows.length === 0) {
     return (
-      <p className="pipeline-output__hint">
-        Nothing got through. The note after each Stage in the editor shows where
-        the messages stopped.
-      </p>
+      <>
+        {note}
+        <p className="pipeline-output__hint">
+          Nothing got through. The note after each Stage in the editor shows
+          where the messages stopped.
+        </p>
+      </>
     );
   }
   return (
-    <ol className="pipeline-output__inspected">
-      {rows.map(([kind, item], i) => (
-        <li key={i}>
-          <span className="pipeline-output__time">{kind}</span>
-          <span className="pipeline-output__where" title={item.topic}>
-            {item.label ?? item.topic}
-          </span>
-          <code>{item.value}</code>
-        </li>
-      ))}
-    </ol>
+    <>
+      {note}
+      <ol className="pipeline-output__inspected">
+        {rows.map(([kind, item], i) => (
+          <li key={i}>
+            <span className="pipeline-output__time">{kind}</span>
+            <span className="pipeline-output__where" title={item.topic}>
+              {item.label ?? item.topic}
+            </span>
+            <code>{item.value}</code>
+          </li>
+        ))}
+      </ol>
+    </>
   );
 }
 

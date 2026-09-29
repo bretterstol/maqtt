@@ -4,6 +4,7 @@
 //! Bus, the Connection names it reads, a read-only view of recent messages for Preview, a way to
 //! send on a Connection for `to broker`, and the commands below, which `lib.rs` registers.
 
+pub mod file_source;
 pub mod files;
 pub mod jq;
 pub mod keyed;
@@ -195,13 +196,14 @@ pub async fn preview_pipeline(
         .map(|s| (s.connection_id, s.name))
         .collect();
     let recent = state.recent.clone();
+    let files_dir = state.files_dir.clone();
     let (done, result) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("pipeline preview".into())
         .spawn(move || {
             // Counted down however the thread ends, even by a panic.
             let _busy = busy;
-            let _ = done.send(preview::preview(&source, &names, &recent));
+            let _ = done.send(preview::preview(&source, &names, &recent, &files_dir));
         })
         .map_err(|e| format!("Couldn't run the Preview: {e}"))?;
     match tokio::time::timeout(PREVIEW_LIMIT, result).await {

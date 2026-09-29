@@ -10,7 +10,7 @@ use jaq_json::Val;
 
 use super::jq;
 use super::keyed::Keyed;
-use super::lang::{Connections, FileFormat, Pipeline, Rotate, Stage, TopicFilter, WindowSize};
+use super::lang::{FileFormat, Pipeline, Rotate, Source, Stage, TopicFilter, WindowSize};
 use crate::message::ReceivedMessage;
 use crate::profile::validate_topic_name;
 
@@ -202,7 +202,7 @@ impl Window {
 /// A Pipeline ready to run; not `Send` (jq values are reference-counted), so it lives on one
 /// thread.
 pub struct Runtime {
-    from: Connections,
+    from: Source,
     /// How many named wildcards the Pipeline declares.
     names: usize,
     stages: Vec<Running>,
@@ -702,10 +702,12 @@ fn sink_topic(filter: &jq::Filter, item: &Item, what: &str) -> Result<String, St
     }
 }
 
-fn reads(from: &Connections, connection: &str) -> bool {
+fn reads(from: &Source, connection: &str) -> bool {
     match from {
-        Connections::All => true,
-        Connections::Named(names) => names.iter().any(|n| n == connection),
+        Source::All => true,
+        Source::Named(names) => names.iter().any(|n| n == connection),
+        // Files aren't Connections; the runner reads them itself.
+        Source::Files(_) => false,
     }
 }
 

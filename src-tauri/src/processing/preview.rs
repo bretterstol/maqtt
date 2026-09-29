@@ -2,13 +2,16 @@
 //! without sending anything anywhere, and reports what each Stage did.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use super::file_source::{FileReader, Next};
+use super::lang::Source;
 use super::lang::{self, Diagnostic};
-use super::runner::PIPELINES;
+use super::runner::{FILE_CONNECTION, PIPELINES};
 use super::stages::{self, Effect, Origin, Runtime, StageTrace};
 use crate::message::{ConnectionId, ReceivedMessage};
 
@@ -40,6 +43,8 @@ pub struct Preview {
     /// broker` and `to file` values only show here.
     pub results: Vec<PreviewValue>,
     pub inspected: Vec<PreviewValue>,
+    /// Why a file Source gave fewer records than it might: a file that couldn't be read.
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -52,10 +57,12 @@ pub struct PreviewValue {
     pub value: String,
 }
 
+/// `files_dir` is where a file Source's relative names are.
 pub fn preview(
     source: &str,
     names: &HashMap<ConnectionId, String>,
     recent: &RecentMessages,
+    files_dir: &Path,
 ) -> Preview {
     let mut preview = Preview {
         problems: Vec::new(),
@@ -65,6 +72,7 @@ pub fn preview(
         stages: Vec::new(),
         results: Vec::new(),
         inspected: Vec::new(),
+        note: None,
     };
     let pipeline = match lang::parse(source) {
         Ok(pipeline) => pipeline,
@@ -89,29 +97,46 @@ pub fn preview(
     };
     let name = |id: ConnectionId| names.get(&id).map_or("", String::as_str);
 
-    let mut sample: Vec<_> = recent(SCAN)
-        .into_iter()
-        .filter(|m| m.connection_id != PIPELINES && runtime.wants(name(m.connection_id), &m.topic))
-        .collect();
-    sample.sort_by_key(|m| m.seq);
-    let excess = sample.len().saturating_sub(SAMPLE);
-    sample.drain(..excess);
+    let sample: Vec<(Arc<ReceivedMessage>, String)> = match &pipeline.from {
+        Source::Files(source) => {
+            let (sample, note) = file_sample(source, files_dir);
+            preview.note = note;
+            sample
+        }
+        _ => {
+            let mut sample: Vec<_> = recent(SCAN)
+                .into_iter()
+                .filter(|m| {
+                    m.connection_id != PIPELINES && runtime.wants(name(m.connection_id), &m.topic)
+                })
+                .collect();
+            sample.sort_by_key(|m| m.seq);
+            let excess = sample.len().saturating_sub(SAMPLE);
+            sample.drain(..excess);
+            sample
+                .into_iter()
+                .map(|m| {
+                    let connection = name(m.connection_id).to_string();
+                    (m, connection)
+                })
+                .collect()
+        }
+    };
     preview.messages = sample.len();
     preview.payload = sample
         .last()
-        .map(|m| stages::payload_value(&m.payload).to_string());
+        .map(|(m, _)| stages::payload_value(&m.payload).to_string());
 
     // Replay on the messages' own clock, so `throttle` behaves as it did live.
     let start = Instant::now();
-    let first_ms = sample.first().map_or(0, |m| m.received_at_ms);
+    let first_ms = sample.first().map_or(0, |(m, _)| m.received_at_ms);
     let at = |ms: u64| start + Duration::from_millis(ms.saturating_sub(first_ms));
     let mut effects = Vec::new();
     let mut last = start;
-    for message in sample {
+    for (message, connection) in sample {
         let now = at(message.received_at_ms).max(last);
         last = now;
         runtime.tick(now, &mut effects);
-        let connection = name(message.connection_id).to_string();
         runtime.push(Origin::new(message, &connection), now, &mut effects);
     }
     // What later Stages still hold (throttled values, open windows) would come out later: show
@@ -159,6 +184,52 @@ pub fn preview(
     keep_last(&mut preview.inspected, SHOWN);
     preview.stages = runtime.trace().to_vec();
     preview
+}
+
+/// The first records of a file Source, timed as it would hand them out, and the first problem
+/// reading them.
+fn file_sample(
+    source: &lang::FileSource,
+    files_dir: &Path,
+) -> (Vec<(Arc<ReceivedMessage>, String)>, Option<String>) {
+    let reader = match FileReader::new(source, files_dir) {
+        Ok(reader) => reader,
+        Err(problem) => return (Vec::new(), Some(problem)),
+    };
+    let mut reader = reader.unpaced();
+    let (mut sample, mut note) = (Vec::new(), None);
+    let mut first_time = None;
+    let now = Instant::now();
+    while sample.len() < SAMPLE {
+        match reader.next(now) {
+            Next::Record(record) => {
+                let offset_ms = match (reader.replay_time(&record), reader.rate_every()) {
+                    (Some(t), _) => {
+                        let t0 = *first_time.get_or_insert(t);
+                        ((t - t0).max(0.0) * 1000.0) as u64
+                    }
+                    (None, Some(every)) => (every * sample.len() as u32).as_millis() as u64,
+                    (None, None) => 0,
+                };
+                let message = Arc::new(ReceivedMessage {
+                    seq: sample.len() as u64,
+                    connection_id: PIPELINES,
+                    topic: record.name,
+                    payload: record.payload.into(),
+                    qos: 0,
+                    retain: false,
+                    received_at_ms: offset_ms,
+                    properties: None,
+                });
+                sample.push((message, FILE_CONNECTION.to_string()));
+            }
+            Next::Problem(problem) => {
+                note.get_or_insert(problem);
+            }
+            Next::Wait(_) | Next::Done => break,
+        }
+    }
+    (sample, note)
 }
 
 fn keep_last<T>(values: &mut Vec<T>, n: usize) {
@@ -218,6 +289,7 @@ mod tests {
 |> to app "hot/{$levels[1]}""#,
             &names(),
             &recent,
+            Path::new("/nowhere"),
         );
         assert!(p.problems.is_empty());
         assert_eq!(
@@ -249,6 +321,7 @@ mod tests {
             r#"from all |> throttle 3s |> to app "x""#,
             &names(),
             &recent,
+            Path::new("/nowhere"),
         );
         // 0 passes; then every 3 s the latest held back comes out, and 9 at the end.
         let values: Vec<&str> = p.results.iter().map(|r| r.value.as_str()).collect();
@@ -265,6 +338,7 @@ mod tests {
             r#"from "Dev" |> filter topic "home/#" |> map .t |> to broker "Office" "copy/{$levels[1]}""#,
             &names(),
             &recent,
+            Path::new("/nowhere"),
         );
         assert_eq!(
             p.results,
@@ -281,6 +355,7 @@ mod tests {
             r#"from all |> map .t |> to broker "Office" "copy/{$levels[1]}""#,
             &names(),
             &recent,
+            Path::new("/nowhere"),
         );
         assert!(p.results.is_empty());
         let sink = p.stages.last().unwrap();
@@ -306,6 +381,7 @@ mod tests {
             r#"from "Dev" |> filter topic "home/#", "office/#" |> to app "x""#,
             &names(),
             &recent,
+            Path::new("/nowhere"),
         );
         assert_eq!(p.messages, 2, "home and office, not garage");
 
@@ -318,6 +394,7 @@ mod tests {
 |> to broker "Dev" "other/{$topic}""#,
             &names(),
             &recent,
+            Path::new("/nowhere"),
         );
         let errors: Vec<usize> = p.stages.iter().map(|s| s.errors).collect();
         assert_eq!(errors, vec![0, 0, 0, 3]);
@@ -330,8 +407,27 @@ mod tests {
             "from all |> sort",
             &names(),
             &history(vec![message(1, 1, "t", "1", 0)]),
+            Path::new("/nowhere"),
         );
         assert_eq!(p.problems.len(), 1);
         assert_eq!(p.messages, 0);
+    }
+
+    #[test]
+    fn a_file_source_previews_its_first_records() {
+        let dir = std::env::temp_dir().join(format!("maqtt-preview-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("t.csv"), "room,t\nkitchen,21\noffice,19\n").unwrap();
+        let p = preview(
+            r#"from file "t.csv", "gone.jsonl" |> map .t |> to app "{$topic}""#,
+            &names(),
+            &history(Vec::new()),
+            &dir,
+        );
+        assert_eq!(p.messages, 2);
+        let values: Vec<&str> = p.results.iter().map(|r| r.value.as_str()).collect();
+        assert_eq!(values, ["21", "19"]);
+        assert!(p.note.unwrap().contains("gone.jsonl"));
     }
 }

@@ -26,6 +26,9 @@ const MODIFIERS = [
   "rotate",
   "daily",
   "hourly",
+  "follow",
+  "rate",
+  "replay",
   "by",
 ];
 

@@ -92,6 +92,26 @@ That check goes by Connection name, but several Broker Profiles can reach one Br
 
 The name is a string like a topic, so `to file "rooms/{$room}.csv"` writes a file per room; folders are created as needed. Names go into a `files` folder beside the `pipelines` folder (shown under the Pipeline list), unless they start with `/` or `~/`. `rotate daily` or `rotate hourly` puts the local date in the name (`temps.2026-09-29.jsonl`); `rotate 10MB` (or `KB`, `GB`) renames a full file with a timestamp (`temps.2026-09-29T14-03-12.jsonl`) and starts a new one. A Pipeline keeps at most 32 files open, writes on its own thread, and flushes after each batch. Preview shows what would be written, and writes nothing.
 
+### Reading files
+
+`from file "recording.jsonl"` reads records instead of live messages: one message per JSON line or CSV row, read once, after which the Pipeline finishes. Several files are read one after the other (`from file "a.csv", "b.csv"`). Names resolve like `to file`'s, so a recording made with `to file` is read back by name.
+
+- Each record is the payload. `$topic` is the file's name as written, so `filter topic` can tell files apart; `$connection` is `file`, `$time` when it was read.
+- CSV rows become objects keyed by the header. Empty cells are null; numbers, `true`, `false` and JSON lists and objects come back typed; anything else is text.
+- **Pace.** At most 1,000 records a second by default, so a Broker's request queue keeps up with `to broker`. `rate 200/s` changes that; `replay .at` uses a time in each record (seconds, as `$time` gives) and keeps the gaps between records, so `throttle` and `window` behave as they did when it was recorded. A record without a time goes at once and is reported.
+- `follow` keeps reading lines added later, like `tail -f`, and waits for a line's end before taking it.
+- A Pipeline can't `to file` into a file it reads.
+- Preview runs over the first 100 records, timed as they would be read, and says if a file can't be read.
+
+To record and replay traffic:
+
+```
+# record
+from "Test" |> filter topic "plant/#" |> map { topic: $topic, at: $time, payload: . } |> to file "plant.jsonl"
+# replay into dev, at the original pace
+from file "plant.jsonl" replay .at |> map .payload |> to broker "Dev" "{$payload.topic}"
+```
+
 ### Storage
 
 One Pipeline per `.pipe` file in `~/.config/maqtt/pipelines/` (or `$MAQTT_CONFIG_DIR/pipelines/`), named after the file. They're plain text, so they work with git and your own editor.

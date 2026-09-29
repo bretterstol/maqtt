@@ -2,7 +2,7 @@
   "stages": [
     {
       "name": "from",
-      "summary": "Picks the Brokers to read. Always the first line.",
+      "summary": "Picks the Brokers or files to read. Always the first line.",
       "forms": [
         {
           "syntax": "from all",
@@ -15,14 +15,33 @@
         {
           "syntax": "from \"Dev Broker\", \"Office\"",
           "does": "Several Brokers."
+        },
+        {
+          "syntax": "from file \"<name>.jsonl\", …",
+          "does": "Records from JSON Lines or CSV files, one message each, read once; then the Pipeline finishes. $topic is the file's name, $connection is \"file\". CSV rows become objects, with numbers and true/false typed."
+        },
+        {
+          "syntax": "from file \"<name>\" follow",
+          "does": "Then keeps reading lines added to the files."
+        },
+        {
+          "syntax": "from file \"<name>\" rate 200/s",
+          "does": "At most this many records a second; 1000/s unless given."
+        },
+        {
+          "syntax": "from file \"<name>\" replay .at",
+          "does": "On the times the records carry, in seconds like $time: the gaps between them are kept."
         }
       ],
-      "details": "A Pipeline never reads Derived Topics, so it can't feed itself.",
+      "details": "A Pipeline never reads Derived Topics, so it can't feed itself. File names resolve like to file's, so a recording can be read back by name; a Pipeline can't write to a file it reads.",
       "snippet": "from ${all}",
       "examples": [
         "from all",
         "from \"Dev Broker\"",
-        "from \"Dev Broker\", \"Office\""
+        "from \"Dev Broker\", \"Office\"",
+        "from file \"recording.jsonl\" replay .at",
+        "from file \"rooms/kitchen.csv\", \"rooms/office.csv\" rate 50/s",
+        "from file \"log.jsonl\" follow"
       ]
     },
     {
