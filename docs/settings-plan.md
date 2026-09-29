@@ -2,7 +2,7 @@
 
 A place to change how måqtt behaves, instead of environment variables, constants in the code and preferences scattered across browser storage. Vocabulary follows [CONTEXT.md](../CONTEXT.md).
 
-Status: **a draft to decide on together** before any of it is built. The open questions at the end come first.
+Status: decided together; S1 is done, S2 and S3 are next. The decisions are at the end.
 
 ## What is adjustable today
 
@@ -30,14 +30,17 @@ Browser storage is per machine and invisible: it isn't in the config folder, so 
 
 ## First settings
 
-| Setting                                                           | Default | Notes                                                                                                                                        |
-| ----------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Pipelines**: show the Pipelines tab and their Topic Tree branch | On      | The "Later" item from the Pipelines plan. Off hides both entry points (ADR 0004 keeps them one each) and starts no Pipelines, marked or not. |
-| **Connect at startup**: which Brokers                             | None    | Replaces `MAQTT_AUTOCONNECT` for everyday use; could instead be a per-Profile "connect at startup" tick, see the questions.                  |
-| **History per topic**                                             | 100     | Needs a restart.                                                                                                                             |
-| **History per Connection**                                        | 100,000 | Needs a restart.                                                                                                                             |
-| **Theme**: system, light or dark                                  | System  | Today only the system decides.                                                                                                               |
-| **Topic Tree opens**: by hand, groups, everything                 | By hand | Moves the tree's preference out of browser storage, into the file.                                                                           |
+| Setting                                                           | Default           | Notes                                                                                                                                                                                          |
+| ----------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pipelines**: show the Pipelines tab and their Topic Tree branch | On                | The "Later" item from the Pipelines plan. Off hides both entry points (ADR 0004 keeps them one each), stops running Pipelines and starts none, marked or not. On again starts the marked ones. |
+| **History per topic**                                             | 100               | Needs a restart.                                                                                                                                                                               |
+| **History per Connection**                                        | 100,000           | Needs a restart.                                                                                                                                                                               |
+| **Message Log scrollback**: live, and in all                      | 5,000 and 100,000 | Today's constants in `App.tsx`.                                                                                                                                                                |
+| **Default QoS** for new Subscriptions                             | 0                 | What the Subscribe field starts with.                                                                                                                                                          |
+| **Theme**: system, light or dark                                  | System            | Today only the system decides.                                                                                                                                                                 |
+| **Topic Tree opens**: by hand, groups, everything                 | By hand           | Moves the tree's preference out of browser storage, into the file.                                                                                                                             |
+
+**Connect at startup** isn't a setting here: it's a tick on each Broker Profile, "Connect when måqtt starts", beside the Broker it's about (as Start with måqtt is on each Pipeline). `MAQTT_AUTOCONNECT` keeps working for its session.
 
 ## Where it's changed
 
@@ -47,15 +50,17 @@ A **Settings** view, opened from a gear button at the right of the title bar, ne
 
 ### S1: The file and the view
 
-`settings.toml` loaded at startup with today's defaults, a `get_settings` / `set_setting` pair of commands, and the Settings view with the **Pipelines** switch as its first setting.
+`settings.toml` loaded at startup with today's defaults, a `get_settings` / `set_settings` pair of commands, and the Settings view with the **Pipelines** switch as its first setting.
 
 **Done when:** turning Pipelines off hides the tab and the Topic Tree branch at once, survives a restart, and turning it back on restores both.
 
-### S2: Startup and history
+Status: done on the `settings-s1` branch. A **Settings** button at the right of the title bar opens the view; changes apply and save at once. Checked over WebDriver: turning Pipelines off hid the tab and the Pipelines root in the Topic Tree, wrote `enabled = false`, and after a restart the marked Pipeline didn't start; turning them on again brought both back and started it. A `settings.toml` that can't be read says so in the view, and the defaults are used.
 
-Connect at startup and the two history limits, with the restart note. `MAQTT_AUTOCONNECT` keeps overriding for its session.
+### S2: Startup, history and defaults
 
-**Done when:** a Broker marked in Settings connects on the next start without the environment variable, and a changed history limit applies after a restart.
+"Connect when måqtt starts" on each Broker Profile, the two history limits (with the restart note), Message Log scrollback and the default QoS for new Subscriptions. `MAQTT_AUTOCONNECT` keeps working for its session.
+
+**Done when:** a Broker ticked to connect does so on the next start without the environment variable, a changed history limit applies after a restart, and the scrollback and QoS settings take effect.
 
 ### S3: Appearance and preferences
 
@@ -63,8 +68,8 @@ Theme, and the Topic Tree's opening preference moved from browser storage into t
 
 **Done when:** the theme follows the setting in both directions, and nothing måqtt remembers lives in browser storage any more except what's purely per window.
 
-## Open questions
+## Decisions
 
-1. **Connect at startup: in Settings, or on each Profile?** A per-Profile tick ("connect when måqtt starts") keeps it beside the Broker it's about, like start-with-app is on each Pipeline. A list in Settings keeps all startup behaviour in one place.
-2. **Should hiding Pipelines also stop running ones**, or only hide them while they carry on (e.g. an unattended recording)?
-3. **Anything missing from the first settings?** For example the Message Log's scrollback, or a default QoS for new Subscriptions.
+1. **Connect at startup** is a tick on each Broker Profile, not a list in Settings.
+2. **Hiding Pipelines stops them**: running ones stop and marked ones don't start, so nothing processes out of sight.
+3. **Also in the first settings**: Message Log scrollback and the default QoS for new Subscriptions (S2).

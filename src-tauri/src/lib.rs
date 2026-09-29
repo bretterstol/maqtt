@@ -9,6 +9,7 @@ mod processing;
 mod profile;
 mod profile_store;
 mod publish;
+mod settings;
 mod topics;
 mod ui_bridge;
 
@@ -26,6 +27,7 @@ use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
 use profile_store::{ImportReport, KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
 use publish::{OutgoingMessage, PublishHistory, PublishRecord};
+use settings::{Settings, SettingsStore, SettingsView};
 use ui_bridge::{LiveFilter, LogEntry, LogRow, MessageDetail, TopicUpdate};
 
 /// Upper bound for one `query_log` page, so a careless caller can't serialize the whole store.
@@ -41,6 +43,32 @@ struct AppState {
     live_filter: watch::Sender<LiveFilter>,
     /// Only one UI Bridge at a time; a reloaded frontend replaces the previous stream.
     ui_bridge: Mutex<Option<JoinHandle<()>>>,
+    settings: Mutex<SettingsStore>,
+}
+
+#[tauri::command]
+fn get_settings(state: State<'_, AppState>) -> SettingsView {
+    state.settings.lock().unwrap().view()
+}
+
+/// Saves new settings and applies them: turning Pipelines off stops every running one, and
+/// turning them on again starts the ones marked to start with måqtt.
+#[tauri::command]
+fn set_settings(
+    state: State<'_, AppState>,
+    processing: State<'_, processing::Processing>,
+    settings: Settings,
+) -> Result<SettingsView, String> {
+    let mut store = state.settings.lock().unwrap();
+    let was = store.get().pipelines.enabled;
+    let now = settings.pipelines.enabled;
+    store.set(settings)?;
+    if was && !now {
+        processing.stop_all();
+    } else if !was && now {
+        processing.start_marked();
+    }
+    Ok(store.view())
 }
 
 /// Starts streaming Message Bus traffic to the frontend over `on_batch`, with the Message Log
@@ -412,6 +440,11 @@ pub fn run() {
         .expect("config directory")
         .with_file_name("pipelines");
     let pipeline_files_dir = pipelines_dir.with_file_name("files");
+    let settings = SettingsStore::load(
+        ProfileStore::default_path()
+            .expect("config directory")
+            .with_file_name("settings.toml"),
+    );
     let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits::default())));
     let (live_filter, _) = watch::channel(LiveFilter::default());
     let connections = Arc::new(Mutex::new(ConnectionManager::default()));
@@ -439,7 +472,17 @@ pub fn run() {
             move |app| {
                 history::spawn_recorder(&bus, history);
                 autoconnect(&app.state::<AppState>());
-                app.state::<processing::Processing>().start_marked();
+                if app
+                    .state::<AppState>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .get()
+                    .pipelines
+                    .enabled
+                {
+                    app.state::<processing::Processing>().start_marked();
+                }
                 spawn_sleep_watchdog(app.handle().clone());
                 Ok(())
             }
@@ -453,6 +496,7 @@ pub fn run() {
             history,
             live_filter,
             ui_bridge: Mutex::new(None),
+            settings: Mutex::new(settings),
         })
         // Pipelines (ADR 0004): this `manage` and the `processing::` commands below are the
         // whole of the feature's footprint here.
@@ -495,6 +539,8 @@ pub fn run() {
             processing::pipelines_folder,
             processing::pipeline_files_folder,
             processing::set_pipeline_starts_with_app,
+            get_settings,
+            set_settings,
             processing::list_pipeline_files,
             processing::tail_pipeline_file,
             subscribe,

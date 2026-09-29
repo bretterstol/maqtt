@@ -1,10 +1,11 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  type MouseEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type MouseEvent,
 } from "react";
 import type { ConnectionId, ConnectionState } from "../bridge";
 import { plural } from "../format";
@@ -35,6 +36,8 @@ interface Props {
    * a stopped Pipeline. The branch shows it and is dimmed.
    */
   branchLabel?: (node: TreeNode) => string | null;
+  /** A Connection whose root isn't shown, such as the Pipelines root when they're off. */
+  hidden?: ConnectionId;
 }
 
 /** The label of the node or its nearest labelled ancestor, and whether it's the node's own. */
@@ -58,9 +61,17 @@ export function TopicTree({
   onSelect,
   onContextMenu,
   branchLabel,
+  hidden,
 }: Props) {
-  useSyncExternalStore(store.subscribe, store.getVersion);
-  const rows = store.rows();
+  const version = useSyncExternalStore(store.subscribe, store.getVersion);
+  const rows = useMemo(
+    () =>
+      hidden === undefined
+        ? store.rows()
+        : store.rows().filter((row) => row.connectionId !== hidden),
+    // `version` stands for the store's contents, which `rows()` reads.
+    [store, version, hidden], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const now = useNow();
 

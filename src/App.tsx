@@ -35,6 +35,8 @@ import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
 import { PIPELINES_CONNECTION } from "./processing/api";
 import { usePipelineBranchLabel } from "./processing/treeBranches";
+import { getSettings, type SettingsView } from "./settings/api";
+import { SettingsDialog } from "./settings/SettingsView";
 import "./App.css";
 
 // Pipelines live in their own folder and load only when their tab opens (ADR 0004).
@@ -71,6 +73,14 @@ function App() {
   const [editing, setEditing] = useState<Editing | null>(null);
   const [rate, setRate] = useState(0);
   const [publishing, setPublishing] = useState(false);
+  const [settings, setSettings] = useState<SettingsView | null>(null);
+  const [showingSettings, setShowingSettings] = useState(false);
+  // Until the settings arrive, Pipelines show as they always have.
+  const pipelinesOn = settings?.settings.pipelines.enabled ?? true;
+
+  useEffect(() => {
+    void getSettings().then(setSettings, () => {});
+  }, []);
   const [draft, setDraft] = useState<PublishDraft>(() => emptyDraft());
   /** The topic whose "Clear retained" is waiting for confirmation. */
   const [clearing, setClearing] = useState<string | null>(null);
@@ -137,7 +147,7 @@ function App() {
   );
 
   const pipelineBranchLabel = usePipelineBranchLabel(
-    statuses.has(PIPELINES_CONNECTION),
+    pipelinesOn && statuses.has(PIPELINES_CONNECTION),
   );
 
   // Whether a topic's Connection can publish: connected, and a real Broker rather than the
@@ -235,6 +245,13 @@ function App() {
           {store.dropped > 0 &&
             ` · ${store.dropped.toLocaleString()} not shown live`}
         </span>
+        <button
+          className={showingSettings ? "is-active" : undefined}
+          disabled={!settings}
+          onClick={() => setShowingSettings(true)}
+        >
+          Settings
+        </button>
       </header>
       <div className="app__body">
         <ProfileList
@@ -260,12 +277,16 @@ function App() {
             >
               Message Log
             </button>
-            <button
-              className={tab === "pipelines" ? "tabs__tab--active" : undefined}
-              onClick={() => setTab("pipelines")}
-            >
-              Pipelines
-            </button>
+            {pipelinesOn && (
+              <button
+                className={
+                  tab === "pipelines" ? "tabs__tab--active" : undefined
+                }
+                onClick={() => setTab("pipelines")}
+              >
+                Pipelines
+              </button>
+            )}
           </nav>
           {tab === "topics" ? (
             <div className="app__split">
@@ -277,6 +298,7 @@ function App() {
                 onSelect={setSelected}
                 onContextMenu={(node, x, y) => setMenu({ node, x, y })}
                 branchLabel={pipelineBranchLabel}
+                hidden={pipelinesOn ? undefined : PIPELINES_CONNECTION}
               />
               {selected && (
                 <TopicDetail
@@ -294,7 +316,7 @@ function App() {
                 />
               )}
             </div>
-          ) : tab === "log" ? (
+          ) : tab === "log" || !pipelinesOn ? (
             <MessageLog
               controller={controller}
               connectionNames={connectionNames}
@@ -324,6 +346,18 @@ function App() {
         />
       )}
       <Toasts />
+      {showingSettings && settings && (
+        <SettingsDialog
+          view={settings}
+          onChanged={(view) => {
+            setSettings(view);
+            if (!view.settings.pipelines.enabled && tab === "pipelines") {
+              setTab("topics");
+            }
+          }}
+          onClose={() => setShowingSettings(false)}
+        />
+      )}
       {editing && (
         <ProfileEditor
           key={editing.profile.id}
