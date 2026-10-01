@@ -44,11 +44,6 @@ impl FileSink {
         }
     }
 
-    /// The folder relative names are in.
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// Where a name from `to file` points.
     pub fn resolve(&self, name: &str) -> PathBuf {
         resolve(&self.dir, self.home.as_deref(), name)
