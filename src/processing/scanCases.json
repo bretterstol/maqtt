@@ -1,0 +1,154 @@
+[
+  {
+    "text": "from all",
+    "pieces": ["code00:from all"]
+  },
+  {
+    "text": "from all |> map .a",
+    "pieces": ["code00:from all |> map .a"]
+  },
+  {
+    "text": "map (.a | .b) |> x",
+    "pieces": ["code00:map (", "code01:.a | .b", "code00:) |> x"]
+  },
+  {
+    "text": "map [1, 2]",
+    "pieces": ["code00:map [", "code01:1, 2", "code00:]"]
+  },
+  {
+    "text": "map { a: 1 }",
+    "pieces": ["code00:map {", "code01: a: 1 ", "code00:}"]
+  },
+  {
+    "text": "\"plain\"",
+    "pieces": ["quote10:\"", "text10:plain", "quote10:\""]
+  },
+  {
+    "text": "\"a\\\"b\"",
+    "pieces": [
+      "quote10:\"",
+      "text10:a",
+      "escape10:\\\"",
+      "text10:b",
+      "quote10:\""
+    ]
+  },
+  {
+    "text": "\"a{.b}c\"",
+    "pieces": [
+      "quote10:\"",
+      "text10:a",
+      "fill10:{",
+      "code10:.b",
+      "end10:}",
+      "text10:c",
+      "quote10:\""
+    ]
+  },
+  {
+    "text": "\"{{x}}\"",
+    "pieces": [
+      "quote10:\"",
+      "brace10:{{",
+      "text10:x",
+      "brace10:}}",
+      "quote10:\""
+    ]
+  },
+  {
+    "text": "\"a}b\"",
+    "pieces": ["quote10:\"", "text10:a}b", "quote10:\""]
+  },
+  {
+    "text": "\"{.a + \"x{.b}y\"}\"",
+    "pieces": [
+      "quote10:\"",
+      "fill10:{",
+      "code10:.a + ",
+      "quote20:\"",
+      "text20:x",
+      "fill20:{",
+      "code20:.b",
+      "end20:}",
+      "text20:y",
+      "quote20:\"",
+      "end10:}",
+      "quote10:\""
+    ]
+  },
+  {
+    "text": "\"\\(.a + \"x\")\"",
+    "pieces": [
+      "quote10:\"",
+      "fill10:\\(",
+      "code10:.a + ",
+      "quote20:\"",
+      "text20:x",
+      "quote20:\"",
+      "end10:)",
+      "quote10:\""
+    ]
+  },
+  {
+    "text": "\"x\\(\"",
+    "pieces": ["quote10:\"", "text10:x", "fill10:\\(", "quote20:\""],
+    "open": ["string@0", "fill@2", "string@4"]
+  },
+  {
+    "text": "map .a # a note",
+    "pieces": ["code00:map .a ", "comment00:# a note"]
+  },
+  {
+    "text": "map \"#not a comment\"",
+    "pieces": [
+      "code00:map ",
+      "quote10:\"",
+      "text10:#not a comment",
+      "quote10:\""
+    ]
+  },
+  {
+    "text": "\"{.a # gone}\"",
+    "pieces": ["quote10:\"", "fill10:{", "code10:.a ", "comment10:# gone}\""],
+    "open": ["string@0", "fill@1"]
+  },
+  {
+    "text": "\"open",
+    "pieces": ["quote10:\"", "text10:open"],
+    "open": ["string@0"]
+  },
+  {
+    "text": "\"a{.b",
+    "pieces": ["quote10:\"", "text10:a", "fill10:{", "code10:.b"],
+    "open": ["string@0", "fill@2"]
+  },
+  {
+    "text": "map (.a",
+    "pieces": ["code00:map (", "code01:.a"],
+    "open": ["bracket@4"]
+  },
+  {
+    "text": "map .a)",
+    "pieces": ["code00:map .a)"]
+  },
+  {
+    "text": "\"é{.ü}\"",
+    "pieces": [
+      "quote10:\"",
+      "text10:é",
+      "fill10:{",
+      "code10:.ü",
+      "end10:}",
+      "quote10:\""
+    ]
+  },
+  {
+    "text": "filter topic \"home/+room/#\"",
+    "pieces": [
+      "code00:filter topic ",
+      "quote10:\"",
+      "text10:home/+room/#",
+      "quote10:\""
+    ]
+  }
+]

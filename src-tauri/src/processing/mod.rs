@@ -15,6 +15,7 @@ pub mod preview;
 #[cfg(test)]
 mod reference_tests;
 pub mod runner;
+pub mod scanner;
 pub mod stages;
 pub mod store;
 

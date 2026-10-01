@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::jq;
+use super::scanner::{Kind as ScanKind, scan};
 use crate::profile::{topic_matches, validate_topic_filter};
 
 /// A problem in a Pipeline's source, for the editor.
@@ -1021,24 +1022,11 @@ fn parse_scan(code: &str, arg: Span, problems: &mut Problems) -> Option<Stage> {
 }
 
 /// Walks `text`, telling for each character whether it's at the top level: outside strings and
-/// brackets.
+/// brackets (a bracket counts as the level outside it).
 fn scan_code(text: &str, mut visit: impl FnMut(usize, char, bool)) {
-    let mut modes = vec![Mode::Code { depth: 0 }];
-    let mut iter = text.char_indices().peekable();
-    while let Some((i, c)) = iter.next() {
-        let top = *modes.last().unwrap();
-        visit(i, c, modes.len() == 1 && top == Mode::Code { depth: 0 });
-        if top == Mode::Str && c == '\\' {
-            iter.next();
-            continue;
-        }
-        let mut chars = iter.clone().map(|(_, c)| c).peekable();
-        let before = modes.len();
-        step(&mut modes, c, &mut chars);
-        // `{{` in a string: skip the second brace too.
-        if top == Mode::Str && c == '{' && modes.len() == before {
-            iter.next();
-        }
+    let scan = scan(text);
+    for (i, c, piece) in scan.chars(text) {
+        visit(i, c, piece.is_top());
     }
 }
 
@@ -1047,71 +1035,44 @@ fn scan_code(text: &str, mut visit: impl FnMut(usize, char, bool)) {
 /// Plain `recurse` (into the data) is fine. Returns its offset and name.
 fn endless_construct(text: &str) -> Option<(usize, &'static str)> {
     const WITH_ARGUMENTS: [&str; 4] = ["recurse", "repeat", "while", "until"];
-    let mut found = None;
-    let mut modes = vec![Mode::Code { depth: 0 }];
-    let mut iter = text.char_indices().peekable();
+    let scan = scan(text);
     let mut previous = ' ';
-    while let Some((i, c)) = iter.next() {
-        let top = *modes.last().unwrap();
-        let word_start = top != Mode::Str
-            && found.is_none()
+    for (i, c, piece) in scan.chars(text) {
+        let word_start = piece.kind == ScanKind::Code
             && c.is_ascii_alphabetic()
             && !(previous.is_alphanumeric() || matches!(previous, '_' | '$' | '.'));
-        if word_start {
-            let rest = &text[i..];
-            let len = rest
-                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .unwrap_or(rest.len());
-            let after = rest[len..].trim_start();
-            let word = &rest[..len];
-            if word == "def" && !after.starts_with(':') {
-                found = Some((i, "def"));
-            } else if let Some(name) = WITH_ARGUMENTS.iter().find(|&&w| w == word)
-                && after.starts_with('(')
-            {
-                found = Some((i, *name));
-            }
-        }
         previous = c;
-        if top == Mode::Str && c == '\\' {
-            iter.next();
+        if !word_start {
             continue;
         }
-        let mut chars = iter.clone().map(|(_, c)| c).peekable();
-        let before = modes.len();
-        step(&mut modes, c, &mut chars);
-        if top == Mode::Str && c == '{' && modes.len() == before {
-            iter.next();
+        let rest = &text[i..];
+        let len = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        let after = rest[len..].trim_start();
+        let word = &rest[..len];
+        if word == "def" && !after.starts_with(':') {
+            return Some((i, "def"));
+        }
+        if let Some(name) = WITH_ARGUMENTS.iter().find(|&&w| w == word)
+            && after.starts_with('(')
+        {
+            return Some((i, *name));
         }
     }
-    found
+    None
 }
 
 /// Replaces a comma before a closing `}` or `]` with a space, as jq doesn't allow one there;
 /// keeps every offset.
 fn drop_trailing_commas(text: &str) -> String {
     let mut out = text.to_string();
-    let mut commas = Vec::new();
-    let mut modes = vec![Mode::Code { depth: 0 }];
-    let mut iter = text.char_indices().peekable();
-    while let Some((i, c)) = iter.next() {
-        let top = *modes.last().unwrap();
-        if c == ',' && top != Mode::Str {
-            commas.push(i);
-        }
-        if top == Mode::Str && c == '\\' {
-            iter.next();
-            continue;
-        }
-        let mut chars = iter.clone().map(|(_, c)| c).peekable();
-        let before = modes.len();
-        step(&mut modes, c, &mut chars);
-        if top == Mode::Str && c == '{' && modes.len() == before {
-            iter.next();
-        }
-    }
-    for i in commas {
-        if text[i + 1..].trim_start().starts_with(['}', ']']) {
+    let scan = scan(text);
+    for (i, c, piece) in scan.chars(text) {
+        if piece.kind == ScanKind::Code
+            && c == ','
+            && text[i + 1..].trim_start().starts_with(['}', ']'])
+        {
             out.replace_range(i..i + 1, " ");
         }
     }
@@ -1206,41 +1167,34 @@ fn expression_in(
     }
 }
 
-/// A `"…"` string literal at the start of `span`, and the span after it.
+/// A `"…"` string at the start of `span`, read as plain text (a name, a label), and the span
+/// after it. Its end follows the scanner's rules; its text is taken as written, with only `\`
+/// escapes decoded.
 fn string_literal(code: &str, span: Span) -> Option<(String, Span)> {
     let text = &code[span.start..span.end];
-    let trimmed = text.trim_start();
-    let start = span.start + (text.len() - trimmed.len());
-    let mut chars = trimmed.char_indices();
-    if chars.next()?.1 != '"' {
-        return None;
-    }
+    let start = span.start + (text.len() - text.trim_start().len());
+    let end = start + quoted_end(&code[start..span.end])?;
     let mut value = String::new();
-    let mut escaped = false;
-    for (i, c) in chars {
-        match (escaped, c) {
-            (true, 'n') => value.push('\n'),
-            (true, 't') => value.push('\t'),
-            (true, c) => value.push(c),
-            (false, '\\') => {
-                escaped = true;
-                continue;
-            }
-            (false, '"') => {
-                let end = start + i + 1;
-                return Some((
-                    value,
-                    Span {
-                        start: end,
-                        end: span.end,
-                    },
-                ));
-            }
-            (false, c) => value.push(c),
+    let mut chars = code[start + 1..end - 1].chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            value.push(c);
+            continue;
         }
-        escaped = false;
+        match chars.next() {
+            Some('n') => value.push('\n'),
+            Some('t') => value.push('\t'),
+            Some(other) => value.push(other),
+            None => break,
+        }
     }
-    None
+    Some((
+        value,
+        Span {
+            start: end,
+            end: span.end,
+        },
+    ))
 }
 
 fn parse_to_file(code: &str, sink: Word, arg: Span, problems: &mut Problems) -> Option<Stage> {
@@ -1315,22 +1269,7 @@ fn quoted_end(text: &str) -> Option<usize> {
     if !text.starts_with('"') {
         return None;
     }
-    let mut modes = vec![Mode::Code { depth: 0 }];
-    let mut iter = text.char_indices().peekable();
-    while let Some((i, c)) = iter.next() {
-        let top = *modes.last().unwrap();
-        if top == Mode::Str
-            && (c == '\\' || (c == '{' && iter.peek().is_some_and(|(_, n)| *n == '{')))
-        {
-            iter.next();
-            continue;
-        }
-        step(&mut modes, c, &mut std::iter::empty().peekable());
-        if modes.len() == 1 {
-            return Some(i + c.len_utf8());
-        }
-    }
-    None
+    scan(text).string_end(0)
 }
 
 /// `500KB`, `10MB`, `1GB`: sizes in bytes, 1 KB being 1,000 bytes.
@@ -1361,123 +1300,32 @@ fn parse_duration(text: &str) -> Option<Duration> {
     (n > 0).then_some(duration)
 }
 
-/// Where the scanner is: in code, in a string, or in a `{…}` inside a string.
-#[derive(Clone, Copy, PartialEq)]
-enum Mode {
-    Code { depth: usize },
-    Str,
-    Fill { depth: usize },
-}
-
-/// Replaces `#` comments (outside strings) with spaces, keeping every offset.
+/// Replaces `#` comments with spaces, keeping every offset (line breaks stay).
 fn strip_comments(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
-    let mut modes = vec![Mode::Code { depth: 0 }];
-    let mut chars = source.chars().peekable();
-    let mut in_comment = false;
-    while let Some(c) = chars.next() {
-        if in_comment {
-            if c == '\n' {
-                in_comment = false;
-                out.push('\n');
-            } else {
-                // Keep byte offsets: one space per byte.
-                out.extend(std::iter::repeat_n(' ', c.len_utf8()));
-            }
-            continue;
+    for piece in scan(source).pieces {
+        let text = &source[piece.start..piece.end];
+        if piece.kind == ScanKind::Comment {
+            out.extend(std::iter::repeat_n(' ', text.len()));
+        } else {
+            out.push_str(text);
         }
-        match (*modes.last().unwrap(), c) {
-            (Mode::Code { .. } | Mode::Fill { .. }, '#') => {
-                in_comment = true;
-                out.push(' ');
-                continue;
-            }
-            (Mode::Str, '\\') => {
-                out.push(c);
-                if let Some(next) = chars.next() {
-                    out.push(next);
-                }
-                continue;
-            }
-            // `{{` is a literal brace: keep both, where `step` would consume the second.
-            (Mode::Str, '{') if chars.peek() == Some(&'{') => {
-                chars.next();
-                out.push_str("{{");
-                continue;
-            }
-            _ => step(&mut modes, c, &mut chars),
-        }
-        out.push(c);
     }
     out
-}
-
-/// Advances the mode stack past `c` (`{{` in a string is consumed as one literal brace).
-fn step(
-    modes: &mut Vec<Mode>,
-    c: char,
-    chars: &mut std::iter::Peekable<impl Iterator<Item = char>>,
-) {
-    let top = modes.last_mut().unwrap();
-    match (*top, c) {
-        (Mode::Code { .. } | Mode::Fill { .. }, '"') => modes.push(Mode::Str),
-        (Mode::Code { depth }, '(' | '[' | '{') => *top = Mode::Code { depth: depth + 1 },
-        (Mode::Code { depth }, ')' | ']' | '}') => {
-            *top = Mode::Code {
-                depth: depth.saturating_sub(1),
-            }
-        }
-        (Mode::Fill { depth }, '(' | '[' | '{') => *top = Mode::Fill { depth: depth + 1 },
-        (Mode::Fill { depth: 0 }, '}') => {
-            modes.pop();
-        }
-        (Mode::Fill { depth }, ')' | ']' | '}') => {
-            *top = Mode::Fill {
-                depth: depth.saturating_sub(1),
-            }
-        }
-        (Mode::Str, '"') => {
-            modes.pop();
-        }
-        (Mode::Str, '{') => {
-            if chars.peek() == Some(&'{') {
-                chars.next();
-            } else {
-                modes.push(Mode::Fill { depth: 0 });
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Splits comment-free code into Stages at each `|>` outside strings and brackets.
 fn split_stages(code: &str) -> Vec<Span> {
     let mut spans = Vec::new();
-    let mut modes = vec![Mode::Code { depth: 0 }];
     let mut start = 0;
-    let mut iter = code.char_indices().peekable();
-    while let Some((i, c)) = iter.next() {
-        if modes.len() == 1
-            && modes[0] == (Mode::Code { depth: 0 })
-            && c == '|'
-            && code[i + 1..].starts_with('>')
-        {
-            spans.push(Span { start, end: i });
-            iter.next();
-            start = i + 2;
-            continue;
-        }
-        if *modes.last().unwrap() == Mode::Str && c == '\\' {
-            iter.next();
-            continue;
-        }
-        let mut chars = iter.clone().map(|(_, c)| c).peekable();
-        let before = modes.len();
-        let was_str = *modes.last().unwrap() == Mode::Str;
-        step(&mut modes, c, &mut chars);
-        // `{{` in a string: skip the second brace too.
-        if was_str && c == '{' && modes.len() == before {
-            iter.next();
+    for piece in scan(code).pieces.iter().filter(|p| p.is_top()) {
+        let text = &code[piece.start..piece.end];
+        let mut from = 0;
+        while let Some(at) = text[from..].find("|>") {
+            let pipe = piece.start + from + at;
+            spans.push(Span { start, end: pipe });
+            start = pipe + 2;
+            from += at + 2;
         }
     }
     spans.push(Span {
@@ -1493,41 +1341,20 @@ fn split_stages(code: &str) -> Vec<Span> {
 pub fn to_jq(text: &str) -> (String, Vec<usize>) {
     let mut out = String::with_capacity(text.len() + 8);
     let mut origin = Vec::with_capacity(text.len() + 8);
-    let mut modes = vec![Mode::Code { depth: 0 }];
-    let mut iter = text.char_indices().peekable();
-    let push = |out: &mut String, origin: &mut Vec<usize>, s: &str, at: usize| {
+    let mut push = |s: &str, at: usize| {
         out.push_str(s);
         origin.extend(std::iter::repeat_n(at, s.len()));
     };
-    while let Some((i, c)) = iter.next() {
-        let top = *modes.last().unwrap();
-        match (top, c) {
-            (Mode::Str, '\\') => {
-                push(&mut out, &mut origin, "\\", i);
-                if let Some((j, next)) = iter.next() {
-                    push(&mut out, &mut origin, next.encode_utf8(&mut [0; 4]), j);
-                }
-            }
-            (Mode::Str, '{') if iter.peek().map(|(_, c)| *c) == Some('{') => {
-                iter.next();
-                push(&mut out, &mut origin, "{", i);
-            }
-            (Mode::Str, '{') => {
-                modes.push(Mode::Fill { depth: 0 });
-                push(&mut out, &mut origin, "\\(", i);
-            }
-            (Mode::Str, '}') if iter.peek().map(|(_, c)| *c) == Some('}') => {
-                iter.next();
-                push(&mut out, &mut origin, "}", i);
-            }
-            (Mode::Fill { depth: 0 }, '}') => {
-                modes.pop();
-                push(&mut out, &mut origin, ")", i);
-            }
+    for piece in scan(text).pieces {
+        let written = &text[piece.start..piece.end];
+        match (piece.kind, written) {
+            (ScanKind::FillOpen, "{") => push("\\(", piece.start),
+            (ScanKind::FillClose, "}") => push(")", piece.start),
+            (ScanKind::LiteralBrace, _) => push(&written[..1], piece.start),
             _ => {
-                let mut none = std::iter::empty::<char>().peekable();
-                step(&mut modes, c, &mut none);
-                push(&mut out, &mut origin, c.encode_utf8(&mut [0; 4]), i);
+                for (i, c) in written.char_indices() {
+                    push(c.encode_utf8(&mut [0; 4]), piece.start + i);
+                }
             }
         }
     }
@@ -2282,5 +2109,23 @@ from "Dev Broker", "Office"
             }
             parse(pipeline).unwrap_or_else(|e| panic!("{e:?}"));
         }
+    }
+
+    #[test]
+    fn a_names_end_follows_fills_and_jqs_own_interpolation_works() {
+        let code = r#""rooms/{$room // "x"}.csv" rotate"#;
+        let span = Span {
+            start: 0,
+            end: code.len(),
+        };
+        assert_eq!(
+            string_literal(code, span).map(|(name, after)| (name, &code[after.start..])),
+            Some((r#"rooms/{$room // "x"}.csv"#.to_string(), " rotate"))
+        );
+        // jq's `\(…)` may hold strings of its own, as `{…}` may.
+        assert_eq!(
+            stages(r#"from all |> map "\(.a + "x")" |> to app "y""#)[0],
+            Stage::Map(r#""\(.a + "x")""#.into())
+        );
     }
 }
