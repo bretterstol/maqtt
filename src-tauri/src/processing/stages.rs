@@ -10,8 +10,9 @@ use jaq_json::Val;
 
 use super::jq;
 use super::keyed::Keyed;
-use super::lang::{FileFormat, Pipeline, Rotate, Source, Stage, TopicFilter, WindowSize};
+use super::lang::{FileFormat, Pipeline, Rotate, Stage, TopicFilter, WindowSize};
 use super::markers::Point;
+use super::sources::reads_connection;
 use crate::message::ReceivedMessage;
 use crate::profile::validate_topic_name;
 
@@ -238,7 +239,6 @@ impl Window {
 /// A Pipeline ready to run; not `Send` (jq values are reference-counted), so it lives on one
 /// thread.
 pub struct Runtime {
-    from: Source,
     /// How many named wildcards the Pipeline declares.
     names: usize,
     stages: Vec<Running>,
@@ -335,13 +335,13 @@ impl Runtime {
                     Stage::ToBroker { broker, topic } => Running::ToBroker {
                         broker: broker.clone(),
                         topic: compile(topic)?,
-                        reads_back: reads(&pipeline.from, broker).then(|| leading_filters.clone()),
+                        reads_back: reads_connection(&pipeline.from, broker)
+                            .then(|| leading_filters.clone()),
                     },
                 })
             })
             .collect::<Result<_, String>>()?;
         Ok(Self {
-            from: pipeline.from.clone(),
             names: pipeline.names.len(),
             stages,
             trace: None,
@@ -359,23 +359,16 @@ impl Runtime {
         self.trace.as_deref().unwrap_or_default()
     }
 
-    /// Whether a message gets past `from` and the `filter topic` Stages at the start: the cheap
-    /// test Preview uses to pick sample messages.
-    pub fn wants(&self, connection: &str, topic: &str) -> bool {
-        self.reads(connection)
-            && self
-                .stages
-                .iter()
-                .map_while(|stage| match stage {
-                    Running::FilterTopic { filter, .. } => Some(filter),
-                    _ => None,
-                })
-                .all(|filter| filter.passes(topic))
-    }
-
-    /// Whether messages from this Connection are the Pipeline's to handle.
-    pub fn reads(&self, connection: &str) -> bool {
-        reads(&self.from, connection)
+    /// Whether a topic gets past the `filter topic` Stages at the start: the test Preview
+    /// uses to pick sample messages. (Which Connection is the Source's business.)
+    pub fn takes_topic(&self, topic: &str) -> bool {
+        self.stages
+            .iter()
+            .map_while(|stage| match stage {
+                Running::FilterTopic { filter, .. } => Some(filter),
+                _ => None,
+            })
+            .all(|filter| filter.passes(topic))
     }
 
     pub fn push(&mut self, origin: Origin, now: Instant, out: &mut Vec<Effect>) {
@@ -960,15 +953,6 @@ fn sink_topic(filter: &jq::Filter, item: &Item, what: &str) -> Result<String, St
     }
 }
 
-fn reads(from: &Source, connection: &str) -> bool {
-    match from {
-        Source::All => true,
-        Source::Named(names) => names.iter().any(|n| n == connection),
-        // Files and Pipelines aren't Connections; the runner reads them itself.
-        Source::Files(_) | Source::Pipelines(_) => false,
-    }
-}
-
 /// Which state a stateful Stage keeps for this item: its `by` key, or else its incoming topic.
 /// The item comes back with that key as its `$key`; `None` (after reporting an error) when the
 /// key can't be worked out.
@@ -1152,13 +1136,6 @@ mod tests {
             out,
             [derived("hot/kitchen", r#"{"temp":23,"room":"kitchen"}"#)]
         );
-    }
-
-    #[test]
-    fn from_picks_connections() {
-        assert!(runtime("from all").reads("anything"));
-        let named = runtime(r#"from "A", "B""#);
-        assert!(named.reads("B") && !named.reads("C"));
     }
 
     #[test]
@@ -1372,14 +1349,13 @@ mod tests {
     }
 
     #[test]
-    fn wants_checks_from_and_the_leading_topic_filters() {
+    fn takes_topic_checks_the_leading_topic_filters_only() {
         let rt = runtime(
             r#"from "Dev" |> filter topic "home/#" |> filter not topic "+/status" |> filter .x |> filter topic "never""#,
         );
-        assert!(rt.wants("Dev", "home/kitchen"));
-        assert!(!rt.wants("Dev", "home/status"));
-        assert!(!rt.wants("Dev", "office/kitchen"));
-        assert!(!rt.wants("Other", "home/kitchen"));
+        assert!(rt.takes_topic("home/kitchen"));
+        assert!(!rt.takes_topic("home/status"));
+        assert!(!rt.takes_topic("office/kitchen"));
     }
 
     #[test]

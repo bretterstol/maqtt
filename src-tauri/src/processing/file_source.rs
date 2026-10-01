@@ -118,6 +118,11 @@ impl FileReader {
         })
     }
 
+    /// The files it reads, resolved.
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.files.iter().map(|f| f.path.clone()).collect()
+    }
+
     /// Hands records out as fast as they're asked for, and stops at the end, as Preview wants.
     /// The pace stays known, for [`Self::replay_time`] and [`Self::rate_every`].
     pub fn unpaced(mut self) -> Self {
