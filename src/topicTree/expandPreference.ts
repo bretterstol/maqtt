@@ -1,22 +1,18 @@
 import type { ExpandMode } from "./store";
 
+// Before Settings, the Topic Tree remembered how it opens in browser storage. It now lives in
+// settings.toml; this hands over a choice made the old way, once.
 const KEY = "maqtt.expandMode";
 const MODES: ExpandMode[] = ["manual", "groups", "all"];
 
-/** The expand mode chosen last time, remembered on this machine. */
-export function savedExpandMode(): ExpandMode {
+/** A choice left in browser storage by an older måqtt, removed as it's read; null if none. */
+export function takeOldExpandMode(): ExpandMode | null {
   try {
     const saved = localStorage.getItem(KEY);
-    return MODES.find((mode) => mode === saved) ?? "manual";
+    if (saved === null) return null;
+    localStorage.removeItem(KEY);
+    return MODES.find((mode) => mode === saved) ?? null;
   } catch {
-    return "manual";
-  }
-}
-
-export function saveExpandMode(mode: ExpandMode): void {
-  try {
-    localStorage.setItem(KEY, mode);
-  } catch {
-    // Not remembering it is fine; the tree still works.
+    return null;
   }
 }

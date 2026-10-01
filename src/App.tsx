@@ -29,13 +29,19 @@ import { payloadAsText } from "./topicDetail/format";
 import { copy } from "./ui/clipboard";
 import { ContextMenu } from "./ui/ContextMenu";
 import { Toasts } from "./ui/Toasts";
+import { toast } from "./ui/toast";
 import { TopicTreeStore, type TreeNode } from "./topicTree/store";
-import { savedExpandMode } from "./topicTree/expandPreference";
+import { takeOldExpandMode } from "./topicTree/expandPreference";
 import { TopicTree } from "./topicTree/TopicTree";
 import { TopicDetail } from "./topicDetail/TopicDetail";
 import { PIPELINES_CONNECTION } from "./processing/api";
 import { usePipelineBranchLabel } from "./processing/treeBranches";
-import { getSettings, type SettingsView } from "./settings/api";
+import {
+  getSettings,
+  setSettings as saveSettings,
+  type Settings,
+  type SettingsView,
+} from "./settings/api";
 import { SettingsDialog } from "./settings/SettingsView";
 import { DEFAULT_SETTINGS, SettingsContext } from "./settings/context";
 import "./App.css";
@@ -60,11 +66,7 @@ function App() {
       ),
   );
   const { store } = controller;
-  const [tree] = useState(() => {
-    const store = new TopicTreeStore();
-    store.setExpandMode(savedExpandMode());
-    return store;
-  });
+  const [tree] = useState(() => new TopicTreeStore());
   const [tab, setTab] = useState<"topics" | "log" | "pipelines">("topics");
   const [selected, setSelected] = useState<TreeNode | null>(null);
   const [statuses, setStatuses] = useState<Map<ConnectionId, ConnectionStatus>>(
@@ -80,9 +82,42 @@ function App() {
   const pipelinesOn = settings?.settings.pipelines.enabled ?? true;
 
   useEffect(() => {
-    void getSettings().then(setSettings, () => {});
+    void getSettings().then(
+      async (view) => {
+        // An older måqtt kept how the tree opens in browser storage: hand it over, once.
+        const old = takeOldExpandMode();
+        if (old && old !== view.settings.topicTree.opens) {
+          view = await saveSettings({
+            ...view.settings,
+            topicTree: { opens: old },
+          }).catch(() => view);
+        }
+        setSettings(view);
+      },
+      () => {},
+    );
   }, []);
+
+  /** Saves settings changed outside the Settings view, such as the tree's own menu. */
+  const changeSettings = async (next: Settings) => {
+    try {
+      setSettings(await saveSettings(next));
+    } catch (error) {
+      toast(`Couldn't save the settings: ${String(error)}`, true);
+    }
+  };
   const inForce = settings?.settings ?? DEFAULT_SETTINGS;
+  useEffect(() => {
+    tree.setExpandMode(inForce.topicTree.opens);
+  }, [tree, inForce.topicTree.opens]);
+  useEffect(() => {
+    const theme = inForce.appearance.theme;
+    // Every colour follows `color-scheme` through light-dark(). The window's frame is left to
+    // the system: on Linux, setting the window's theme back to "system" turns the dark
+    // preference off instead of following the desktop.
+    document.documentElement.style.colorScheme =
+      theme === "system" ? "" : theme;
+  }, [inForce.appearance.theme]);
   useEffect(() => {
     store.setLimits(inForce.messageLog.live, inForce.messageLog.scrollback);
   }, [store, inForce.messageLog.live, inForce.messageLog.scrollback]);
@@ -305,6 +340,9 @@ function App() {
                   onContextMenu={(node, x, y) => setMenu({ node, x, y })}
                   branchLabel={pipelineBranchLabel}
                   hidden={pipelinesOn ? undefined : PIPELINES_CONNECTION}
+                  onExpandMode={(opens) =>
+                    void changeSettings({ ...inForce, topicTree: { opens } })
+                  }
                 />
                 {selected && (
                   <TopicDetail

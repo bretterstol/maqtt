@@ -11,7 +11,6 @@ import type { ConnectionId, ConnectionState } from "../bridge";
 import { plural } from "../format";
 import { useNow } from "../ui/useNow";
 import { ActivityMeter } from "./ActivityMeter";
-import { saveExpandMode } from "./expandPreference";
 import {
   GROUP_EXPAND_LIMIT,
   type ExpandMode,
@@ -38,6 +37,8 @@ interface Props {
   branchLabel?: (node: TreeNode) => string | null;
   /** A Connection whose root isn't shown, such as the Pipelines root when they're off. */
   hidden?: ConnectionId;
+  /** The user picked how the tree opens itself, to be remembered. */
+  onExpandMode?: (mode: ExpandMode) => void;
 }
 
 /** The label of the node or its nearest labelled ancestor, and whether it's the node's own. */
@@ -62,6 +63,7 @@ export function TopicTree({
   onContextMenu,
   branchLabel,
   hidden,
+  onExpandMode,
 }: Props) {
   const version = useSyncExternalStore(store.subscribe, store.getVersion);
   const rows = useMemo(
@@ -86,7 +88,7 @@ export function TopicTree({
 
   return (
     <section className="topic-tree">
-      <SearchBar store={store} />
+      <SearchBar store={store} onExpandMode={onExpandMode} />
       <div className="topic-tree__scroll" ref={scrollRef}>
         {rows.length === 0 && (
           <p className="topic-tree__empty">
@@ -123,11 +125,17 @@ export function TopicTree({
   );
 }
 
-function SearchBar({ store }: { store: TopicTreeStore }) {
+function SearchBar({
+  store,
+  onExpandMode,
+}: {
+  store: TopicTreeStore;
+  onExpandMode?: (mode: ExpandMode) => void;
+}) {
   const [query, setQuery] = useState("");
   const setMode = (mode: ExpandMode) => {
     store.setExpandMode(mode);
-    saveExpandMode(mode);
+    onExpandMode?.(mode);
   };
 
   useEffect(() => {

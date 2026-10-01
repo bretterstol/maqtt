@@ -1,6 +1,7 @@
 // Settings (src-tauri/src/settings.rs): how måqtt behaves, in settings.toml beside the Profiles.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { ExpandMode } from "../topicTree/store";
 
 export interface Settings {
   pipelines: {
@@ -20,6 +21,13 @@ export interface Settings {
   subscriptions: {
     /** The QoS new Subscriptions start with. */
     defaultQos: number;
+  };
+  appearance: {
+    theme: "system" | "light" | "dark";
+  };
+  topicTree: {
+    /** How the Topic Tree opens itself. */
+    opens: ExpandMode;
   };
 }
 
