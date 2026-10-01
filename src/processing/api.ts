@@ -40,21 +40,28 @@ export interface ChartLines {
   hidden: number;
 }
 
+/** What a Pipeline's Sinks show, the same for a running Pipeline and for Preview. */
+export interface Outputs {
+  /** Values its Sinks took. */
+  emitted: number;
+  errors: number;
+  lastError: string | null;
+  /** The latest `inspect` values, newest last. */
+  inspected: Inspected[];
+  markers: Marker[];
+  chart: ChartLines;
+}
+
 export interface PipelineStatus {
   name: string;
   running: boolean;
   /** It stopped by itself: a `take` passed all it would. */
   finished: boolean;
   received: number;
-  emitted: number;
   missed: number;
   /** Its own republished messages that came back from a Broker and were left out. */
   returned: number;
-  errors: number;
-  lastError: string | null;
-  inspected: Inspected[];
-  markers: Marker[];
-  chart: ChartLines;
+  outputs: Outputs;
 }
 
 export interface PipelineView {
@@ -139,14 +146,13 @@ export interface Preview {
   /** Where `from` and then each Stage end in the source (UTF-8 byte offsets). */
   ends: number[];
   stages: StageTrace[];
+  /** What its Sinks would send, oldest first; nothing is sent. */
   results: PreviewValue[];
-  inspected: PreviewValue[];
   /** What it ran over: recent messages, records from files, or Derived Topics. */
   sampled: "messages" | "records" | "derived";
   /** A file Source's file that couldn't be read. */
   note: string | null;
-  markers: Marker[];
-  chart: ChartLines;
+  outputs: Outputs;
 }
 
 /** Runs a draft over what it reads (recent messages, files' records, Derived Topics) without starting it. */

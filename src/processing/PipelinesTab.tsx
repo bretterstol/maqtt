@@ -61,11 +61,16 @@ function problemsOnly(problems: Diagnostic[]): Preview {
     ends: [],
     stages: [],
     results: [],
-    inspected: [],
     sampled: "messages",
     note: null,
-    markers: [],
-    chart: { lines: [], hidden: 0 },
+    outputs: {
+      emitted: 0,
+      errors: 0,
+      lastError: null,
+      inspected: [],
+      markers: [],
+      chart: { lines: [], hidden: 0 },
+    },
   };
 }
 
@@ -363,7 +368,7 @@ export default function PipelinesTab() {
                 </span>
                 {p.status.running && (
                   <span className="pipelines__count">
-                    {p.status.emitted.toLocaleString()}
+                    {p.status.outputs.emitted.toLocaleString()}
                   </span>
                 )}
               </button>

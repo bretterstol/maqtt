@@ -1207,7 +1207,11 @@ mod dev_broker_tests {
 
         // `received` would also count other traffic on the dev Broker, such as trafficgen.
         let status = runner.status("warm rooms").unwrap();
-        assert_eq!((status.emitted, status.errors), (1, 0), "{status:?}");
+        assert_eq!(
+            (status.outputs.emitted, status.outputs.errors),
+            (1, 0),
+            "{status:?}"
+        );
         runner.stop("warm rooms");
         manager.disconnect(&profile.id);
     }
@@ -1275,7 +1279,11 @@ mod dev_broker_tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
         // The echo of `out/a` arrived too, and was left alone: still one sent.
         let status = runner.status("copy").unwrap();
-        assert_eq!((status.emitted, status.errors), (1, 0), "{status:?}");
+        assert_eq!(
+            (status.outputs.emitted, status.outputs.errors),
+            (1, 0),
+            "{status:?}"
+        );
         runner.stop("copy");
         manager.lock().unwrap().disconnect(&profile.id);
     }
@@ -1336,7 +1344,11 @@ mod dev_broker_tests {
 
         let status = runner.status("echo").unwrap();
         runner.stop("echo");
-        assert_eq!((status.emitted, status.returned), (1, 1), "{status:?}");
+        assert_eq!(
+            (status.outputs.emitted, status.returned),
+            (1, 1),
+            "{status:?}"
+        );
         assert!(
             statuses
                 .snapshot()

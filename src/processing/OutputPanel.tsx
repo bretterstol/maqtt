@@ -1,5 +1,12 @@
 import { lazy, Suspense, useState } from "react";
-import type { PipelineStatus, Preview, PreviewValue } from "./api";
+import type { PipelineStatus, Preview } from "./api";
+
+/** One row of Preview's list: an `inspect` value, or what a Sink would send. */
+interface Row {
+  label: string | null;
+  topic: string;
+  value: string;
+}
 import { sampleCount } from "./stageNotes";
 
 // Leaflet loads only when a map is first shown; the chart only when it is.
@@ -104,7 +111,9 @@ export function OutputPanel({
           <MarkerMap
             source={view}
             markers={
-              view === "preview" ? (preview?.markers ?? []) : status.markers
+              view === "preview"
+                ? (preview?.outputs.markers ?? [])
+                : status.outputs.markers
             }
           />
         </Suspense>
@@ -113,8 +122,8 @@ export function OutputPanel({
           <LineChart
             chart={
               view === "preview"
-                ? (preview?.chart ?? { lines: [], hidden: 0 })
-                : status.chart
+                ? (preview?.outputs.chart ?? { lines: [], hidden: 0 })
+                : status.outputs.chart
             }
           />
         </Suspense>
@@ -183,12 +192,9 @@ function PreviewOutput({
       </p>
     );
   }
-  const rows: [string, PreviewValue][] = [
-    ...preview.inspected.map((v): [string, PreviewValue] => ["inspect", v]),
-    ...preview.results.map((v): [string, PreviewValue] => [
-      v.sink ?? "to app",
-      v,
-    ]),
+  const rows: [string, Row][] = [
+    ...preview.outputs.inspected.map((v): [string, Row] => ["inspect", v]),
+    ...preview.results.map((v): [string, Row] => [v.sink ?? "to app", v]),
   ];
   const note = preview.note && (
     <p className="pipeline-output__error">{preview.note}</p>
@@ -226,7 +232,7 @@ function LiveCounts({ status }: { status: PipelineStatus }) {
   return (
     <div className="pipeline-output__counts">
       <span>{status.received.toLocaleString()} in</span>
-      <span>{status.emitted.toLocaleString()} out</span>
+      <span>{status.outputs.emitted.toLocaleString()} out</span>
       {status.missed > 0 && (
         <span title="Messages that arrived faster than the Pipeline could handle them">
           {status.missed.toLocaleString()} missed
@@ -237,9 +243,9 @@ function LiveCounts({ status }: { status: PipelineStatus }) {
           {status.returned.toLocaleString()} came back
         </span>
       )}
-      {status.errors > 0 && (
+      {status.outputs.errors > 0 && (
         <span className="pipeline-output__bad">
-          {status.errors.toLocaleString()} errors
+          {status.outputs.errors.toLocaleString()} errors
         </span>
       )}
     </div>
@@ -247,11 +253,11 @@ function LiveCounts({ status }: { status: PipelineStatus }) {
 }
 
 function LiveOutput({ status }: { status: PipelineStatus }) {
-  const inspected = [...status.inspected].reverse();
+  const inspected = [...status.outputs.inspected].reverse();
   return (
     <>
-      {status.lastError && (
-        <p className="pipeline-output__error">{status.lastError}</p>
+      {status.outputs.lastError && (
+        <p className="pipeline-output__error">{status.outputs.lastError}</p>
       )}
       <ol className="pipeline-output__inspected">
         {inspected.map((item, i) => (
