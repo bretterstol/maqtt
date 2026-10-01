@@ -147,6 +147,27 @@ impl HistoryStore {
         }
     }
 
+    /// Changes how many messages every Connection keeps, trimming the oldest at once.
+    pub fn set_per_connection_limit(&mut self, per_connection: usize) {
+        let per_connection = per_connection.max(1);
+        self.default_limits.per_connection = per_connection;
+        for limits in self.limits.values_mut() {
+            limits.per_connection = per_connection;
+        }
+        for history in self.connections.values_mut() {
+            while history.messages.len() > per_connection
+                && let Some((seq, evicted)) = history.messages.pop_first()
+            {
+                if let Some(topic) = history.topics.get_mut(&evicted.topic) {
+                    topic.retain(|s| *s != seq);
+                    if topic.is_empty() {
+                        history.topics.remove(&evicted.topic);
+                    }
+                }
+            }
+        }
+    }
+
     /// Changes one Connection's per-topic cap; it applies as each topic next receives a message.
     pub fn set_per_topic_limit(&mut self, connection_id: ConnectionId, per_topic: usize) {
         let limits = self
@@ -433,6 +454,24 @@ mod tests {
             [2, 3, 4]
         );
         assert_eq!(seqs(&s.topic_history(ConnectionId(1), "a")), [3]);
+    }
+
+    #[test]
+    fn a_lowered_connection_cap_trims_every_connection_at_once() {
+        let mut s = store(100, 100);
+        for seq in 1..=5 {
+            s.insert(message(seq, 1, if seq < 3 { "old" } else { "new" }, ""));
+        }
+        s.insert(message(6, 2, "x", ""));
+        s.set_per_connection_limit(2);
+        assert_eq!(
+            item_seqs(&latest(&s, LogFilter::default(), 10).entries),
+            [4, 5, 6]
+        );
+        assert!(!s.connections[&ConnectionId(1)].topics.contains_key("old"));
+        // And new messages keep to it.
+        s.insert(message(7, 1, "new", ""));
+        assert_eq!(seqs(&s.topic_history(ConnectionId(1), "new")), [5, 7]);
     }
 
     #[test]

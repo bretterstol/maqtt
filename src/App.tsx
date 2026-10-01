@@ -37,13 +37,11 @@ import { PIPELINES_CONNECTION } from "./processing/api";
 import { usePipelineBranchLabel } from "./processing/treeBranches";
 import { getSettings, type SettingsView } from "./settings/api";
 import { SettingsDialog } from "./settings/SettingsView";
+import { DEFAULT_SETTINGS, SettingsContext } from "./settings/context";
 import "./App.css";
 
 // Pipelines live in their own folder and load only when their tab opens (ADR 0004).
 const PipelinesTab = lazy(() => import("./processing/PipelinesTab"));
-
-const LIVE_CAPACITY = 5_000;
-const MAX_SCROLLBACK = 100_000;
 
 interface Editing {
   profile: Profile;
@@ -55,7 +53,10 @@ function App() {
   const [controller] = useState(
     () =>
       new MessageLogController(
-        new MessageLogStore(LIVE_CAPACITY, MAX_SCROLLBACK),
+        new MessageLogStore(
+          DEFAULT_SETTINGS.messageLog.live,
+          DEFAULT_SETTINGS.messageLog.scrollback,
+        ),
       ),
   );
   const { store } = controller;
@@ -81,6 +82,10 @@ function App() {
   useEffect(() => {
     void getSettings().then(setSettings, () => {});
   }, []);
+  const inForce = settings?.settings ?? DEFAULT_SETTINGS;
+  useEffect(() => {
+    store.setLimits(inForce.messageLog.live, inForce.messageLog.scrollback);
+  }, [store, inForce.messageLog.live, inForce.messageLog.scrollback]);
   const [draft, setDraft] = useState<PublishDraft>(() => emptyDraft());
   /** The topic whose "Clear retained" is waiting for confirmation. */
   const [clearing, setClearing] = useState<string | null>(null);
@@ -230,145 +235,147 @@ function App() {
   }, []);
 
   return (
-    <div className="app">
-      <header className="app__header">
-        <strong>måqtt</strong>
-        <button
-          className={publishing ? "is-active" : undefined}
-          onClick={() => setPublishing((open) => !open)}
-        >
-          Publish
-        </button>
-        <span className="app__stats">
-          {rate.toLocaleString()} msg/s · {store.totalReceived.toLocaleString()}{" "}
-          received
-          {store.dropped > 0 &&
-            ` · ${store.dropped.toLocaleString()} not shown live`}
-        </span>
-        <button
-          className={showingSettings ? "is-active" : undefined}
-          disabled={!settings}
-          onClick={() => setShowingSettings(true)}
-        >
-          Settings
-        </button>
-      </header>
-      <div className="app__body">
-        <ProfileList
-          profiles={profiles}
-          statuses={statusesByProfile}
-          onNew={() => void startNew()}
-          onEdit={({ hasPassword, ...profile }) =>
-            setEditing({ profile, hasPassword, isNew: false })
-          }
-          onImported={setProfiles}
-        />
-        <main className="app__main">
-          <nav className="tabs">
-            <button
-              className={tab === "topics" ? "tabs__tab--active" : undefined}
-              onClick={() => setTab("topics")}
-            >
-              Topics
-            </button>
-            <button
-              className={tab === "log" ? "tabs__tab--active" : undefined}
-              onClick={() => setTab("log")}
-            >
-              Message Log
-            </button>
-            {pipelinesOn && (
-              <button
-                className={
-                  tab === "pipelines" ? "tabs__tab--active" : undefined
-                }
-                onClick={() => setTab("pipelines")}
-              >
-                Pipelines
-              </button>
-            )}
-          </nav>
-          {tab === "topics" ? (
-            <div className="app__split">
-              <TopicTree
-                store={tree}
-                connectionNames={connectionNames}
-                connectionStates={connectionStates}
-                selectedKey={selected?.key ?? null}
-                onSelect={setSelected}
-                onContextMenu={(node, x, y) => setMenu({ node, x, y })}
-                branchLabel={pipelineBranchLabel}
-                hidden={pipelinesOn ? undefined : PIPELINES_CONNECTION}
-              />
-              {selected && (
-                <TopicDetail
-                  // A fresh panel per topic, so its history, pin and rate start over.
-                  key={selected.key}
-                  node={selected}
-                  tree={tree}
-                  connectionName={connectionNames.get(selected.connectionId)}
-                  online={isOnline(selected)}
-                  onPublish={() => publishTo(selected)}
-                  confirmingClear={clearing === selected.key}
-                  onClearRetained={() => setClearing(selected.key)}
-                  onConfirmClear={() => void clearRetainedOn(selected)}
-                  onCancelClear={() => setClearing(null)}
-                />
-              )}
-            </div>
-          ) : tab === "log" || !pipelinesOn ? (
-            <MessageLog
-              controller={controller}
-              connectionNames={connectionNames}
-            />
-          ) : (
-            <Suspense fallback={null}>
-              <PipelinesTab />
-            </Suspense>
-          )}
-          {publishing && (
-            <PublishPanel
-              draft={draft}
-              onDraftChange={setDraft}
-              profiles={profiles}
-              statuses={statusesByProfile}
-              onClose={() => setPublishing(false)}
-            />
-          )}
-        </main>
-      </div>
-      {menu && menuItems.length > 0 && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          onClose={() => setMenu(null)}
-          items={menuItems}
-        />
-      )}
-      <Toasts />
-      {showingSettings && settings && (
-        <SettingsDialog
-          view={settings}
-          onChanged={(view) => {
-            setSettings(view);
-            if (!view.settings.pipelines.enabled && tab === "pipelines") {
-              setTab("topics");
+    <SettingsContext.Provider value={inForce}>
+      <div className="app">
+        <header className="app__header">
+          <strong>måqtt</strong>
+          <button
+            className={publishing ? "is-active" : undefined}
+            onClick={() => setPublishing((open) => !open)}
+          >
+            Publish
+          </button>
+          <span className="app__stats">
+            {rate.toLocaleString()} msg/s ·{" "}
+            {store.totalReceived.toLocaleString()} received
+            {store.dropped > 0 &&
+              ` · ${store.dropped.toLocaleString()} not shown live`}
+          </span>
+          <button
+            className={showingSettings ? "is-active" : undefined}
+            disabled={!settings}
+            onClick={() => setShowingSettings(true)}
+          >
+            Settings
+          </button>
+        </header>
+        <div className="app__body">
+          <ProfileList
+            profiles={profiles}
+            statuses={statusesByProfile}
+            onNew={() => void startNew()}
+            onEdit={({ hasPassword, ...profile }) =>
+              setEditing({ profile, hasPassword, isNew: false })
             }
-          }}
-          onClose={() => setShowingSettings(false)}
-        />
-      )}
-      {editing && (
-        <ProfileEditor
-          key={editing.profile.id}
-          profile={editing.profile}
-          hasPassword={editing.hasPassword}
-          isNew={editing.isNew}
-          onSaved={setProfiles}
-          onClose={() => setEditing(null)}
-        />
-      )}
-    </div>
+            onImported={setProfiles}
+          />
+          <main className="app__main">
+            <nav className="tabs">
+              <button
+                className={tab === "topics" ? "tabs__tab--active" : undefined}
+                onClick={() => setTab("topics")}
+              >
+                Topics
+              </button>
+              <button
+                className={tab === "log" ? "tabs__tab--active" : undefined}
+                onClick={() => setTab("log")}
+              >
+                Message Log
+              </button>
+              {pipelinesOn && (
+                <button
+                  className={
+                    tab === "pipelines" ? "tabs__tab--active" : undefined
+                  }
+                  onClick={() => setTab("pipelines")}
+                >
+                  Pipelines
+                </button>
+              )}
+            </nav>
+            {tab === "topics" ? (
+              <div className="app__split">
+                <TopicTree
+                  store={tree}
+                  connectionNames={connectionNames}
+                  connectionStates={connectionStates}
+                  selectedKey={selected?.key ?? null}
+                  onSelect={setSelected}
+                  onContextMenu={(node, x, y) => setMenu({ node, x, y })}
+                  branchLabel={pipelineBranchLabel}
+                  hidden={pipelinesOn ? undefined : PIPELINES_CONNECTION}
+                />
+                {selected && (
+                  <TopicDetail
+                    // A fresh panel per topic, so its history, pin and rate start over.
+                    key={selected.key}
+                    node={selected}
+                    tree={tree}
+                    connectionName={connectionNames.get(selected.connectionId)}
+                    online={isOnline(selected)}
+                    onPublish={() => publishTo(selected)}
+                    confirmingClear={clearing === selected.key}
+                    onClearRetained={() => setClearing(selected.key)}
+                    onConfirmClear={() => void clearRetainedOn(selected)}
+                    onCancelClear={() => setClearing(null)}
+                  />
+                )}
+              </div>
+            ) : tab === "log" || !pipelinesOn ? (
+              <MessageLog
+                controller={controller}
+                connectionNames={connectionNames}
+              />
+            ) : (
+              <Suspense fallback={null}>
+                <PipelinesTab />
+              </Suspense>
+            )}
+            {publishing && (
+              <PublishPanel
+                draft={draft}
+                onDraftChange={setDraft}
+                profiles={profiles}
+                statuses={statusesByProfile}
+                onClose={() => setPublishing(false)}
+              />
+            )}
+          </main>
+        </div>
+        {menu && menuItems.length > 0 && (
+          <ContextMenu
+            x={menu.x}
+            y={menu.y}
+            onClose={() => setMenu(null)}
+            items={menuItems}
+          />
+        )}
+        <Toasts />
+        {showingSettings && settings && (
+          <SettingsDialog
+            view={settings}
+            onChanged={(view) => {
+              setSettings(view);
+              if (!view.settings.pipelines.enabled && tab === "pipelines") {
+                setTab("topics");
+              }
+            }}
+            onClose={() => setShowingSettings(false)}
+          />
+        )}
+        {editing && (
+          <ProfileEditor
+            key={editing.profile.id}
+            profile={editing.profile}
+            hasPassword={editing.hasPassword}
+            isNew={editing.isNew}
+            onSaved={setProfiles}
+            onClose={() => setEditing(null)}
+          />
+        )}
+      </div>
+    </SettingsContext.Provider>
   );
 }
 

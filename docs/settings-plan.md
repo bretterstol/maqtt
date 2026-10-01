@@ -2,7 +2,7 @@
 
 A place to change how måqtt behaves, instead of environment variables, constants in the code and preferences scattered across browser storage. Vocabulary follows [CONTEXT.md](../CONTEXT.md).
 
-Status: decided together; S1 is done, S2 and S3 are next. The decisions are at the end.
+Status: decided together; S1 and S2 are done, S3 is next. The decisions are at the end.
 
 ## What is adjustable today
 
@@ -33,12 +33,13 @@ Browser storage is per machine and invisible: it isn't in the config folder, so 
 | Setting                                                           | Default           | Notes                                                                                                                                                                                          |
 | ----------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Pipelines**: show the Pipelines tab and their Topic Tree branch | On                | The "Later" item from the Pipelines plan. Off hides both entry points (ADR 0004 keeps them one each), stops running Pipelines and starts none, marked or not. On again starts the marked ones. |
-| **History per topic**                                             | 100               | Needs a restart.                                                                                                                                                                               |
-| **History per Connection**                                        | 100,000           | Needs a restart.                                                                                                                                                                               |
-| **Message Log scrollback**: live, and in all                      | 5,000 and 100,000 | Today's constants in `App.tsx`.                                                                                                                                                                |
-| **Default QoS** for new Subscriptions                             | 0                 | What the Subscribe field starts with.                                                                                                                                                          |
+| **History per Connection**                                        | 100,000           | Lowering it trims at once. History per topic stays on each Broker Profile, where it already was.                                                                                               |
+| **Message Log**: kept while live, and scrollback                  | 5,000 and 100,000 | Were constants in `App.tsx`; a smaller live count trims at once.                                                                                                                               |
+| **QoS for new Subscriptions**                                     | 0                 | What the Subscribe field and a Profile's new Subscriptions start with.                                                                                                                         |
 | **Theme**: system, light or dark                                  | System            | Today only the system decides.                                                                                                                                                                 |
 | **Topic Tree opens**: by hand, groups, everything                 | By hand           | Moves the tree's preference out of browser storage, into the file.                                                                                                                             |
+
+Values out of range are refused with what's allowed (history 1,000 to 10,000,000; live 100 to 100,000; scrollback from the live count to 1,000,000), and nothing is saved.
 
 **Connect at startup** isn't a setting here: it's a tick on each Broker Profile, "Connect when måqtt starts", beside the Broker it's about (as Start with måqtt is on each Pipeline). `MAQTT_AUTOCONNECT` keeps working for its session.
 
@@ -58,9 +59,11 @@ Status: done on the `settings-s1` branch. A **Settings** button at the right of 
 
 ### S2: Startup, history and defaults
 
-"Connect when måqtt starts" on each Broker Profile, the two history limits (with the restart note), Message Log scrollback and the default QoS for new Subscriptions. `MAQTT_AUTOCONNECT` keeps working for its session.
+"Connect when måqtt starts" on each Broker Profile, history per Connection, the Message Log's live count and scrollback, and the QoS for new Subscriptions. `MAQTT_AUTOCONNECT` keeps working for its session.
 
-**Done when:** a Broker ticked to connect does so on the next start without the environment variable, a changed history limit applies after a restart, and the scrollback and QoS settings take effect.
+**Done when:** a Broker ticked to connect does so on the next start without the environment variable, and the history, scrollback and QoS settings take effect.
+
+Status: done on the `settings-s2` branch. None of them needs a restart after all: a lower history limit trims every Connection at once, and the Message Log takes new limits as they're saved. A global history per topic was dropped, as each Profile already sets it. Checked over WebDriver: a Profile ticked to connect did so on the next start with no `MAQTT_AUTOCONNECT`; the Subscribe field then started at QoS 1; a scrollback below the live count was refused, and the field went back.
 
 ### S3: Appearance and preferences
 

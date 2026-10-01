@@ -51,8 +51,9 @@ fn get_settings(state: State<'_, AppState>) -> SettingsView {
     state.settings.lock().unwrap().view()
 }
 
-/// Saves new settings and applies them: turning Pipelines off stops every running one, and
-/// turning them on again starts the ones marked to start with måqtt.
+/// Saves new settings and applies them: a new history limit trims at once, turning Pipelines
+/// off stops every running one, and turning them on again starts the ones marked to start
+/// with måqtt.
 #[tauri::command]
 fn set_settings(
     state: State<'_, AppState>,
@@ -62,7 +63,16 @@ fn set_settings(
     let mut store = state.settings.lock().unwrap();
     let was = store.get().pipelines.enabled;
     let now = settings.pipelines.enabled;
+    let per_connection = settings.history.per_connection;
+    let history_changed = per_connection != store.get().history.per_connection;
     store.set(settings)?;
+    if history_changed {
+        state
+            .history
+            .lock()
+            .unwrap()
+            .set_per_connection_limit(per_connection);
+    }
     if was && !now {
         processing.stop_all();
     } else if !was && now {
@@ -276,16 +286,15 @@ fn connect_profile(state: &AppState, profile_id: &ProfileId) -> Result<(), Strin
     Ok(())
 }
 
-/// `MAQTT_AUTOCONNECT=all` or a comma-separated list of Profile names
-/// connects those Profiles at startup.
+/// Connects the Profiles ticked "Connect when måqtt starts", and for this session also those
+/// `MAQTT_AUTOCONNECT` names (`all`, or a comma-separated list of Profile names).
 fn autoconnect(state: &AppState) {
-    let Ok(wanted) = std::env::var("MAQTT_AUTOCONNECT") else {
-        return;
-    };
+    let wanted = std::env::var("MAQTT_AUTOCONNECT").unwrap_or_default();
     let wanted: Vec<&str> = wanted.split(',').map(str::trim).collect();
     let profiles = state.profiles.lock().unwrap().list();
     for view in profiles {
-        if (wanted.contains(&"all") || wanted.contains(&view.profile.name.as_str()))
+        let named = wanted.contains(&"all") || wanted.contains(&view.profile.name.as_str());
+        if (view.profile.connect_at_startup || named)
             && let Err(err) = connect_profile(state, &view.profile.id)
         {
             eprintln!("maqtt: autoconnect {} failed: {err}", view.profile.name);
@@ -445,7 +454,10 @@ pub fn run() {
             .expect("config directory")
             .with_file_name("settings.toml"),
     );
-    let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits::default())));
+    let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits {
+        per_connection: settings.get().history.per_connection,
+        ..HistoryLimits::default()
+    })));
     let (live_filter, _) = watch::channel(LiveFilter::default());
     let connections = Arc::new(Mutex::new(ConnectionManager::default()));
     // `to broker` sends on a Connection by name, as `from` reads one.
