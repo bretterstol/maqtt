@@ -73,6 +73,12 @@ Theme, and the Topic Tree's opening preference moved from browser storage into t
 
 Status: done on the `settings-s3` branch. The theme sets the page's colour scheme, which every colour follows; the window's own frame is left to the system, as on Linux setting the window's theme back to "system" turns the dark preference off instead of following the desktop (found while checking: a fresh start came up light on a dark desktop). The Topic Tree's own menu and Settings change the same setting; a choice an older måqtt left in browser storage is moved into the file once. What stays in browser storage is the Pipelines Reference panel being open, which is per window. Checked over WebDriver across a restart: the old choice moved into the file and the tree opened with it, the light theme applied from the start, the tree's menu saved to the file, and system, light and dark each gave the right colours on a dark desktop.
 
+## Since the plan
+
+- **Show the Message Log tab** (on by default): off hides the tab, as Pipelines can be hidden; the log's limits still apply. Added to try out whether hiding tabs is useful; it's one field and one condition, so easy to take out again.
+- Settings lists Pipelines last, as the least used.
+- **Removed again**: the QoS for new Subscriptions, as the Subscribe field and each saved Subscription already choose it beside where it's used (and persistent sessions, the one case for QoS 1 by default, belong to a Profile); and the "Topic Tree opens" row, which duplicated the tree's own menu. That menu stays the one control, still remembered in `settings.toml`. What's left in Settings is what can't be changed anywhere else.
+
 ## Decisions
 
 1. **Connect at startup** is a tick on each Broker Profile, not a list in Settings.

@@ -80,6 +80,12 @@ function App() {
   const [showingSettings, setShowingSettings] = useState(false);
   // Until the settings arrive, Pipelines show as they always have.
   const pipelinesOn = settings?.settings.pipelines.enabled ?? true;
+  const logShown = settings?.settings.messageLog.shown ?? true;
+  // A tab turned off in Settings shows Topics instead.
+  const shownTab =
+    (tab === "pipelines" && !pipelinesOn) || (tab === "log" && !logShown)
+      ? "topics"
+      : tab;
 
   useEffect(() => {
     void getSettings().then(
@@ -307,21 +313,27 @@ function App() {
           <main className="app__main">
             <nav className="tabs">
               <button
-                className={tab === "topics" ? "tabs__tab--active" : undefined}
+                className={
+                  shownTab === "topics" ? "tabs__tab--active" : undefined
+                }
                 onClick={() => setTab("topics")}
               >
                 Topics
               </button>
-              <button
-                className={tab === "log" ? "tabs__tab--active" : undefined}
-                onClick={() => setTab("log")}
-              >
-                Message Log
-              </button>
+              {logShown && (
+                <button
+                  className={
+                    shownTab === "log" ? "tabs__tab--active" : undefined
+                  }
+                  onClick={() => setTab("log")}
+                >
+                  Message Log
+                </button>
+              )}
               {pipelinesOn && (
                 <button
                   className={
-                    tab === "pipelines" ? "tabs__tab--active" : undefined
+                    shownTab === "pipelines" ? "tabs__tab--active" : undefined
                   }
                   onClick={() => setTab("pipelines")}
                 >
@@ -329,7 +341,7 @@ function App() {
                 </button>
               )}
             </nav>
-            {tab === "topics" ? (
+            {shownTab === "topics" ? (
               <div className="app__split">
                 <TopicTree
                   store={tree}
@@ -360,7 +372,7 @@ function App() {
                   />
                 )}
               </div>
-            ) : tab === "log" || !pipelinesOn ? (
+            ) : shownTab === "log" ? (
               <MessageLog
                 controller={controller}
                 connectionNames={connectionNames}
@@ -395,9 +407,11 @@ function App() {
             view={settings}
             onChanged={(view) => {
               setSettings(view);
-              if (!view.settings.pipelines.enabled && tab === "pipelines") {
-                setTab("topics");
-              }
+              // Leave a tab that was just turned off.
+              const hidden =
+                (tab === "pipelines" && !view.settings.pipelines.enabled) ||
+                (tab === "log" && !view.settings.messageLog.shown);
+              if (hidden) setTab("topics");
             }}
             onClose={() => setShowingSettings(false)}
           />

@@ -11,7 +11,6 @@ pub struct Settings {
     pub pipelines: PipelinesSettings,
     pub history: HistorySettings,
     pub message_log: MessageLogSettings,
-    pub subscriptions: SubscriptionSettings,
     pub appearance: AppearanceSettings,
     pub topic_tree: TopicTreeSettings,
 }
@@ -61,17 +60,12 @@ pub struct HistorySettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct MessageLogSettings {
+    /// The Message Log tab is shown.
+    pub shown: bool,
     /// Messages the Message Log keeps while following live traffic.
     pub live: usize,
     /// How far back it can be scrolled, in messages.
     pub scrollback: usize,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct SubscriptionSettings {
-    /// The QoS new Subscriptions start with.
-    pub default_qos: u8,
 }
 
 impl Default for HistorySettings {
@@ -85,6 +79,7 @@ impl Default for HistorySettings {
 impl Default for MessageLogSettings {
     fn default() -> Self {
         Self {
+            shown: true,
             live: 5_000,
             scrollback: 100_000,
         }
@@ -119,9 +114,6 @@ impl Settings {
             self.message_log.live,
             1_000_000,
         )?;
-        if self.subscriptions.default_qos > 2 {
-            return Err("The default QoS must be 0, 1 or 2".into());
-        }
         Ok(())
     }
 }
@@ -275,9 +267,6 @@ mod tests {
             store.set(bad).unwrap_err(),
             "Message Log scrollback must be from 5000 to 1000000"
         );
-        let mut bad = Settings::default();
-        bad.subscriptions.default_qos = 3;
-        assert!(store.set(bad).is_err());
         assert!(!p.exists());
     }
 
@@ -291,9 +280,9 @@ mod tests {
             (
                 settings.history.per_connection,
                 settings.message_log.live,
-                settings.subscriptions.default_qos
+                settings.message_log.shown
             ),
-            (100_000, 5_000, 0)
+            (100_000, 5_000, true)
         );
     }
 
@@ -309,5 +298,19 @@ mod tests {
         assert!(text.contains("[appearance]\ntheme = \"dark\""), "{text}");
         assert!(text.contains("[topicTree]\nopens = \"groups\""), "{text}");
         assert_eq!(SettingsStore::load(p).get(), &settings);
+    }
+
+    #[test]
+    fn a_file_with_a_setting_since_removed_still_loads() {
+        let p = path("removed");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(
+            &p,
+            "[subscriptions]\ndefaultQos = 1\n\n[messageLog]\nshown = false\n",
+        )
+        .unwrap();
+        let store = SettingsStore::load(p);
+        assert!(store.view().problem.is_none());
+        assert!(!store.get().message_log.shown);
     }
 }

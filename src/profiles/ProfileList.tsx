@@ -16,7 +16,6 @@ import { ContextMenu } from "../ui/ContextMenu";
 import { chooseFile, chooseSavePath } from "../ui/dialogs";
 import { describeImport } from "./draft";
 import { toast } from "../ui/toast";
-import { useSettings } from "../settings/context";
 import "./ProfileList.css";
 
 interface Props {
@@ -207,7 +206,7 @@ function Subscriptions({
   status: ConnectionStatus;
 }) {
   const [filter, setFilter] = useState("");
-  const [qos, setQos] = useState(useSettings().subscriptions.defaultQos);
+  const [qos, setQos] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const add = async () => {
