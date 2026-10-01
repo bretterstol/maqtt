@@ -64,28 +64,6 @@ export function SettingsDialog({
               <option value="dark">Dark</option>
             </select>
           </label>
-          <label className="editor__field">
-            <span>The Topic Tree opens</span>
-            <select
-              value={settings.topicTree.opens}
-              disabled={saving}
-              onChange={(e) =>
-                void change({
-                  ...settings,
-                  topicTree: {
-                    opens: e.target.value as Settings["topicTree"]["opens"],
-                  },
-                })
-              }
-            >
-              <option value="manual">By hand</option>
-              <option value="groups">Groups</option>
-              <option value="all">Everything</option>
-            </select>
-          </label>
-          <p className="settings__does">
-            The tree's own menu changes the same setting.
-          </p>
         </fieldset>
 
         <fieldset className="editor__section">
@@ -150,31 +128,6 @@ export function SettingsDialog({
           <p className="settings__does">
             How many messages the Message Log holds while following live
             traffic, and how far back it can be scrolled.
-          </p>
-        </fieldset>
-
-        <fieldset className="editor__section">
-          <legend>Subscriptions</legend>
-          <label className="editor__field">
-            <span>QoS for new Subscriptions</span>
-            <select
-              value={settings.subscriptions.defaultQos}
-              disabled={saving}
-              onChange={(e) =>
-                void change({
-                  ...settings,
-                  subscriptions: { defaultQos: Number(e.target.value) },
-                })
-              }
-            >
-              <option value={0}>0: at most once</option>
-              <option value={1}>1: at least once</option>
-              <option value={2}>2: exactly once</option>
-            </select>
-          </label>
-          <p className="settings__does">
-            What the Subscribe field and a Profile's new Subscriptions start
-            with. Connecting at startup is set on each Broker Profile.
           </p>
         </fieldset>
 

@@ -77,6 +77,7 @@ Status: done on the `settings-s3` branch. The theme sets the page's colour schem
 
 - **Show the Message Log tab** (on by default): off hides the tab, as Pipelines can be hidden; the log's limits still apply. Added to try out whether hiding tabs is useful; it's one field and one condition, so easy to take out again.
 - Settings lists Pipelines last, as the least used.
+- **Removed again**: the QoS for new Subscriptions, as the Subscribe field and each saved Subscription already choose it beside where it's used (and persistent sessions, the one case for QoS 1 by default, belong to a Profile); and the "Topic Tree opens" row, which duplicated the tree's own menu. That menu stays the one control, still remembered in `settings.toml`. What's left in Settings is what can't be changed anywhere else.
 
 ## Decisions
 

@@ -20,10 +20,6 @@ export interface Settings {
     /** How far back the Message Log can be scrolled, in messages. */
     scrollback: number;
   };
-  subscriptions: {
-    /** The QoS new Subscriptions start with. */
-    defaultQos: number;
-  };
   appearance: {
     theme: "system" | "light" | "dark";
   };
