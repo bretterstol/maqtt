@@ -3,7 +3,7 @@
 //! reads the Message Bus through its own receiver: if it falls behind, it misses messages and
 //! counts them, instead of holding anyone else up.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -14,12 +14,13 @@ use tokio::sync::Notify;
 
 use super::files::FileSink;
 use super::lang::{Pipeline, Source};
-use super::outputs::{Delivery, Outputs};
-use super::sources::{Arrival, Live};
-use super::stages::{Effect, Origin, Runtime};
+use super::outputs::Outputs;
+use super::run::{Outlets, Run, Step};
+use super::sources::Live;
+use super::stages::Runtime;
 use crate::bus::{Bus, BusEvent};
 use crate::connection::{ConnectionState, ConnectionStatus, ConnectionStatuses};
-use crate::message::{ConnectionId, ReceivedMessage, now_ms};
+use crate::message::ConnectionId;
 use crate::profile::ProfileId;
 
 /// Sends a payload to a topic on the Connection with this name, without waiting, for
@@ -28,13 +29,8 @@ pub type Republish = Arc<dyn Fn(&str, &str, Vec<u8>) -> Result<(), String> + Sen
 
 /// The pseudo-Connection that Derived Topics come from; real Connections start at 1.
 pub const PIPELINES: ConnectionId = ConnectionId(0);
-const TICK: Duration = Duration::from_millis(50);
 /// How long stopping waits for a Pipeline's thread before giving up on it.
 const STOP_WAIT: Duration = Duration::from_secs(1);
-/// How long a republished message is remembered, to recognise it when a Broker sends it back.
-const ECHO_WINDOW: Duration = Duration::from_secs(10);
-/// At most this many are remembered; past that, the oldest are forgotten.
-const ECHO_KEPT: usize = 10_000;
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,23 +113,21 @@ impl Runner {
         let (done_tx, done) = mpsc::channel();
         let job = Job {
             name: name.to_string(),
-            halted: halted.clone(),
-            _done: done_tx,
             pipeline,
             bus: self.bus.clone(),
             republish: self.republish.clone(),
-            sent: Sent::default(),
-            files: FileSink::new(self.files_dir.clone()),
-            reading: Vec::new(),
+            files_dir: self.files_dir.clone(),
             names: self
                 .statuses
                 .snapshot()
                 .into_iter()
                 .map(|s| (s.connection_id, s.name))
                 .collect(),
-            rx: Some(self.bus.subscribe()),
+            rx: self.bus.subscribe(),
             stop: stop.clone(),
+            halted: halted.clone(),
             status: status.clone(),
+            _done: done_tx,
         };
         std::thread::Builder::new()
             .name(format!("pipeline {name}"))
@@ -286,68 +280,16 @@ impl Runner {
     }
 }
 
-/// What a Pipeline republished lately, as fingerprints of topic and payload.
-#[derive(Default)]
-struct Sent {
-    order: VecDeque<(Instant, u64)>,
-    counts: HashMap<u64, usize>,
-}
-
-impl Sent {
-    fn fingerprint(topic: &str, payload: &[u8]) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (topic, payload).hash(&mut hasher);
-        hasher.finish()
-    }
-
-    fn remember(&mut self, topic: &str, payload: &[u8], now: Instant) {
-        if self.order.len() == ECHO_KEPT {
-            self.forget_oldest();
-        }
-        let print = Self::fingerprint(topic, payload);
-        self.order.push_back((now, print));
-        *self.counts.entry(print).or_default() += 1;
-    }
-
-    /// Whether this is a message it republished within [`ECHO_WINDOW`]. Every copy counts, as
-    /// one message can come back on several Connections.
-    fn recognises(&mut self, topic: &str, payload: &[u8], now: Instant) -> bool {
-        while self
-            .order
-            .front()
-            .is_some_and(|(at, _)| now.duration_since(*at) > ECHO_WINDOW)
-        {
-            self.forget_oldest();
-        }
-        !self.counts.is_empty() && self.counts.contains_key(&Self::fingerprint(topic, payload))
-    }
-
-    fn forget_oldest(&mut self) {
-        if let Some((_, print)) = self.order.pop_front()
-            && let Some(n) = self.counts.get_mut(&print)
-        {
-            *n -= 1;
-            if *n == 0 {
-                self.counts.remove(&print);
-            }
-        }
-    }
-}
-
-/// Everything a Pipeline's thread needs.
+/// Everything a Pipeline's thread needs. The thread waits for the next arrival (or a stop)
+/// and hands it to the [`Run`], which decides everything else.
 struct Job {
     name: String,
     pipeline: Pipeline,
     bus: Bus,
     republish: Republish,
-    sent: Sent,
-    files: FileSink,
-    /// The files a file Source reads, which `to file` mustn't write.
-    reading: Vec<PathBuf>,
+    files_dir: PathBuf,
     names: HashMap<ConnectionId, String>,
-    /// Taken by the live Source once the thread starts.
-    rx: Option<tokio::sync::broadcast::Receiver<BusEvent>>,
+    rx: tokio::sync::broadcast::Receiver<BusEvent>,
     stop: Arc<Notify>,
     halted: Arc<AtomicBool>,
     status: Arc<Mutex<PipelineStatus>>,
@@ -364,16 +306,14 @@ impl Job {
         runtime.block_on(self.run_async());
     }
 
-    async fn run_async(mut self) {
+    async fn run_async(self) {
         // jq values aren't Send, so the Pipeline (and a file Source's reader) are made on its
         // own thread.
         let started = Runtime::new(&self.pipeline).and_then(|pipeline| {
-            let rx = self.rx.take().expect("a fresh Job has its receiver");
-            let names = std::mem::take(&mut self.names);
-            let source = Live::new(&self.pipeline.from, rx, names, self.files.dir())?;
+            let source = Live::new(&self.pipeline.from, self.rx, self.names, &self.files_dir)?;
             Ok((pipeline, source))
         });
-        let (mut pipeline, mut source) = match started {
+        let (pipeline, mut source) = match started {
             Ok(started) => started,
             Err(err) => {
                 let mut status = self.status.lock().unwrap();
@@ -382,150 +322,38 @@ impl Job {
                 return;
             }
         };
-        self.reading = source.reading().to_vec();
-        let mut effects = Vec::new();
-        let mut next_tick = Instant::now() + TICK;
+        let outlets = Outlets {
+            name: self.name,
+            bus: self.bus,
+            republish: self.republish,
+            files: FileSink::new(self.files_dir),
+            reading: source.reading().to_vec(),
+        };
+        let mut run = Run::new(
+            pipeline,
+            outlets,
+            self.status.clone(),
+            self.halted,
+            Instant::now(),
+        );
         loop {
             let arrival = tokio::select! {
                 biased;
                 _ = self.stop.notified() => break,
-                arrival = source.next(next_tick) => arrival,
+                arrival = source.next(run.next_tick()) => arrival,
             };
-            let now = Instant::now();
-            match arrival {
-                // Time to tick, nothing else.
-                None => {}
-                Some(Arrival::Message {
-                    message,
-                    connection,
-                    from_broker,
-                    problem,
-                }) => {
-                    // What it republished comes back on any Connection to that Broker, and
-                    // several profiles can reach one Broker: taking it in again could loop.
-                    if from_broker && self.sent.recognises(&message.topic, &message.payload, now) {
-                        self.status.lock().unwrap().returned += 1;
-                        continue;
-                    }
-                    let mut status = self.status.lock().unwrap();
-                    status.received += 1;
-                    if let Some(problem) = problem {
-                        status.outputs.failed(problem);
-                    }
-                    drop(status);
-                    pipeline.push(Origin::new(message, &connection), now, &mut effects);
-                }
-                Some(Arrival::Missed(n)) => self.status.lock().unwrap().missed += n,
-                Some(Arrival::Problem(problem)) => {
-                    self.status.lock().unwrap().outputs.failed(problem);
-                }
-                Some(Arrival::Done) => {
-                    self.finish(&mut pipeline, &mut effects);
-                    break;
-                }
-                Some(Arrival::Closed) => break,
-            }
-            if now >= next_tick {
-                pipeline.tick(now, &mut effects);
-                next_tick = now + TICK;
-            }
-            if pipeline.finished() {
-                // A `take` is done.
-                self.finish(&mut pipeline, &mut effects);
-                break;
-            }
-            self.handle(&mut effects);
-            if self.halted.load(Ordering::SeqCst) {
+            if run.step(arrival, Instant::now()) == Step::Ended {
                 break;
             }
         }
         self.status.lock().unwrap().running = false;
-    }
-
-    /// The Pipeline has read all it will: what later Stages still hold is sent, and it's done.
-    fn finish(&mut self, pipeline: &mut Runtime, effects: &mut Vec<Effect>) {
-        pipeline.flush(Instant::now(), effects);
-        self.handle(effects);
-        self.status.lock().unwrap().finished = true;
-    }
-
-    fn handle(&mut self, effects: &mut Vec<Effect>) {
-        if effects.is_empty() {
-            return;
-        }
-        if self.halted.load(Ordering::SeqCst) {
-            effects.clear();
-            return;
-        }
-        let status = self.status.clone();
-        let mut status = status.lock().unwrap();
-        let outputs = &mut status.outputs;
-        let mut wrote = false;
-        for effect in effects.drain(..) {
-            let Some(delivery) = outputs.record(effect, now_ms()) else {
-                continue;
-            };
-            wrote |= matches!(delivery, Delivery::Write { .. });
-            match self.deliver(delivery) {
-                Ok(()) => outputs.delivered(),
-                Err(error) => outputs.failed(error),
-            }
-        }
-        if wrote && let Err(err) = self.files.flush() {
-            outputs.failed(format!("to file: {err}"));
-        }
-    }
-
-    /// Sends a Sink's value out: onto the bus, to a Broker, into a file.
-    fn deliver(&mut self, delivery: Delivery) -> Result<(), String> {
-        match delivery {
-            Delivery::Derived { topic, payload } => {
-                self.bus
-                    .publish(BusEvent::Message(Arc::new(ReceivedMessage {
-                        seq: self.bus.next_seq(),
-                        connection_id: PIPELINES,
-                        topic: format!("{}/{topic}", self.name),
-                        payload: payload.into(),
-                        qos: 0,
-                        retain: false,
-                        received_at_ms: now_ms(),
-                        properties: None,
-                    })));
-                Ok(())
-            }
-            Delivery::Republish {
-                broker,
-                topic,
-                payload,
-            } => {
-                (self.republish)(&broker, &topic, payload.clone())
-                    .map_err(|err| format!("to broker \"{broker}\" on {topic}: {err}"))?;
-                self.sent.remember(&topic, &payload, Instant::now());
-                Ok(())
-            }
-            Delivery::Write {
-                path,
-                format,
-                rotate,
-                record,
-            } => {
-                if self.reading.contains(&self.files.resolve(&path)) {
-                    return Err(format!(
-                        "to file: not written to {path}: this Pipeline reads it, so it would read its own output"
-                    ));
-                }
-                self.files
-                    .write(&path, format, rotate, &record, &jiff::Zoned::now())
-                    .map(|_| ())
-                    .map_err(|err| format!("to file: {err}"))
-            }
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::{ReceivedMessage, now_ms};
     use crate::processing::lang::parse;
     use bytes::Bytes;
 
@@ -620,28 +448,6 @@ mod tests {
         });
         runner.stop("warm");
         wait_for("stopped", || !runner.status("warm").unwrap().running);
-    }
-
-    #[test]
-    fn errors_and_inspect_show_in_the_status() {
-        let (bus, runner) = setup();
-        runner
-            .start(
-                "check",
-                parse(r#"from "Dev Broker" |> inspect "raw" |> map .a + 1"#).unwrap(),
-            )
-            .unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        bus.publish(message(&bus, 1, "t", r#"{"a": "x"}"#));
-        // From another Connection: not this Pipeline's.
-        bus.publish(message(&bus, 2, "t", r#"{"a": 1}"#));
-        wait_for("error", || {
-            runner.status("check").unwrap().outputs.errors == 1
-        });
-        let status = runner.status("check").unwrap();
-        assert_eq!(status.received, 1);
-        assert_eq!(status.outputs.inspected[0].value, r#"{"a":"x"}"#);
-        assert!(status.outputs.last_error.unwrap().starts_with("map on t:"));
     }
 
     #[test]
@@ -749,125 +555,6 @@ mod tests {
         let status = runner.status("few").unwrap();
         assert!(!status.running && status.outputs.emitted == 2, "{status:?}");
         assert!(!runner.is_running("few"));
-    }
-
-    #[test]
-    fn to_broker_republishes_and_reports_what_it_couldnt_send() {
-        let (bus, runner, sent) = setup_sending();
-        runner
-            .start(
-                "copy",
-                parse(
-                    r#"from "Dev Broker" |> to broker "Office" "copy/{$topic}" |> to broker "Home" "x""#,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        bus.publish(message(&bus, 1, "a/b", r#"{"t": 1}"#));
-        wait_for("sent", || {
-            runner.status("copy").unwrap().outputs.errors == 1
-        });
-        assert_eq!(
-            *sent.lock().unwrap(),
-            vec![("Office".into(), "copy/a/b".into(), br#"{"t":1}"#.to_vec())]
-        );
-        let status = runner.status("copy").unwrap();
-        assert_eq!(status.outputs.emitted, 1);
-        assert_eq!(
-            status.outputs.last_error.as_deref(),
-            Some(r#"to broker "Home" on x: Home isn't connected"#)
-        );
-        runner.stop("copy");
-    }
-
-    #[test]
-    fn its_own_messages_coming_back_on_another_connection_are_left_out() {
-        // "Office" sends back what it gets as Connection 1, as when two profiles reach one
-        // Broker: the name check can't see that loop.
-        let (bus, runner, sent) = setup_sending();
-        runner
-            .start(
-                "echo",
-                parse(r#"from "Dev Broker" |> to broker "Office" "copy/{$topic}""#).unwrap(),
-            )
-            .unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        bus.publish(message(&bus, 1, "a", "1"));
-        wait_for("sent", || sent.lock().unwrap().len() == 1);
-        let (_, topic, payload) = sent.lock().unwrap()[0].clone();
-        for _ in 0..2 {
-            bus.publish(message(
-                &bus,
-                1,
-                &topic,
-                std::str::from_utf8(&payload).unwrap(),
-            ));
-        }
-        // Another message with the same payload on another topic is still taken in.
-        bus.publish(message(&bus, 1, "b", "1"));
-        wait_for("counts", || {
-            let s = runner.status("echo").unwrap();
-            s.returned == 2 && s.received == 2
-        });
-        let topics: Vec<String> = sent.lock().unwrap().iter().map(|s| s.1.clone()).collect();
-        assert_eq!(topics, ["copy/a", "copy/b"]);
-        runner.stop("echo");
-    }
-
-    #[test]
-    fn sent_messages_are_forgotten_after_the_window_or_past_the_limit() {
-        let now = Instant::now();
-        let mut sent = Sent::default();
-        sent.remember("t", b"1", now);
-        assert!(sent.recognises("t", b"1", now + Duration::from_secs(1)));
-        assert!(!sent.recognises("t", b"2", now));
-        assert!(!sent.recognises("t", b"1", now + ECHO_WINDOW + Duration::from_secs(1)));
-        assert!(sent.counts.is_empty() && sent.order.is_empty());
-
-        for i in 0..=ECHO_KEPT {
-            sent.remember(&i.to_string(), b"", now);
-        }
-        assert_eq!(sent.order.len(), ECHO_KEPT);
-        assert!(!sent.recognises("0", b"", now));
-        assert!(sent.recognises("1", b"", now));
-    }
-
-    #[test]
-    fn to_file_writes_what_a_started_pipeline_sends() {
-        let dir = std::env::temp_dir().join(format!("maqtt-runner-files-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let (bus, _) = setup();
-        let statuses = ConnectionStatuses::default();
-        let runner = Runner::new(
-            bus.clone(),
-            statuses,
-            Arc::new(|_, _, _| Ok(())),
-            dir.clone(),
-        );
-        runner
-            .start(
-                "log",
-                parse(r#"from all |> filter topic "home/+room" |> map { room: $room, t: .t } |> to file "{$room}.csv""#)
-                    .unwrap(),
-            )
-            .unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 21}"#));
-        bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 22}"#));
-        bus.publish(message(&bus, 1, "home/office", r#"{"t": 19}"#));
-        wait_for("written", || {
-            runner.status("log").unwrap().outputs.emitted == 3
-        });
-        runner.stop("log");
-        assert_eq!(
-            std::fs::read_to_string(dir.join("kitchen.csv")).unwrap(),
-            "room,t\nkitchen,21\nkitchen,22\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.join("office.csv")).unwrap(),
-            "room,t\noffice,19\n"
-        );
     }
 
     #[test]
