@@ -11,6 +11,7 @@ pub mod keyed;
 pub mod lang;
 pub mod lines;
 pub mod markers;
+pub mod outputs;
 pub mod preview;
 #[cfg(test)]
 mod reference_tests;
@@ -330,6 +331,7 @@ mod tests {
         assert!(!broken.running);
         assert!(
             broken
+                .outputs
                 .last_error
                 .unwrap()
                 .starts_with("Didn't start with måqtt: Line 1, column 13: Unknown Stage `sort`")

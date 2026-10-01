@@ -11,11 +11,10 @@ use serde::Serialize;
 use super::file_source::{FileReader, Next};
 use super::lang::Source;
 use super::lang::{self, Diagnostic};
-use super::lines::Lines;
-use super::markers::Markers;
+use super::outputs::{Delivery, Outputs};
 use super::runner::{FILE_CONNECTION, PIPELINES, derived_from};
-use super::stages::{self, Effect, Origin, Runtime, StageTrace};
-use crate::message::{ConnectionId, ReceivedMessage};
+use super::stages::{self, Origin, Runtime, StageTrace};
+use crate::message::{ConnectionId, ReceivedMessage, now_ms};
 
 /// How many recent matching messages a Preview runs over.
 pub const SAMPLE: usize = 100;
@@ -44,15 +43,12 @@ pub struct Preview {
     /// The latest values that reached a Sink, oldest first. Nothing is sent or written: `to
     /// broker` and `to file` values only show here.
     pub results: Vec<PreviewValue>,
-    pub inspected: Vec<PreviewValue>,
     /// What the sample is: recent messages, records from files, or Derived Topics.
     pub sampled: Sampled,
     /// Why a file Source gave fewer records than it might: a file that couldn't be read.
     pub note: Option<String>,
-    /// Where its `to geo` values would put their markers.
-    pub markers: Markers,
-    /// Its `to chart` values, a line per series.
-    pub chart: Lines,
+    /// What its Sinks would show: `inspect` values, markers, chart lines, counts.
+    pub outputs: Outputs,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -91,11 +87,9 @@ pub fn preview(
         ends: Vec::new(),
         stages: Vec::new(),
         results: Vec::new(),
-        inspected: Vec::new(),
         sampled: Sampled::Messages,
         note: None,
-        markers: Markers::default(),
-        chart: Lines::default(),
+        outputs: Outputs::default(),
     };
     let pipeline = match lang::parse(source) {
         Ok(pipeline) => pipeline,
@@ -179,58 +173,13 @@ pub fn preview(
     // it now.
     runtime.flush(last, &mut effects);
 
+    // The same outputs a running Pipeline keeps; what it would deliver is only listed.
     for effect in effects {
-        match effect {
-            Effect::Derived { topic, payload } => preview.results.push(PreviewValue {
-                sink: Some("to app".into()),
-                label: None,
-                topic,
-                value: String::from_utf8_lossy(&payload).into_owned(),
-            }),
-            Effect::Republish {
-                broker,
-                topic,
-                payload,
-            } => preview.results.push(PreviewValue {
-                sink: Some(format!("to broker \"{broker}\"")),
-                label: None,
-                topic,
-                value: String::from_utf8_lossy(&payload).into_owned(),
-            }),
-            Effect::Inspected {
-                label,
-                topic,
-                value,
-            } => preview.inspected.push(PreviewValue {
-                sink: None,
-                label,
-                topic,
-                value,
-            }),
-            Effect::Point {
-                key,
-                label,
-                lat,
-                lon,
-                at_ms,
-            } => preview.markers.place(key, label, lat, lon, at_ms),
-            Effect::Snapshot { points, at_ms } => preview.markers.replace(points, at_ms),
-            Effect::Sample {
-                series,
-                value,
-                at_ms,
-            } => preview.chart.add(&series, at_ms, value),
-            Effect::Write { path, record, .. } => preview.results.push(PreviewValue {
-                sink: Some("to file".into()),
-                label: None,
-                topic: path,
-                value: record.to_string(),
-            }),
-            Effect::Error(_) => {}
+        if let Some(delivery) = preview.outputs.record(effect, now_ms()) {
+            preview.results.push(would_send(delivery));
         }
     }
     keep_last(&mut preview.results, SHOWN);
-    keep_last(&mut preview.inspected, SHOWN);
     preview.stages = runtime.trace().to_vec();
     preview
 }
@@ -279,6 +228,33 @@ fn file_sample(
         }
     }
     (sample, note)
+}
+
+/// A row for what a Sink would send, which Preview shows instead of sending it.
+fn would_send(delivery: Delivery) -> PreviewValue {
+    let (sink, topic, value) = match delivery {
+        Delivery::Derived { topic, payload } => (
+            "to app".to_string(),
+            topic,
+            String::from_utf8_lossy(&payload).into_owned(),
+        ),
+        Delivery::Republish {
+            broker,
+            topic,
+            payload,
+        } => (
+            format!("to broker \"{broker}\""),
+            topic,
+            String::from_utf8_lossy(&payload).into_owned(),
+        ),
+        Delivery::Write { path, record, .. } => ("to file".to_string(), path, record.to_string()),
+    };
+    PreviewValue {
+        sink: Some(sink),
+        label: None,
+        topic,
+        value,
+    }
 }
 
 fn keep_last<T>(values: &mut Vec<T>, n: usize) {
@@ -495,6 +471,7 @@ mod tests {
             Path::new("/nowhere"),
         );
         let markers: Vec<(String, f64, usize)> = p
+            .outputs
             .markers
             .list()
             .iter()

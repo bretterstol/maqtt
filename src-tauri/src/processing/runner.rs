@@ -16,8 +16,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::file_source::{FileReader, Next};
 use super::files::FileSink;
 use super::lang::{FileSource, Pipeline, Source};
-use super::lines::Lines;
-use super::markers::Markers;
+use super::outputs::{Delivery, Outputs};
 use super::stages::{Effect, Origin, Runtime};
 use crate::bus::{Bus, BusEvent};
 use crate::connection::{ConnectionState, ConnectionStatus, ConnectionStatuses};
@@ -34,7 +33,6 @@ pub const FILE_CONNECTION: &str = "file";
 /// The pseudo-Connection that Derived Topics come from; real Connections start at 1.
 pub const PIPELINES: ConnectionId = ConnectionId(0);
 const TICK: Duration = Duration::from_millis(50);
-const INSPECTED_KEPT: usize = 50;
 /// How long stopping waits for a Pipeline's thread before giving up on it.
 const STOP_WAIT: Duration = Duration::from_secs(1);
 /// How long a republished message is remembered, to recognise it when a Broker sends it back.
@@ -51,29 +49,12 @@ pub struct PipelineStatus {
     pub finished: bool,
     /// Messages from the Pipeline's Connections that entered it.
     pub received: u64,
-    /// Messages its Sinks sent: Derived Topics and republished messages.
-    pub emitted: u64,
     /// Messages it missed because it fell behind.
     pub missed: u64,
     /// Its own republished messages that came back from a Broker and were left out.
     pub returned: u64,
-    pub errors: u64,
-    pub last_error: Option<String>,
-    /// The latest `inspect` values, newest last.
-    pub inspected: VecDeque<Inspected>,
-    /// Where its `to geo` values put their markers.
-    pub markers: Markers,
-    /// Its `to chart` values, a line per series.
-    pub chart: Lines,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Inspected {
-    pub label: Option<String>,
-    pub topic: String,
-    pub value: String,
-    pub at_ms: u64,
+    /// What its Sinks show: counts, errors, `inspect` values, markers, chart lines.
+    pub outputs: Outputs,
 }
 
 struct Handle {
@@ -224,7 +205,7 @@ impl Runner {
             let mut status = handle.status.lock().unwrap().clone();
             status.running = false;
             if stuck {
-                status.last_error = Some(format!(
+                status.outputs.last_error = Some(format!(
                     "It didn't stop within {} s, most likely stuck in an expression that never ends. It sends nothing more.",
                     STOP_WAIT.as_secs()
                 ));
@@ -250,7 +231,10 @@ impl Runner {
             name.to_string(),
             PipelineStatus {
                 name: name.to_string(),
-                last_error: Some(error),
+                outputs: Outputs {
+                    last_error: Some(error),
+                    ..Outputs::default()
+                },
                 ..PipelineStatus::default()
             },
         );
@@ -408,7 +392,7 @@ impl Job {
             Err(err) => {
                 let mut status = self.status.lock().unwrap();
                 status.running = false;
-                status.last_error = Some(err);
+                status.outputs.last_error = Some(err);
                 return;
             }
         };
@@ -480,7 +464,7 @@ impl Job {
             Err(err) => {
                 let mut status = self.status.lock().unwrap();
                 status.running = false;
-                status.last_error = Some(err);
+                status.outputs.last_error = Some(err);
                 return;
             }
         };
@@ -506,8 +490,7 @@ impl Job {
                     let mut status = self.status.lock().unwrap();
                     status.received += 1;
                     if let Some(problem) = record.problem {
-                        status.errors += 1;
-                        status.last_error = Some(problem);
+                        status.outputs.failed(problem);
                     }
                     drop(status);
                     seq += 1;
@@ -525,8 +508,7 @@ impl Job {
                 }
                 Next::Problem(problem) => {
                     let mut status = self.status.lock().unwrap();
-                    status.errors += 1;
-                    status.last_error = Some(problem);
+                    status.outputs.failed(problem);
                 }
                 Next::Wait(wait) => {
                     let wait = wait
@@ -568,109 +550,66 @@ impl Job {
         }
         let status = self.status.clone();
         let mut status = status.lock().unwrap();
+        let outputs = &mut status.outputs;
         let mut wrote = false;
         for effect in effects.drain(..) {
-            match effect {
-                Effect::Derived { topic, payload } => {
-                    status.emitted += 1;
-                    self.bus
-                        .publish(BusEvent::Message(Arc::new(ReceivedMessage {
-                            seq: self.bus.next_seq(),
-                            connection_id: PIPELINES,
-                            topic: format!("{}/{topic}", self.name),
-                            payload: payload.into(),
-                            qos: 0,
-                            retain: false,
-                            received_at_ms: now_ms(),
-                            properties: None,
-                        })));
-                }
-                Effect::Republish {
-                    broker,
-                    topic,
-                    payload,
-                } => match (self.republish)(&broker, &topic, payload.clone()) {
-                    Ok(()) => {
-                        status.emitted += 1;
-                        self.sent.remember(&topic, &payload, Instant::now());
-                    }
-                    Err(err) => {
-                        status.errors += 1;
-                        status.last_error =
-                            Some(format!("to broker \"{broker}\" on {topic}: {err}"));
-                    }
-                },
-                Effect::Write {
-                    path,
-                    format,
-                    rotate,
-                    record,
-                } => {
-                    wrote = true;
-                    if self.reading.contains(&self.files.resolve(&path)) {
-                        status.errors += 1;
-                        status.last_error = Some(format!(
-                            "to file: not written to {path}: this Pipeline reads it, so it would read its own output"
-                        ));
-                        continue;
-                    }
-                    match self
-                        .files
-                        .write(&path, format, rotate, &record, &jiff::Zoned::now())
-                    {
-                        Ok(_) => status.emitted += 1,
-                        Err(err) => {
-                            status.errors += 1;
-                            status.last_error = Some(format!("to file: {err}"));
-                        }
-                    }
-                }
-                Effect::Point {
-                    key,
-                    label,
-                    lat,
-                    lon,
-                    at_ms,
-                } => {
-                    status.emitted += 1;
-                    status.markers.place(key, label, lat, lon, at_ms);
-                }
-                Effect::Sample {
-                    series,
-                    value,
-                    at_ms,
-                } => {
-                    status.emitted += 1;
-                    status.chart.add(&series, at_ms, value);
-                }
-                Effect::Snapshot { points, at_ms } => {
-                    status.emitted += 1;
-                    status.markers.replace(points, at_ms);
-                }
-                Effect::Inspected {
-                    label,
-                    topic,
-                    value,
-                } => {
-                    if status.inspected.len() == INSPECTED_KEPT {
-                        status.inspected.pop_front();
-                    }
-                    status.inspected.push_back(Inspected {
-                        label,
-                        topic,
-                        value,
-                        at_ms: now_ms(),
-                    });
-                }
-                Effect::Error(err) => {
-                    status.errors += 1;
-                    status.last_error = Some(err);
-                }
+            let Some(delivery) = outputs.record(effect, now_ms()) else {
+                continue;
+            };
+            wrote |= matches!(delivery, Delivery::Write { .. });
+            match self.deliver(delivery) {
+                Ok(()) => outputs.delivered(),
+                Err(error) => outputs.failed(error),
             }
         }
         if wrote && let Err(err) = self.files.flush() {
-            status.errors += 1;
-            status.last_error = Some(format!("to file: {err}"));
+            outputs.failed(format!("to file: {err}"));
+        }
+    }
+
+    /// Sends a Sink's value out: onto the bus, to a Broker, into a file.
+    fn deliver(&mut self, delivery: Delivery) -> Result<(), String> {
+        match delivery {
+            Delivery::Derived { topic, payload } => {
+                self.bus
+                    .publish(BusEvent::Message(Arc::new(ReceivedMessage {
+                        seq: self.bus.next_seq(),
+                        connection_id: PIPELINES,
+                        topic: format!("{}/{topic}", self.name),
+                        payload: payload.into(),
+                        qos: 0,
+                        retain: false,
+                        received_at_ms: now_ms(),
+                        properties: None,
+                    })));
+                Ok(())
+            }
+            Delivery::Republish {
+                broker,
+                topic,
+                payload,
+            } => {
+                (self.republish)(&broker, &topic, payload.clone())
+                    .map_err(|err| format!("to broker \"{broker}\" on {topic}: {err}"))?;
+                self.sent.remember(&topic, &payload, Instant::now());
+                Ok(())
+            }
+            Delivery::Write {
+                path,
+                format,
+                rotate,
+                record,
+            } => {
+                if self.reading.contains(&self.files.resolve(&path)) {
+                    return Err(format!(
+                        "to file: not written to {path}: this Pipeline reads it, so it would read its own output"
+                    ));
+                }
+                self.files
+                    .write(&path, format, rotate, &record, &jiff::Zoned::now())
+                    .map(|_| ())
+                    .map_err(|err| format!("to file: {err}"))
+            }
         }
     }
 }
@@ -768,7 +707,7 @@ mod tests {
 
         wait_for("counts", || {
             let s = runner.status("warm").unwrap();
-            s.received == 2 && s.emitted == 1
+            s.received == 2 && s.outputs.emitted == 1
         });
         runner.stop("warm");
         wait_for("stopped", || !runner.status("warm").unwrap().running);
@@ -787,11 +726,13 @@ mod tests {
         bus.publish(message(&bus, 1, "t", r#"{"a": "x"}"#));
         // From another Connection: not this Pipeline's.
         bus.publish(message(&bus, 2, "t", r#"{"a": 1}"#));
-        wait_for("error", || runner.status("check").unwrap().errors == 1);
+        wait_for("error", || {
+            runner.status("check").unwrap().outputs.errors == 1
+        });
         let status = runner.status("check").unwrap();
         assert_eq!(status.received, 1);
-        assert_eq!(status.inspected[0].value, r#"{"a":"x"}"#);
-        assert!(status.last_error.unwrap().starts_with("map on t:"));
+        assert_eq!(status.outputs.inspected[0].value, r#"{"a":"x"}"#);
+        assert!(status.outputs.last_error.unwrap().starts_with("map on t:"));
     }
 
     #[test]
@@ -836,7 +777,7 @@ mod tests {
         assert!(asked.elapsed() < STOP_WAIT + Duration::from_millis(500));
         let status = runner.status("stuck").unwrap();
         assert!(!status.running);
-        assert!(status.last_error.unwrap().contains("didn't stop"));
+        assert!(status.outputs.last_error.unwrap().contains("didn't stop"));
         while let Ok(event) = rx.try_recv() {
             assert!(
                 !matches!(event, BusEvent::Message(m) if m.connection_id == PIPELINES),
@@ -897,7 +838,7 @@ mod tests {
         }
         wait_for("finished", || runner.status("few").unwrap().finished);
         let status = runner.status("few").unwrap();
-        assert!(!status.running && status.emitted == 2, "{status:?}");
+        assert!(!status.running && status.outputs.emitted == 2, "{status:?}");
         assert!(!runner.is_running("few"));
     }
 
@@ -915,15 +856,17 @@ mod tests {
             .unwrap();
         std::thread::sleep(Duration::from_millis(100));
         bus.publish(message(&bus, 1, "a/b", r#"{"t": 1}"#));
-        wait_for("sent", || runner.status("copy").unwrap().errors == 1);
+        wait_for("sent", || {
+            runner.status("copy").unwrap().outputs.errors == 1
+        });
         assert_eq!(
             *sent.lock().unwrap(),
             vec![("Office".into(), "copy/a/b".into(), br#"{"t":1}"#.to_vec())]
         );
         let status = runner.status("copy").unwrap();
-        assert_eq!(status.emitted, 1);
+        assert_eq!(status.outputs.emitted, 1);
         assert_eq!(
-            status.last_error.as_deref(),
+            status.outputs.last_error.as_deref(),
             Some(r#"to broker "Home" on x: Home isn't connected"#)
         );
         runner.stop("copy");
@@ -1004,7 +947,9 @@ mod tests {
         bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 21}"#));
         bus.publish(message(&bus, 1, "home/kitchen", r#"{"t": 22}"#));
         bus.publish(message(&bus, 1, "home/office", r#"{"t": 19}"#));
-        wait_for("written", || runner.status("log").unwrap().emitted == 3);
+        wait_for("written", || {
+            runner.status("log").unwrap().outputs.emitted == 3
+        });
         runner.stop("log");
         assert_eq!(
             std::fs::read_to_string(dir.join("kitchen.csv")).unwrap(),
@@ -1051,11 +996,16 @@ mod tests {
             .unwrap();
         wait_for("finished", || runner.status("replay").unwrap().finished);
         let status = runner.status("replay").unwrap();
-        assert_eq!((status.received, status.emitted), (2, 2), "{status:?}");
+        assert_eq!(
+            (status.received, status.outputs.emitted),
+            (2, 2),
+            "{status:?}"
+        );
         // Writing back into the file it reads is refused.
-        assert_eq!(status.errors, 2);
+        assert_eq!(status.outputs.errors, 2);
         assert!(
             status
+                .outputs
                 .last_error
                 .unwrap()
                 .contains("would read its own output")
@@ -1114,7 +1064,7 @@ mod tests {
         assert_eq!(&hot.payload[..], b"23");
         wait_for("counts", || {
             let s = runner.status("hot").unwrap();
-            s.received == 2 && s.emitted == 1
+            s.received == 2 && s.outputs.emitted == 1
         });
         runner.stop("hot");
         runner.stop("clean");

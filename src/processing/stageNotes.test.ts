@@ -9,11 +9,16 @@ const base: Preview = {
   ends: [],
   stages: [],
   results: [],
-  inspected: [],
   sampled: "messages",
   note: null,
-  markers: [],
-  chart: { lines: [], hidden: 0 },
+  outputs: {
+    emitted: 0,
+    errors: 0,
+    lastError: null,
+    inspected: [],
+    markers: [],
+    chart: { lines: [], hidden: 0 },
+  },
 };
 
 describe("stage notes", () => {
