@@ -1,3 +1,4 @@
+import { BY_STAGES } from "./referenceData";
 import { isTop, scan } from "./scanner";
 
 /**
@@ -180,9 +181,7 @@ export function assistAt(before: string): Assist {
 
   const filter = /^filter\s+(not\s+)?\w*$/.exec(trimmed);
   if (filter) return { kind: "filter", from, negated: Boolean(filter[1]) };
-  if (/^(throttle\s+\S+|changes|delta|pairwise|join)\s+\w*$/.test(trimmed)) {
-    return { kind: "by", from };
-  }
+  if (takesByHere(trimmed)) return { kind: "by", from };
   if (/^to\s+\w*$/.test(trimmed)) return { kind: "sink", from };
   if (/^throttle\s+\S*$/.test(trimmed)) return { kind: "none" };
   return fn;
@@ -231,4 +230,19 @@ export function wildcardNames(text: string): WildcardName[] {
     }
   }
   return found;
+}
+
+/**
+ * Whether `by` fits next: after a Stage that takes it, once its arguments are written
+ * (`throttle 5s `, `scan 0 (.+1) `). An argument is taken to be one word; jq with spaces in
+ * it can hide a `by`, which is only a missed suggestion.
+ */
+function takesByHere(segment: string): boolean {
+  const words = segment.split(/\s+/);
+  const args = BY_STAGES.get(words[0]);
+  return (
+    args !== undefined &&
+    words.length === args + 2 &&
+    /^\w*$/.test(words[words.length - 1])
+  );
 }

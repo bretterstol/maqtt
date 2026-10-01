@@ -146,6 +146,8 @@ export interface Preview {
   /** Where `from` and then each Stage end in the source (UTF-8 byte offsets). */
   ends: number[];
   stages: StageTrace[];
+  /** The Sinks the draft uses (`app`, `geo`, `chart`, …). */
+  sinks: string[];
   /** What its Sinks would send, oldest first; nothing is sent. */
   results: PreviewValue[];
   /** What it ran over: recent messages, records from files, or Derived Topics. */

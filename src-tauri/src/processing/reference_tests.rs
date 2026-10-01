@@ -98,3 +98,63 @@ fn every_function_example_gives_its_output() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// The other direction: whatever the parser accepts is in the Reference.
+#[test]
+fn the_parser_and_the_reference_name_the_same_stages_and_sinks() {
+    let reference = reference();
+    let stages: Vec<&str> = reference["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .filter(|name| *name != "from")
+        .collect();
+    let accepted: Vec<&str> = lang::STAGE_NAMES.to_vec();
+    assert_eq!(
+        accepted, stages,
+        "the parser's Stages, in the Reference's order"
+    );
+    for stage in &stages {
+        let problems = lang::parse(&format!("from all |> {stage}"))
+            .err()
+            .unwrap_or_default();
+        assert!(
+            problems
+                .iter()
+                .all(|p| !p.message.starts_with("Unknown Stage")),
+            "{stage} is a Stage to the parser"
+        );
+    }
+
+    let to = reference["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "to")
+        .unwrap();
+    let mut documented: Vec<&str> = Vec::new();
+    for form in to["forms"].as_array().unwrap() {
+        let sink = form["syntax"]
+            .as_str()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap();
+        if !documented.contains(&sink) {
+            documented.push(sink);
+        }
+    }
+    assert_eq!(lang::SINKS.to_vec(), documented, "the parser's Sinks");
+    for sink in lang::SINKS {
+        let problems = lang::parse(&format!("from all |> to {sink}"))
+            .err()
+            .unwrap_or_default();
+        assert!(
+            problems
+                .iter()
+                .all(|p| !p.message.contains("isn't available yet")),
+            "to {sink} is a Sink to the parser"
+        );
+    }
+}

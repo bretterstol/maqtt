@@ -6,44 +6,8 @@ import {
 } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { MODIFIERS, STAGE_NAMES } from "../referenceData";
 import { copyState, next, startState, type ScanState } from "../scanner";
-
-export const STAGE_KEYWORDS = [
-  "from",
-  "filter",
-  "map",
-  "changes",
-  "delta",
-  "pairwise",
-  "join",
-  "throttle",
-  "debounce",
-  "scan",
-  "window",
-  "take",
-  "inspect",
-  "to",
-];
-const MODIFIERS = [
-  "all",
-  "pipeline",
-  "pipelines",
-  "topic",
-  "not",
-  "app",
-  "broker",
-  "file",
-  "geo",
-  "rotate",
-  "daily",
-  "hourly",
-  "follow",
-  "needs",
-  "within",
-  "rate",
-  "replay",
-  "by",
-];
 
 const inStringNow = (state: ScanState) =>
   state.stack[state.stack.length - 1].kind === "string";
@@ -99,7 +63,7 @@ export const pipeParser: StreamParser<ScanState> = {
     if (stream.match(/^\d+(\.\d+)?(ms|s|m|h)?\b/)) return "number";
     const word = stream.match(/^[A-Za-z_][\w]*/) as RegExpMatchArray | null;
     if (word) {
-      if (STAGE_KEYWORDS.includes(word[0])) return "keyword";
+      if (STAGE_NAMES.includes(word[0])) return "keyword";
       if (MODIFIERS.includes(word[0])) return "modifier";
       return null;
     }

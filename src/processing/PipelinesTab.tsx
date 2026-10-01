@@ -60,6 +60,7 @@ function problemsOnly(problems: Diagnostic[]): Preview {
     payload: null,
     ends: [],
     stages: [],
+    sinks: [],
     results: [],
     sampled: "messages",
     note: null,
@@ -92,6 +93,11 @@ export default function PipelinesTab() {
     preview: Preview;
     notes: StageNote[];
   } | null>(null);
+  // The Sinks each Pipeline's draft last used, kept while a draft has problems so the map and
+  // chart views don't come and go with each keystroke.
+  const [knownSinks, setKnownSinks] = useState<Map<string, string[]>>(
+    new Map(),
+  );
   const [previewError, setPreviewError] = useState<{
     name: string;
     message: string;
@@ -155,6 +161,7 @@ export default function PipelinesTab() {
   const preview =
     current && previewed?.name === current.name ? previewed : null;
   const problems = preview?.preview.problems ?? [];
+  const sinks = (current && knownSinks.get(current.name)) ?? [];
   const draftError =
     current && previewError?.name === current.name
       ? previewError.message
@@ -185,6 +192,9 @@ export default function PipelinesTab() {
         (result) => {
           if (stale) return;
           setPreviewError(null);
+          if (result.problems.length === 0) {
+            setKnownSinks((old) => new Map(old).set(name, result.sinks));
+          }
           setPreviewed({
             name,
             preview: result,
@@ -513,8 +523,8 @@ export default function PipelinesTab() {
             previewError={draftError}
             view={outputView ?? (current.status.running ? "live" : "preview")}
             onView={setOutputView}
-            hasMap={/\|>\s*to\s+geo\b/.test(text)}
-            hasChart={/\|>\s*to\s+chart\b/.test(text)}
+            hasMap={sinks.includes("geo")}
+            hasChart={sinks.includes("chart")}
           />
         </section>
       ) : (
