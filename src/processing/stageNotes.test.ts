@@ -28,8 +28,20 @@ describe("stage notes", () => {
       ...base,
       ends: [8, 18, 34],
       stages: [
-        { passed: 2, last: "3", errors: 0, firstError: null },
-        { passed: 0, last: null, errors: 0, firstError: null },
+        {
+          passed: 2,
+          last: "3",
+          errors: 0,
+          firstError: null,
+          firstReason: null,
+        },
+        {
+          passed: 0,
+          last: null,
+          errors: 0,
+          firstError: null,
+          firstReason: null,
+        },
       ],
     });
     expect(
@@ -56,7 +68,15 @@ describe("stage notes", () => {
     const notes = stageNotes("from all\n|> map .a", {
       ...base,
       ends: [8, 18],
-      stages: [{ passed: 1, last: long, errors: 0, firstError: null }],
+      stages: [
+        {
+          passed: 1,
+          last: long,
+          errors: 0,
+          firstError: null,
+          firstReason: null,
+        },
+      ],
     });
     expect(notes[1].text.length).toBeLessThanOrEqual(60);
     expect(notes[1].title).toContain(long);
@@ -65,7 +85,13 @@ describe("stage notes", () => {
       ...base,
       ends: [8, 18],
       stages: [
-        { passed: 0, last: null, errors: 3, firstError: "map on t: bad" },
+        {
+          passed: 0,
+          last: null,
+          errors: 3,
+          firstError: "map on t: bad",
+          firstReason: "bad",
+        },
       ],
     });
     expect(failing[1]).toMatchObject({

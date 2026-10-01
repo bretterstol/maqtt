@@ -17,12 +17,6 @@ function shorten(value: string): string {
   return value.length > MAX_VALUE ? `${value.slice(0, MAX_VALUE - 1)}…` : value;
 }
 
-/** Errors read "map on <topic>: <why>"; the note sits on the Stage's line already, so keep the why. */
-function reason(error: string): string {
-  const match = /^[a-z ]+ on .*?: (.*)$/s.exec(error);
-  return match ? match[1] : error;
-}
-
 /** What a Preview ran over, counted in the Source's own words: "3 records". */
 export function sampleCount(preview: Preview): string {
   const n = preview.messages;
@@ -59,7 +53,7 @@ export function stageNotes(text: string, preview: Preview): StageNote[] {
       const count = `${stage.errors.toLocaleString()} error${stage.errors === 1 ? "" : "s"}`;
       return {
         at,
-        text: shorten(`${count}: ${reason(stage.firstError ?? "")}`),
+        text: shorten(`${count}: ${stage.firstReason ?? ""}`),
         title: `${count}, the first: ${stage.firstError ?? ""}`,
         error: true,
       };
