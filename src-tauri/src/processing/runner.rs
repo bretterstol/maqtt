@@ -236,6 +236,14 @@ impl Runner {
         }
     }
 
+    /// Stops every running Pipeline.
+    pub fn stop_all(&self) {
+        let names: Vec<String> = self.running.lock().unwrap().keys().cloned().collect();
+        for name in names {
+            self.stop(&name);
+        }
+    }
+
     /// Notes why a Pipeline that should be running couldn't start, for its panel.
     pub fn failed(&self, name: &str, error: String) {
         self.stopped.lock().unwrap().insert(

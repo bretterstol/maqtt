@@ -66,6 +66,11 @@ impl Processing {
 }
 
 impl Processing {
+    /// Stops every running Pipeline, as when Pipelines are turned off in Settings.
+    pub fn stop_all(&self) {
+        self.runner.stop_all();
+    }
+
     /// Starts the Pipelines marked to start with måqtt: once, as the app starts. One that can't
     /// start says why in its panel; one whose file is gone is unmarked.
     pub fn start_marked(&self) {
@@ -329,6 +334,9 @@ mod tests {
                 .starts_with("Didn't start with måqtt: Line 1, column 13: Unknown Stage `sort`")
         );
         assert_eq!(files.starts_with_app(), ["broken", "good"]);
-        processing.runner.stop("good");
+
+        // Turning Pipelines off in Settings stops every running one.
+        processing.stop_all();
+        assert!(!processing.runner.is_running("good"));
     }
 }

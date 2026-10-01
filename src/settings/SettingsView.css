@@ -1,0 +1,10 @@
+.settings__does,
+.settings__where {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings__where {
+  overflow-wrap: anywhere;
+}
