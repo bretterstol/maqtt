@@ -20,7 +20,15 @@ describe("the vocabulary read off the Reference", () => {
       "replay",
     ])
       expect(MODIFIERS).toContain(word);
-    for (const word of ["app", "broker", "file", "geo", "chart", "pipeline"])
+    for (const word of [
+      "app",
+      "broker",
+      "file",
+      "geo",
+      "chart",
+      "pipeline",
+      "pipelines",
+    ])
       expect(MODIFIERS).toContain(word);
     for (const word of MODIFIERS) {
       expect(word).toMatch(/^[a-z]+$/);
