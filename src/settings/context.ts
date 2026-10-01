@@ -7,6 +7,8 @@ export const DEFAULT_SETTINGS: Settings = {
   history: { perConnection: 100_000 },
   messageLog: { live: 5_000, scrollback: 100_000 },
   subscriptions: { defaultQos: 0 },
+  appearance: { theme: "system" },
+  topicTree: { opens: "manual" },
 };
 
 export const SettingsContext = createContext<Settings>(DEFAULT_SETTINGS);

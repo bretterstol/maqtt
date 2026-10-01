@@ -67,6 +67,51 @@ export function SettingsDialog({
         </fieldset>
 
         <fieldset className="editor__section">
+          <legend>Appearance</legend>
+          <label className="editor__field">
+            <span>Theme</span>
+            <select
+              value={settings.appearance.theme}
+              disabled={saving}
+              onChange={(e) =>
+                void change({
+                  ...settings,
+                  appearance: {
+                    theme: e.target.value as Settings["appearance"]["theme"],
+                  },
+                })
+              }
+            >
+              <option value="system">Like the system</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <label className="editor__field">
+            <span>The Topic Tree opens</span>
+            <select
+              value={settings.topicTree.opens}
+              disabled={saving}
+              onChange={(e) =>
+                void change({
+                  ...settings,
+                  topicTree: {
+                    opens: e.target.value as Settings["topicTree"]["opens"],
+                  },
+                })
+              }
+            >
+              <option value="manual">By hand</option>
+              <option value="groups">Groups</option>
+              <option value="all">Everything</option>
+            </select>
+          </label>
+          <p className="settings__does">
+            The tree's own menu changes the same setting.
+          </p>
+        </fieldset>
+
+        <fieldset className="editor__section">
           <legend>History</legend>
           <NumberSetting
             label="Messages kept per Connection"

@@ -2,7 +2,7 @@
 
 A place to change how måqtt behaves, instead of environment variables, constants in the code and preferences scattered across browser storage. Vocabulary follows [CONTEXT.md](../CONTEXT.md).
 
-Status: decided together; S1 and S2 are done, S3 is next. The decisions are at the end.
+Status: done. S1, S2 and S3 are built. The decisions are at the end.
 
 ## What is adjustable today
 
@@ -70,6 +70,8 @@ Status: done on the `settings-s2` branch. None of them needs a restart after all
 Theme, and the Topic Tree's opening preference moved from browser storage into the file (read once from browser storage, so nobody's current choice is lost).
 
 **Done when:** the theme follows the setting in both directions, and nothing måqtt remembers lives in browser storage any more except what's purely per window.
+
+Status: done on the `settings-s3` branch. The theme sets the page's colour scheme, which every colour follows; the window's own frame is left to the system, as on Linux setting the window's theme back to "system" turns the dark preference off instead of following the desktop (found while checking: a fresh start came up light on a dark desktop). The Topic Tree's own menu and Settings change the same setting; a choice an older måqtt left in browser storage is moved into the file once. What stays in browser storage is the Pipelines Reference panel being open, which is per window. Checked over WebDriver across a restart: the old choice moved into the file and the tree opened with it, the light theme applied from the start, the tree's menu saved to the file, and system, light and dark each gave the right colours on a dark desktop.
 
 ## Decisions
 

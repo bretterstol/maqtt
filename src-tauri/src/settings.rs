@@ -12,6 +12,43 @@ pub struct Settings {
     pub history: HistorySettings,
     pub message_log: MessageLogSettings,
     pub subscriptions: SubscriptionSettings,
+    pub appearance: AppearanceSettings,
+    pub topic_tree: TopicTreeSettings,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AppearanceSettings {
+    pub theme: Theme,
+}
+
+/// Light or dark, or whatever the system uses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TopicTreeSettings {
+    pub opens: TreeOpens,
+}
+
+/// How the Topic Tree opens itself.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TreeOpens {
+    /// Only what's opened by hand.
+    #[default]
+    Manual,
+    /// Groups small enough to read.
+    Groups,
+    /// Everything.
+    All,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -258,5 +295,19 @@ mod tests {
             ),
             (100_000, 5_000, 0)
         );
+    }
+
+    #[test]
+    fn theme_and_tree_are_words_in_the_file() {
+        let p = path("words");
+        let mut store = SettingsStore::load(p.clone());
+        let mut settings = Settings::default();
+        settings.appearance.theme = Theme::Dark;
+        settings.topic_tree.opens = TreeOpens::Groups;
+        store.set(settings.clone()).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("[appearance]\ntheme = \"dark\""), "{text}");
+        assert!(text.contains("[topicTree]\nopens = \"groups\""), "{text}");
+        assert_eq!(SettingsStore::load(p).get(), &settings);
     }
 }
