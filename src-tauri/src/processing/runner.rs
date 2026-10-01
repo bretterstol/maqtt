@@ -11,12 +11,11 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::sync::Notify;
-use tokio::sync::broadcast::error::RecvError;
 
-use super::file_source::{FileReader, Next};
 use super::files::FileSink;
-use super::lang::{FileSource, Pipeline, Source};
+use super::lang::{Pipeline, Source};
 use super::outputs::{Delivery, Outputs};
+use super::sources::{Arrival, Live};
 use super::stages::{Effect, Origin, Runtime};
 use crate::bus::{Bus, BusEvent};
 use crate::connection::{ConnectionState, ConnectionStatus, ConnectionStatuses};
@@ -26,9 +25,6 @@ use crate::profile::ProfileId;
 /// Sends a payload to a topic on the Connection with this name, without waiting, for
 /// `to broker`. `lib.rs` backs it with the live Connections.
 pub type Republish = Arc<dyn Fn(&str, &str, Vec<u8>) -> Result<(), String> + Send + Sync>;
-
-/// `$connection` for messages read from files.
-pub const FILE_CONNECTION: &str = "file";
 
 /// The pseudo-Connection that Derived Topics come from; real Connections start at 1.
 pub const PIPELINES: ConnectionId = ConnectionId(0);
@@ -121,7 +117,6 @@ impl Runner {
         let (done_tx, done) = mpsc::channel();
         let job = Job {
             name: name.to_string(),
-            reads: reads.clone(),
             halted: halted.clone(),
             _done: done_tx,
             pipeline,
@@ -136,7 +131,7 @@ impl Runner {
                 .into_iter()
                 .map(|s| (s.connection_id, s.name))
                 .collect(),
-            rx: self.bus.subscribe(),
+            rx: Some(self.bus.subscribe()),
             stop: stop.clone(),
             status: status.clone(),
         };
@@ -340,26 +335,9 @@ impl Sent {
     }
 }
 
-/// A Derived Topic of one of `sources`, as a message of that Pipeline's own: its topic without
-/// the Pipeline's name in front, and the name (which is `$connection`).
-pub(super) fn derived_from(
-    message: &ReceivedMessage,
-    sources: &[String],
-) -> Option<(Arc<ReceivedMessage>, String)> {
-    let (pipeline, topic) = message.topic.split_once('/')?;
-    if !sources.iter().any(|s| s == pipeline) {
-        return None;
-    }
-    let mut own = message.clone();
-    own.topic = topic.to_string();
-    Some((Arc::new(own), pipeline.to_string()))
-}
-
 /// Everything a Pipeline's thread needs.
 struct Job {
     name: String,
-    /// The Pipelines it reads with `from pipeline`.
-    reads: Vec<String>,
     pipeline: Pipeline,
     bus: Bus,
     republish: Republish,
@@ -368,7 +346,8 @@ struct Job {
     /// The files a file Source reads, which `to file` mustn't write.
     reading: Vec<PathBuf>,
     names: HashMap<ConnectionId, String>,
-    rx: tokio::sync::broadcast::Receiver<BusEvent>,
+    /// Taken by the live Source once the thread starts.
+    rx: Option<tokio::sync::broadcast::Receiver<BusEvent>>,
     stop: Arc<Notify>,
     halted: Arc<AtomicBool>,
     status: Arc<Mutex<PipelineStatus>>,
@@ -386,9 +365,16 @@ impl Job {
     }
 
     async fn run_async(mut self) {
-        // jq values aren't Send, so the Pipeline is compiled on its own thread.
-        let mut pipeline = match Runtime::new(&self.pipeline) {
-            Ok(p) => p,
+        // jq values aren't Send, so the Pipeline (and a file Source's reader) are made on its
+        // own thread.
+        let started = Runtime::new(&self.pipeline).and_then(|pipeline| {
+            let rx = self.rx.take().expect("a fresh Job has its receiver");
+            let names = std::mem::take(&mut self.names);
+            let source = Live::new(&self.pipeline.from, rx, names, self.files.dir())?;
+            Ok((pipeline, source))
+        });
+        let (mut pipeline, mut source) = match started {
+            Ok(started) => started,
             Err(err) => {
                 let mut status = self.status.lock().unwrap();
                 status.running = false;
@@ -396,56 +382,56 @@ impl Job {
                 return;
             }
         };
-        if let Source::Files(source) = &self.pipeline.from {
-            let source = source.clone();
-            return self.run_files(pipeline, source).await;
-        }
-        let mut tick = tokio::time::interval(TICK);
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        self.reading = source.reading().to_vec();
         let mut effects = Vec::new();
+        let mut next_tick = Instant::now() + TICK;
         loop {
-            tokio::select! {
+            let arrival = tokio::select! {
                 biased;
                 _ = self.stop.notified() => break,
-                event = self.rx.recv() => match event {
-                    Ok(BusEvent::Message(message)) => {
-                        // Derived Topics only from the Pipelines named in `from pipeline`; the
-                        // loop check at start keeps a Pipeline from feeding itself.
-                        if message.connection_id == PIPELINES {
-                            if let Some((message, source)) = derived_from(&message, &self.reads) {
-                                self.status.lock().unwrap().received += 1;
-                                pipeline.push(Origin::new(message, &source), Instant::now(), &mut effects);
-                            }
-                            continue;
-                        }
-                        let connection = self.names.get(&message.connection_id).map_or("", String::as_str);
-                        if !pipeline.reads(connection) {
-                            continue;
-                        }
-                        // What it republished comes back on any Connection to that Broker, and
-                        // several profiles can reach one Broker: taking it in again could loop.
-                        if self.sent.recognises(&message.topic, &message.payload, Instant::now()) {
-                            self.status.lock().unwrap().returned += 1;
-                            continue;
-                        }
-                        let origin = Origin::new(message, connection);
-                        self.status.lock().unwrap().received += 1;
-                        pipeline.push(origin, Instant::now(), &mut effects);
+                arrival = source.next(next_tick) => arrival,
+            };
+            let now = Instant::now();
+            match arrival {
+                // Time to tick, nothing else.
+                None => {}
+                Some(Arrival::Message {
+                    message,
+                    connection,
+                    from_broker,
+                    problem,
+                }) => {
+                    // What it republished comes back on any Connection to that Broker, and
+                    // several profiles can reach one Broker: taking it in again could loop.
+                    if from_broker && self.sent.recognises(&message.topic, &message.payload, now) {
+                        self.status.lock().unwrap().returned += 1;
+                        continue;
                     }
-                    Ok(BusEvent::ConnectionState(s)) => {
-                        self.names.insert(s.connection_id, s.name);
+                    let mut status = self.status.lock().unwrap();
+                    status.received += 1;
+                    if let Some(problem) = problem {
+                        status.outputs.failed(problem);
                     }
-                    Ok(BusEvent::Marker(_) | BusEvent::TopicsCleared { .. }) => {}
-                    Err(RecvError::Lagged(n)) => self.status.lock().unwrap().missed += n,
-                    Err(RecvError::Closed) => break,
-                },
-                _ = tick.tick() => pipeline.tick(Instant::now(), &mut effects),
+                    drop(status);
+                    pipeline.push(Origin::new(message, &connection), now, &mut effects);
+                }
+                Some(Arrival::Missed(n)) => self.status.lock().unwrap().missed += n,
+                Some(Arrival::Problem(problem)) => {
+                    self.status.lock().unwrap().outputs.failed(problem);
+                }
+                Some(Arrival::Done) => {
+                    self.finish(&mut pipeline, &mut effects);
+                    break;
+                }
+                Some(Arrival::Closed) => break,
+            }
+            if now >= next_tick {
+                pipeline.tick(now, &mut effects);
+                next_tick = now + TICK;
             }
             if pipeline.finished() {
-                // A `take` is done: send what later Stages still hold, and stop.
-                pipeline.flush(Instant::now(), &mut effects);
-                self.handle(&mut effects);
-                self.status.lock().unwrap().finished = true;
+                // A `take` is done.
+                self.finish(&mut pipeline, &mut effects);
                 break;
             }
             self.handle(&mut effects);
@@ -456,88 +442,11 @@ impl Job {
         self.status.lock().unwrap().running = false;
     }
 
-    /// A Pipeline reading files: records as they're due, until the files end (unless
-    /// followed) or it's stopped.
-    async fn run_files(mut self, mut pipeline: Runtime, source: FileSource) {
-        let mut reader = match FileReader::new(&source, self.files.dir()) {
-            Ok(reader) => reader,
-            Err(err) => {
-                let mut status = self.status.lock().unwrap();
-                status.running = false;
-                status.outputs.last_error = Some(err);
-                return;
-            }
-        };
-        self.reading = source
-            .names
-            .iter()
-            .map(|name| self.files.resolve(name))
-            .collect();
-        let mut effects = Vec::new();
-        let mut next_tick = Instant::now() + TICK;
-        let mut seq = 0;
-        loop {
-            if self.halted.load(Ordering::SeqCst) {
-                break;
-            }
-            let now = Instant::now();
-            if now >= next_tick {
-                pipeline.tick(now, &mut effects);
-                next_tick = now + TICK;
-            }
-            match reader.next(now) {
-                Next::Record(record) => {
-                    let mut status = self.status.lock().unwrap();
-                    status.received += 1;
-                    if let Some(problem) = record.problem {
-                        status.outputs.failed(problem);
-                    }
-                    drop(status);
-                    seq += 1;
-                    let message = Arc::new(ReceivedMessage {
-                        seq,
-                        connection_id: PIPELINES,
-                        topic: record.name,
-                        payload: record.payload.into(),
-                        qos: 0,
-                        retain: false,
-                        received_at_ms: now_ms(),
-                        properties: None,
-                    });
-                    pipeline.push(Origin::new(message, FILE_CONNECTION), now, &mut effects);
-                }
-                Next::Problem(problem) => {
-                    let mut status = self.status.lock().unwrap();
-                    status.outputs.failed(problem);
-                }
-                Next::Wait(wait) => {
-                    let wait = wait
-                        .min(next_tick.saturating_duration_since(now))
-                        .max(Duration::from_millis(1));
-                    tokio::select! {
-                        biased;
-                        _ = self.stop.notified() => break,
-                        _ = tokio::time::sleep(wait) => {}
-                    }
-                }
-                Next::Done => {
-                    pipeline.flush(Instant::now(), &mut effects);
-                    self.handle(&mut effects);
-                    self.status.lock().unwrap().finished = true;
-                    break;
-                }
-            }
-            if pipeline.finished() {
-                pipeline.flush(Instant::now(), &mut effects);
-                self.handle(&mut effects);
-                self.status.lock().unwrap().finished = true;
-                break;
-            }
-            self.handle(&mut effects);
-            // Records that are due at once still let a stop through.
-            tokio::task::yield_now().await;
-        }
-        self.status.lock().unwrap().running = false;
+    /// The Pipeline has read all it will: what later Stages still hold is sent, and it's done.
+    fn finish(&mut self, pipeline: &mut Runtime, effects: &mut Vec<Effect>) {
+        pipeline.flush(Instant::now(), effects);
+        self.handle(effects);
+        self.status.lock().unwrap().finished = true;
     }
 
     fn handle(&mut self, effects: &mut Vec<Effect>) {

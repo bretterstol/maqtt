@@ -17,6 +17,7 @@ pub mod preview;
 mod reference_tests;
 pub mod runner;
 pub mod scanner;
+pub mod sources;
 pub mod stages;
 pub mod store;
 

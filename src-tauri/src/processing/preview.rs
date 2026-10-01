@@ -8,18 +8,12 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use super::file_source::{FileReader, Next};
-use super::lang::Source;
 use super::lang::{self, Diagnostic};
 use super::outputs::{Delivery, Outputs};
-use super::runner::{FILE_CONNECTION, PIPELINES, derived_from};
+use super::sources::{self, Sample, Sampled};
 use super::stages::{self, Origin, Runtime, StageTrace};
 use crate::message::{ConnectionId, ReceivedMessage, now_ms};
 
-/// How many recent matching messages a Preview runs over.
-pub const SAMPLE: usize = 100;
-/// How far back to look per Connection for them.
-const SCAN: usize = 20_000;
 /// How many results and inspected values to send back.
 const SHOWN: usize = 50;
 
@@ -62,18 +56,6 @@ pub struct PreviewValue {
 }
 
 /// `files_dir` is where a file Source's relative names are.
-/// What a Preview ran over, which is how the tab words it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Sampled {
-    /// Recent messages from Brokers.
-    Messages,
-    /// The first records of files.
-    Records,
-    /// Recent Derived Topics of other Pipelines.
-    Derived,
-}
-
 pub fn preview(
     source: &str,
     names: &HashMap<ConnectionId, String>,
@@ -112,46 +94,16 @@ pub fn preview(
             return preview;
         }
     };
-    let name = |id: ConnectionId| names.get(&id).map_or("", String::as_str);
 
-    let sample: Vec<(Arc<ReceivedMessage>, String)> = match &pipeline.from {
-        Source::Files(source) => {
-            let (sample, note) = file_sample(source, files_dir);
-            preview.sampled = Sampled::Records;
-            preview.note = note;
-            sample
-        }
-        Source::Pipelines(names) => {
-            preview.sampled = Sampled::Derived;
-            let mut sample: Vec<_> = recent(SCAN)
-                .into_iter()
-                .filter(|m| m.connection_id == PIPELINES)
-                .filter_map(|m| derived_from(&m, names))
-                .collect();
-            sample.sort_by_key(|(m, _)| m.seq);
-            let excess = sample.len().saturating_sub(SAMPLE);
-            sample.drain(..excess);
-            sample
-        }
-        _ => {
-            let mut sample: Vec<_> = recent(SCAN)
-                .into_iter()
-                .filter(|m| {
-                    m.connection_id != PIPELINES && runtime.wants(name(m.connection_id), &m.topic)
-                })
-                .collect();
-            sample.sort_by_key(|m| m.seq);
-            let excess = sample.len().saturating_sub(SAMPLE);
-            sample.drain(..excess);
-            sample
-                .into_iter()
-                .map(|m| {
-                    let connection = name(m.connection_id).to_string();
-                    (m, connection)
-                })
-                .collect()
-        }
-    };
+    let Sample {
+        messages: sample,
+        sampled,
+        note,
+    } = sources::sample(&pipeline.from, names, recent, files_dir, |topic| {
+        runtime.takes_topic(topic)
+    });
+    preview.sampled = sampled;
+    preview.note = note;
     preview.messages = sample.len();
     preview.payload = sample
         .last()
@@ -182,52 +134,6 @@ pub fn preview(
     keep_last(&mut preview.results, SHOWN);
     preview.stages = runtime.trace().to_vec();
     preview
-}
-
-/// The first records of a file Source, timed as it would hand them out, and the first problem
-/// reading them.
-fn file_sample(
-    source: &lang::FileSource,
-    files_dir: &Path,
-) -> (Vec<(Arc<ReceivedMessage>, String)>, Option<String>) {
-    let reader = match FileReader::new(source, files_dir) {
-        Ok(reader) => reader,
-        Err(problem) => return (Vec::new(), Some(problem)),
-    };
-    let mut reader = reader.unpaced();
-    let (mut sample, mut note) = (Vec::new(), None);
-    let mut first_time = None;
-    let now = Instant::now();
-    while sample.len() < SAMPLE {
-        match reader.next(now) {
-            Next::Record(record) => {
-                let offset_ms = match (reader.replay_time(&record), reader.rate_every()) {
-                    (Some(t), _) => {
-                        let t0 = *first_time.get_or_insert(t);
-                        ((t - t0).max(0.0) * 1000.0) as u64
-                    }
-                    (None, Some(every)) => (every * sample.len() as u32).as_millis() as u64,
-                    (None, None) => 0,
-                };
-                let message = Arc::new(ReceivedMessage {
-                    seq: sample.len() as u64,
-                    connection_id: PIPELINES,
-                    topic: record.name,
-                    payload: record.payload.into(),
-                    qos: 0,
-                    retain: false,
-                    received_at_ms: offset_ms,
-                    properties: None,
-                });
-                sample.push((message, FILE_CONNECTION.to_string()));
-            }
-            Next::Problem(problem) => {
-                note.get_or_insert(problem);
-            }
-            Next::Wait(_) | Next::Done => break,
-        }
-    }
-    (sample, note)
 }
 
 /// A row for what a Sink would send, which Preview shows instead of sending it.
@@ -293,7 +199,10 @@ mod tests {
         HashMap::from([
             (ConnectionId(1), "Dev".to_string()),
             (ConnectionId(2), "Office".to_string()),
-            (PIPELINES, "Pipelines".to_string()),
+            (
+                crate::processing::runner::PIPELINES,
+                "Pipelines".to_string(),
+            ),
         ])
     }
 
