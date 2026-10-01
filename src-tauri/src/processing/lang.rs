@@ -1362,11 +1362,6 @@ pub fn to_jq(text: &str) -> (String, Vec<usize>) {
     (out, origin)
 }
 
-// Temporary, while each pass moves onto `scanner`; see its header.
-#[cfg(test)]
-#[path = "legacy_scan.rs"]
-mod legacy_scan;
-
 #[cfg(test)]
 mod tests {
     use super::*;
