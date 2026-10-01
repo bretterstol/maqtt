@@ -23,6 +23,7 @@ const profile: Profile = {
     { filter: "  ", qos: 0 },
   ],
   historyPerTopic: 100,
+  connectAtStartup: false,
 };
 
 describe("passwordChange", () => {

@@ -56,6 +56,8 @@ export interface Profile {
   keepAliveSecs: number;
   subscriptions: Subscription[];
   historyPerTopic: number;
+  /** Connect when måqtt starts. */
+  connectAtStartup: boolean;
 }
 
 export interface ProfileView extends Profile {

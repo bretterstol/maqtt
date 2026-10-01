@@ -9,6 +9,7 @@ import {
 } from "../bridge";
 import { chooseFile } from "../ui/dialogs";
 import { cleanDraft, emptyTls, passwordChange } from "./draft";
+import { useSettings } from "../settings/context";
 import "./ProfileEditor.css";
 
 interface Props {
@@ -28,6 +29,7 @@ export function ProfileEditor({
   onClose,
 }: Props) {
   const [draft, setDraft] = useState<Profile>(profile);
+  const defaultQos = useSettings().subscriptions.defaultQos;
   const [password, setPassword] = useState("");
   const [clearPassword, setClearPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +213,14 @@ export function ProfileEditor({
           <label className="editor__check">
             <input
               type="checkbox"
+              checked={draft.connectAtStartup}
+              onChange={(e) => set({ connectAtStartup: e.target.checked })}
+            />
+            Connect when måqtt starts
+          </label>
+          <label className="editor__check">
+            <input
+              type="checkbox"
               checked={!draft.cleanStart}
               onChange={(e) => set({ cleanStart: !e.target.checked })}
             />
@@ -286,7 +296,10 @@ export function ProfileEditor({
             type="button"
             onClick={() =>
               set({
-                subscriptions: [...draft.subscriptions, { filter: "", qos: 0 }],
+                subscriptions: [
+                  ...draft.subscriptions,
+                  { filter: "", qos: defaultQos },
+                ],
               })
             }
           >

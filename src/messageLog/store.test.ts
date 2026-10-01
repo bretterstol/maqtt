@@ -52,6 +52,16 @@ describe("MessageLogStore while following", () => {
     expect(store.hasOlder).toBe(true);
   });
 
+  it("takes new limits from Settings, trimming a smaller live capacity at once", () => {
+    const store = newStore(5, 100);
+    store.applyBatch(batch([1, 2, 3, 4, 5]));
+    store.setLimits(2, 100);
+    expect(seqs(store)).toEqual([4, 5]);
+    expect(store.canLoadOlder).toBe(true);
+    store.setLimits(2, 2);
+    expect(store.canLoadOlder).toBe(false);
+  });
+
   it("skips entries it already holds", () => {
     const store = newStore();
     store.showLatest(page([1, 2, 3]));

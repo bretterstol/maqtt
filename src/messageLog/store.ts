@@ -29,9 +29,20 @@ export class MessageLogStore {
   dropped = 0;
 
   constructor(
-    private readonly liveCapacity: number,
-    private readonly maxScrollback: number,
+    private liveCapacity: number,
+    private maxScrollback: number,
   ) {}
+
+  /** Changes how many messages it keeps live and how far back it scrolls; a smaller live
+   * capacity trims at once. */
+  setLimits(liveCapacity: number, maxScrollback: number): void {
+    this.liveCapacity = liveCapacity;
+    this.maxScrollback = maxScrollback;
+    if (this.following && this.entries.length > liveCapacity) {
+      this.trimToLiveCapacity();
+      this.notify();
+    }
+  }
 
   get length(): number {
     return this.entries.length;

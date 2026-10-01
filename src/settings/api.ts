@@ -7,6 +7,20 @@ export interface Settings {
     /** The Pipelines tab and Topic Tree branch are shown, and Pipelines may run. */
     enabled: boolean;
   };
+  history: {
+    /** Messages kept per Connection, oldest dropped first. */
+    perConnection: number;
+  };
+  messageLog: {
+    /** Messages kept while following live traffic. */
+    live: number;
+    /** How far back the Message Log can be scrolled, in messages. */
+    scrollback: number;
+  };
+  subscriptions: {
+    /** The QoS new Subscriptions start with. */
+    defaultQos: number;
+  };
 }
 
 export interface SettingsView {
