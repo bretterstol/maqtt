@@ -16,6 +16,23 @@ use super::sources::reads_connection;
 use crate::message::ReceivedMessage;
 use crate::profile::validate_topic_name;
 
+/// A value a Stage couldn't take; the Pipeline carries on with the next.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StageError {
+    /// The Stage, as written: `map`, `to app`.
+    pub stage: String,
+    /// The original message's topic.
+    pub topic: String,
+    /// What went wrong.
+    pub reason: String,
+}
+
+impl std::fmt::Display for StageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} on {}: {}", self.stage, self.topic, self.reason)
+    }
+}
+
 /// What running a message (or a tick) produced.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
@@ -61,7 +78,7 @@ pub enum Effect {
         rotate: Option<Rotate>,
         record: serde_json::Value,
     },
-    Error(String),
+    Error(StageError),
 }
 
 /// What went through one Stage, kept only when Preview asks for it.
@@ -73,7 +90,10 @@ pub struct StageTrace {
     /// The latest of them, as JSON.
     pub last: Option<String>,
     pub errors: usize,
+    /// The first error in full: `map on home/a: …`.
     pub first_error: Option<String>,
+    /// Just what went wrong in it, for where the Stage and topic go without saying.
+    pub first_reason: Option<String>,
 }
 
 /// The original message a value came from, with its jq variables worked out once.
@@ -499,9 +519,12 @@ fn record(trace: &mut StageTrace, passed: &[Item], effects: &[Effect]) {
         trace.last = Some(item.value.to_string());
     }
     for effect in effects {
-        if let Effect::Error(message) = effect {
+        if let Effect::Error(error) = effect {
             trace.errors += 1;
-            trace.first_error.get_or_insert_with(|| message.clone());
+            if trace.first_error.is_none() {
+                trace.first_error = Some(error.to_string());
+                trace.first_reason = Some(error.reason.clone());
+            }
         }
     }
 }
@@ -990,7 +1013,11 @@ fn keyed(
 }
 
 fn error(item: &Item, stage: &str, message: String) -> Effect {
-    Effect::Error(format!("{stage} on {}: {message}", item.origin.topic()))
+    Effect::Error(StageError {
+        stage: stage.to_string(),
+        topic: item.origin.topic().to_string(),
+        reason: message,
+    })
 }
 
 fn truthy(value: &Val) -> bool {
@@ -1229,7 +1256,7 @@ mod tests {
         let mut rt = runtime(r#"from all |> changes by .a.b |> to app "x""#);
         let out = run(&mut rt, &[("t", r#"{"a": 5}"#)]);
         assert!(
-            matches!(&out[0], Effect::Error(e) if e.starts_with("changes on t:")),
+            matches!(&out[0], Effect::Error(e) if e.to_string().starts_with("changes on t:")),
             "{out:?}"
         );
     }
@@ -1270,7 +1297,7 @@ mod tests {
         let mut rt = runtime(r#"from all |> map .a + 1 |> to app "x""#);
         let out = run(&mut rt, &[("t", r#"{"a": "text"}"#), ("t", r#"{"a": 1}"#)]);
         assert!(
-            matches!(&out[0], Effect::Error(e) if e.starts_with("map on t: ")),
+            matches!(&out[0], Effect::Error(e) if e.to_string().starts_with("map on t: ")),
             "{out:?}"
         );
         assert_eq!(out[1], derived("x", "2"));
@@ -1287,8 +1314,8 @@ mod tests {
                 ("t", r#"{"name": "/ok/"}"#),
             ],
         );
-        assert!(matches!(&out[0], Effect::Error(e) if e.contains("can't contain")));
-        assert!(matches!(&out[1], Effect::Error(e) if e.contains("must be a string")));
+        assert!(matches!(&out[0], Effect::Error(e) if e.to_string().contains("can't contain")));
+        assert!(matches!(&out[1], Effect::Error(e) if e.to_string().contains("must be a string")));
         assert_eq!(
             out[2],
             Effect::Derived {
@@ -1311,6 +1338,22 @@ mod tests {
                 r#"["a/b",["a","b"],"Dev Broker",1.0,1,false]"#
             )]
         );
+    }
+
+    #[test]
+    fn a_trace_keeps_the_first_errors_reason_apart_from_where_it_was() {
+        // A topic may hold ": " itself, so the reason can't be cut out of the full text.
+        let mut rt = runtime(r#"from all |> map .a + 1"#).traced();
+        run(
+            &mut rt,
+            &[("odd: topic", r#"{"a": "x"}"#), ("b", r#"{"a": []}"#)],
+        );
+        let map = &rt.trace()[0];
+        assert_eq!(map.errors, 2);
+        let full = map.first_error.as_deref().unwrap();
+        let reason = map.first_reason.as_deref().unwrap();
+        assert_eq!(full, format!("map on odd: topic: {reason}"));
+        assert!(!reason.contains("odd"), "{reason}");
     }
 
     #[test]
@@ -1381,6 +1424,7 @@ mod tests {
         out.iter()
             .map(|e| match e {
                 Effect::Derived { payload, .. } => String::from_utf8_lossy(payload).into_owned(),
+                Effect::Error(error) => format!("error: {error}"),
                 other => format!("{other:?}"),
             })
             .collect()
@@ -1589,7 +1633,7 @@ mod tests {
         let errors: Vec<String> = out[1..]
             .iter()
             .map(|e| match e {
-                Effect::Error(e) => e.clone(),
+                Effect::Error(e) => e.to_string(),
                 other => format!("{other:?}"),
             })
             .collect();
@@ -1610,7 +1654,9 @@ mod tests {
             ],
         );
         assert!(matches!(&out[0], Effect::Point { key, .. } if key == "A"));
-        assert!(matches!(&out[1], Effect::Error(e) if e.contains("needs `lat` and `lon`")));
+        assert!(
+            matches!(&out[1], Effect::Error(e) if e.to_string().contains("needs `lat` and `lon`"))
+        );
     }
 
     #[test]
@@ -1627,9 +1673,11 @@ mod tests {
         assert_eq!(
             out,
             vec![
-                Effect::Error(
-                    "to geo on gps: point 3: `lat` must be between -90 and 90, not 500".into()
-                ),
+                Effect::Error(StageError {
+                    stage: "to geo".into(),
+                    topic: "gps".into(),
+                    reason: "point 3: `lat` must be between -90 and 90, not 500".into(),
+                }),
                 Effect::Snapshot {
                     points: vec![
                         Point {
@@ -1666,7 +1714,7 @@ mod tests {
                 at_ms: 1_000,
             }
         );
-        assert!(matches!(&out[1], Effect::Error(e) if e.contains("takes a number")));
+        assert!(matches!(&out[1], Effect::Error(e) if e.to_string().contains("takes a number")));
 
         let mut rt = runtime(r#"from all |> map { value: .t, series: $levels[1] } |> to chart"#);
         let out = run(&mut rt, &[("home/kitchen", r#"{"t": 3}"#)]);
@@ -1705,7 +1753,7 @@ mod tests {
             [
                 "2",
                 "0.5",
-                r#"Error("delta on meter/a: `delta` takes numbers, not \"?\"")"#
+                r#"error: delta on meter/a: `delta` takes numbers, not "?""#
             ]
         );
 

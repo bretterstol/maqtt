@@ -126,7 +126,10 @@ export interface StageTrace {
   passed: number;
   last: string | null;
   errors: number;
+  /** The first error in full: `map on home/a: …`. */
   firstError: string | null;
+  /** Just what went wrong in it; the note sits on its Stage already. */
+  firstReason: string | null;
 }
 
 export interface PreviewValue {

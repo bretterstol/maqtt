@@ -134,7 +134,7 @@ impl Outputs {
                 None
             }
             Effect::Error(error) => {
-                self.failed(error);
+                self.failed(error.to_string());
                 None
             }
         }
@@ -156,6 +156,7 @@ impl Outputs {
 mod tests {
     use super::*;
     use crate::processing::markers::Point;
+    use crate::processing::stages::StageError;
 
     #[test]
     fn shown_effects_are_kept_and_deliveries_handed_back() {
@@ -219,7 +220,12 @@ mod tests {
         assert_eq!(outputs.chart.lines[0].points[0], [7.0, 7.0]);
         assert_eq!(outputs.inspected[0].at_ms, 9);
 
-        assert_eq!(outputs.record(Effect::Error("bad".into()), 0), None);
+        let bad = StageError {
+            stage: "map".into(),
+            topic: "t".into(),
+            reason: "bad".into(),
+        };
+        assert_eq!(outputs.record(Effect::Error(bad), 0), None);
         outputs.failed("worse".into());
         assert_eq!(
             (outputs.errors, outputs.last_error.as_deref()),
