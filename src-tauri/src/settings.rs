@@ -61,6 +61,8 @@ pub struct HistorySettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct MessageLogSettings {
+    /// The Message Log tab is shown.
+    pub shown: bool,
     /// Messages the Message Log keeps while following live traffic.
     pub live: usize,
     /// How far back it can be scrolled, in messages.
@@ -85,6 +87,7 @@ impl Default for HistorySettings {
 impl Default for MessageLogSettings {
     fn default() -> Self {
         Self {
+            shown: true,
             live: 5_000,
             scrollback: 100_000,
         }
@@ -291,9 +294,10 @@ mod tests {
             (
                 settings.history.per_connection,
                 settings.message_log.live,
+                settings.message_log.shown,
                 settings.subscriptions.default_qos
             ),
-            (100_000, 5_000, 0)
+            (100_000, 5_000, true, 0)
         );
     }
 

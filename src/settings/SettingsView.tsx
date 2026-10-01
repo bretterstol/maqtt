@@ -44,29 +44,6 @@ export function SettingsDialog({
         {view.problem && <p className="editor__warning">{view.problem}</p>}
 
         <fieldset className="editor__section">
-          <legend>Pipelines</legend>
-          <label className="editor__check">
-            <input
-              type="checkbox"
-              checked={settings.pipelines.enabled}
-              disabled={saving}
-              onChange={(e) =>
-                void change({
-                  ...settings,
-                  pipelines: { enabled: e.target.checked },
-                })
-              }
-            />
-            Use Pipelines
-          </label>
-          <p className="settings__does">
-            Shows the Pipelines tab and their branch in the Topic Tree. Turned
-            off, running Pipelines stop and none start, not even those marked to
-            start with måqtt. Turned on again, those start.
-          </p>
-        </fieldset>
-
-        <fieldset className="editor__section">
           <legend>Appearance</legend>
           <label className="editor__field">
             <span>Theme</span>
@@ -129,6 +106,23 @@ export function SettingsDialog({
 
         <fieldset className="editor__section">
           <legend>Message Log</legend>
+          <label className="editor__check">
+            <input
+              type="checkbox"
+              checked={settings.messageLog.shown}
+              disabled={saving}
+              onChange={(e) =>
+                void change({
+                  ...settings,
+                  messageLog: {
+                    ...settings.messageLog,
+                    shown: e.target.checked,
+                  },
+                })
+              }
+            />
+            Show the Message Log tab
+          </label>
           <div className="editor__row">
             <NumberSetting
               label="Kept while live"
@@ -181,6 +175,29 @@ export function SettingsDialog({
           <p className="settings__does">
             What the Subscribe field and a Profile's new Subscriptions start
             with. Connecting at startup is set on each Broker Profile.
+          </p>
+        </fieldset>
+
+        <fieldset className="editor__section">
+          <legend>Pipelines</legend>
+          <label className="editor__check">
+            <input
+              type="checkbox"
+              checked={settings.pipelines.enabled}
+              disabled={saving}
+              onChange={(e) =>
+                void change({
+                  ...settings,
+                  pipelines: { enabled: e.target.checked },
+                })
+              }
+            />
+            Use Pipelines
+          </label>
+          <p className="settings__does">
+            Shows the Pipelines tab and their branch in the Topic Tree. Turned
+            off, running Pipelines stop and none start, not even those marked to
+            start with måqtt. Turned on again, those start.
           </p>
         </fieldset>
 

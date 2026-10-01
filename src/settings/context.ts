@@ -5,7 +5,7 @@ import type { Settings } from "./api";
 export const DEFAULT_SETTINGS: Settings = {
   pipelines: { enabled: true },
   history: { perConnection: 100_000 },
-  messageLog: { live: 5_000, scrollback: 100_000 },
+  messageLog: { shown: true, live: 5_000, scrollback: 100_000 },
   subscriptions: { defaultQos: 0 },
   appearance: { theme: "system" },
   topicTree: { opens: "manual" },
