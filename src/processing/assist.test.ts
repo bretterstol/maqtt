@@ -49,6 +49,14 @@ describe("what fits at the cursor", () => {
     expect(kind("from all |> join ")).toBe("by");
   });
 
+  it("reads brackets and fills as the parser does", () => {
+    // A `|>` inside brackets isn't a new Stage: this is still map's jq.
+    expect(kind("from all |> map (.a |> le")).toBe("function");
+    // A fill inside a string is code, where a string holding a quote is still the fill's.
+    expect(kind('from all |> to app "x/{.a + "y"} $')).not.toBe("variable");
+    expect(kind('from all |> to app "x/{$')).toBe("variable");
+  });
+
   it("offers Stages after |>, adding the space a bare |> needs", () => {
     expect(assistAt("from all\n|> thr")).toEqual({
       kind: "stage",

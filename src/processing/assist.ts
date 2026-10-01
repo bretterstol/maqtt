@@ -1,3 +1,5 @@
+import { isTop, scan } from "./scanner";
+
 /**
  * What can be written at the cursor in a Pipeline: the logic behind autocomplete, kept apart
  * from CodeMirror so it can be tested on plain text.
@@ -71,38 +73,31 @@ interface Scan {
   segmentStart: number;
 }
 
-/** Follows strings, `{…}` fills, objects and comments, as the backend's parser does. */
-function scan(text: string): Scan {
-  const modes: Mode[] = ["code"];
+/** Where the text up to the cursor stands, by the shared scanner's rules (scanner.ts). */
+function scanBefore(text: string): Scan {
+  const { pieces, open } = scan(text);
   let pipes = 0;
   let segmentStart = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    const top = modes[modes.length - 1];
-    if (top === "comment") {
-      if (c === "\n") modes.pop();
-      continue;
-    }
-    if (top === "string") {
-      if (c === "\\") i++;
-      else if (c === '"') modes.pop();
-      else if (c === "{") {
-        if (text[i + 1] === "{") i++;
-        else modes.push("fill");
-      } else if (c === "}" && text[i + 1] === "}") i++;
-      continue;
-    }
-    // Code, an object or a fill.
-    if (c === "#" && modes.length === 1) modes.push("comment");
-    else if (c === '"') modes.push("string");
-    else if (c === "{") modes.push("object");
-    else if (c === "}" && modes.length > 1) modes.pop();
-    else if (c === "|" && text[i + 1] === ">" && modes.length === 1) {
+  for (const piece of pieces.filter(isTop)) {
+    const code = text.slice(piece.start, piece.end);
+    for (
+      let at = code.indexOf("|>");
+      at !== -1;
+      at = code.indexOf("|>", at + 2)
+    ) {
       pipes++;
-      i++;
-      segmentStart = i + 1;
+      segmentStart = piece.start + at + 2;
     }
   }
+  const modes: Mode[] = [
+    "code",
+    ...open.map((o): Mode =>
+      o.kind === "string" ? "string" : o.kind === "fill" ? "fill" : "object",
+    ),
+  ];
+  const last = pieces[pieces.length - 1];
+  if (last?.kind === "comment" && last.end === text.length)
+    modes.push("comment");
   return { modes, pipes, segmentStart };
 }
 
@@ -111,7 +106,7 @@ const WORD = /[A-Za-z_]\w*$/;
 /** What fits at the end of `before` (the text up to the cursor). */
 export function assistAt(before: string): Assist {
   const pos = before.length;
-  const { modes, pipes, segmentStart } = scan(before);
+  const { modes, pipes, segmentStart } = scanBefore(before);
   const top = modes[modes.length - 1];
   if (pipes > 0 && modes.length <= 2) {
     const name = /^to\s+broker\s+("[^"]*)?$/.exec(

@@ -6,6 +6,7 @@ import {
 } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { copyState, next, startState, type ScanState } from "../scanner";
 
 export const STAGE_KEYWORDS = [
   "from",
@@ -44,37 +45,55 @@ const MODIFIERS = [
   "by",
 ];
 
-interface State {
-  inString: boolean;
-}
+const inStringNow = (state: ScanState) =>
+  state.stack[state.stack.length - 1].kind === "string";
 
-/** Tokens for måqtt's pipeline language; the jq inside is highlighted by the same rules. */
-export const pipeParser: StreamParser<State> = {
+/** Characters that change where the scanner is, so the scanner reads them itself. */
+const STRUCTURE = '"#([{)]}';
+
+/**
+ * Tokens for måqtt's pipeline language, by the parser's own rules (scanner.ts): the state
+ * carried from line to line is the scanner's, so strings, `{…}` fills and comments end where
+ * the parser says. Code, inside fills too, is coloured by the same word rules.
+ */
+export const pipeParser: StreamParser<ScanState> = {
   name: "maqtt-pipe",
-  startState: () => ({ inString: false }),
+  startState,
+  copyState,
   token(stream, state) {
-    if (state.inString) {
-      while (!stream.eol()) {
-        const ch = stream.next();
-        if (ch === "\\") stream.next();
-        else if (ch === '"') {
-          state.inString = false;
-          break;
+    const inString = inStringNow(state);
+    const c = stream.peek() ?? "";
+    // Strings, and what opens, closes or comments: the scanner decides.
+    if (inString || STRUCTURE.includes(c)) {
+      const line = stream.string;
+      const piece = next(state, line, stream.pos);
+      stream.pos = Math.max(piece.end, stream.pos + 1);
+      if (["quote", "text", "escape", "brace"].includes(piece.kind)) {
+        // One token for the string, up to its end or the next fill, whose code is coloured.
+        while (stream.pos < line.length && inStringNow(state)) {
+          const at = stream.pos;
+          const opensFill =
+            (line[at] === "{" && line[at + 1] !== "{") ||
+            (line[at] === "\\" && line[at + 1] === "(");
+          if (opensFill) break;
+          stream.pos = next(state, line, at).end;
         }
+        return "string";
       }
-      return "string";
+      switch (piece.kind) {
+        case "comment":
+          return "comment";
+        case "fill":
+        case "end":
+          return "operator";
+        case "code":
+          return null;
+        default:
+          return "string";
+      }
     }
     if (stream.eatSpace()) return null;
-    if (stream.match("#")) {
-      stream.skipToEnd();
-      return "comment";
-    }
     if (stream.match("|>")) return "operator";
-    if (stream.peek() === '"') {
-      stream.next();
-      state.inString = true;
-      return pipeParser.token(stream, state);
-    }
     if (stream.match(/^\$[A-Za-z_][\w]*/)) return "variableName";
     if (stream.match(/^\.[A-Za-z_][\w]*/)) return "propertyName";
     if (stream.match(/^\d+(\.\d+)?(ms|s|m|h)?\b/)) return "number";
