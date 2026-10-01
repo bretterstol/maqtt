@@ -263,7 +263,42 @@ pub struct Pipeline {
     pub ends: Vec<usize>,
 }
 
-const STAGES: &str = "filter, map, changes, delta, pairwise, join, throttle, debounce, scan, window, take, inspect, to";
+/// The Stages after `from`, in the Reference's order; a test keeps them in step with it.
+pub const STAGE_NAMES: [&str; 13] = [
+    "filter", "map", "changes", "delta", "pairwise", "join", "throttle", "debounce", "scan",
+    "window", "take", "inspect", "to",
+];
+
+/// The Sinks `to` takes, in the Reference's order; a test keeps them in step with it.
+pub const SINKS: [&str; 5] = ["app", "broker", "file", "geo", "chart"];
+
+/// "`to app`, `to broker` … and `to chart`", for messages.
+fn sink_list() -> String {
+    let named: Vec<String> = SINKS.iter().map(|s| format!("`to {s}`")).collect();
+    let (last, rest) = named.split_last().expect("there are Sinks");
+    format!("{} and {last}", rest.join(", "))
+}
+
+impl Pipeline {
+    /// The Sinks it uses, each once, by their names in [`SINKS`].
+    pub fn sinks(&self) -> Vec<&'static str> {
+        let mut sinks = Vec::new();
+        for stage in &self.stages {
+            let sink = match stage {
+                Stage::ToApp(_) => "app",
+                Stage::ToBroker { .. } => "broker",
+                Stage::ToFile { .. } => "file",
+                Stage::ToGeo => "geo",
+                Stage::ToChart => "chart",
+                _ => continue,
+            };
+            if !sinks.contains(&sink) {
+                sinks.push(sink);
+            }
+        }
+        sinks
+    }
+}
 
 /// Parses and checks a Pipeline, reporting every problem found.
 pub fn parse(source: &str) -> Result<Pipeline, Vec<Diagnostic>> {
@@ -788,7 +823,8 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
                         sink.span.start,
                         sink.span.end,
                         format!(
-                            "`to {other}` isn't available yet; there are `to app`, `to broker`, `to file`, `to geo` and `to chart`"
+                            "`to {other}` isn't available yet; there are {}",
+                            sink_list()
                         ),
                     );
                     None
@@ -807,7 +843,7 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
             problems.at(
                 word.span.start,
                 (word.span.start + 2).min(arg.end.max(word.span.start + 1)),
-                format!("Expected a Stage after `|>`: {STAGES}"),
+                format!("Expected a Stage after `|>`: {}", STAGE_NAMES.join(", ")),
             );
             None
         }
@@ -815,7 +851,10 @@ fn parse_stage(code: &str, word: Word, arg: Span, problems: &mut Problems) -> Op
             problems.at(
                 word.span.start,
                 word.span.end,
-                format!("Unknown Stage `{other}`. Stages are: {STAGES}"),
+                format!(
+                    "Unknown Stage `{other}`. Stages are: {}",
+                    STAGE_NAMES.join(", ")
+                ),
             );
             None
         }

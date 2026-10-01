@@ -35,6 +35,10 @@
         {
           "syntax": "from pipeline \"<name>\", …",
           "does": "The Derived Topics of those Pipelines: $topic is the path within that Pipeline (what its to app wrote), $connection its name. A Pipeline can't read itself, and one that would close a loop with running Pipelines won't start."
+        },
+        {
+          "syntax": "from pipelines \"<name>\", …",
+          "does": "The same as from pipeline; either word reads, so a list of several can say pipelines."
         }
       ],
       "details": "from all never reads Derived Topics; from pipeline does, by name. File names resolve like to file's, so a recording can be read back by name; a Pipeline can't write to a file it reads.",
@@ -47,7 +51,8 @@
         "from file \"rooms/kitchen.csv\", \"rooms/office.csv\" rate 50/s",
         "from file \"log.jsonl\" follow",
         "from file \"export.csv\" replay .recordTimestamp",
-        "from pipeline \"clean\""
+        "from pipeline \"clean\"",
+        "from pipelines \"clean\", \"office\""
       ],
       "example": "# Replay a recording into the dev Broker, at its original pace\nfrom file \"home.jsonl\" replay .at\n|> map .payload\n|> to broker \"Dev Broker\" \"{$payload.topic}\""
     },

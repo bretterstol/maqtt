@@ -37,6 +37,8 @@ pub struct Preview {
     /// The latest values that reached a Sink, oldest first. Nothing is sent or written: `to
     /// broker` and `to file` values only show here.
     pub results: Vec<PreviewValue>,
+    /// The Sinks the draft uses (`app`, `geo`, `chart`, …), so the tab offers their views.
+    pub sinks: Vec<String>,
     /// What the sample is: recent messages, records from files, or Derived Topics.
     pub sampled: Sampled,
     /// Why a file Source gave fewer records than it might: a file that couldn't be read.
@@ -69,6 +71,7 @@ pub fn preview(
         ends: Vec::new(),
         stages: Vec::new(),
         results: Vec::new(),
+        sinks: Vec::new(),
         sampled: Sampled::Messages,
         note: None,
         outputs: Outputs::default(),
@@ -81,6 +84,7 @@ pub fn preview(
         }
     };
     preview.ends = pipeline.ends.clone();
+    preview.sinks = pipeline.sinks().into_iter().map(String::from).collect();
     let mut runtime = match Runtime::new(&pipeline) {
         Ok(runtime) => runtime.traced(),
         Err(message) => {
@@ -416,5 +420,17 @@ mod tests {
                 r#"{"t":19,"from":"clean","room":"office"}"#
             ]
         );
+    }
+
+    #[test]
+    fn a_preview_says_which_sinks_the_draft_uses() {
+        // In a comment or a string, `to geo` isn't a Sink.
+        let p = preview(
+            "from all # to geo\n|> map \"to chart\" |> to app \"x\" |> to geo |> to app \"y\"",
+            &names(),
+            &history(Vec::new()),
+            Path::new("/nowhere"),
+        );
+        assert_eq!(p.sinks, ["app", "geo"]);
     }
 }

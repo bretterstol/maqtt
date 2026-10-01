@@ -43,6 +43,16 @@ describe("what fits at the cursor", () => {
     expect(kind("from all |> to b")).toBe("sink");
   });
 
+  it("offers by after every Stage that takes it, once its arguments are in", () => {
+    expect(kind("from all |> debounce 2s ")).toBe("by");
+    expect(kind("from all |> window 10 b")).toBe("by");
+    expect(kind("from all |> take 3 ")).toBe("by");
+    expect(kind("from all |> scan 0 (.+1) ")).toBe("by");
+    expect(kind("from all |> scan 0 ")).not.toBe("by");
+    expect(kind("from all |> take ")).not.toBe("by");
+    expect(kind("from all |> inspect ")).not.toBe("by");
+  });
+
   it("offers by after delta and pairwise", () => {
     expect(kind("from all |> delta b")).toBe("by");
     expect(kind("from all |> pairwise ")).toBe("by");

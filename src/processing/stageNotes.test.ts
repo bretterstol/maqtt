@@ -8,6 +8,7 @@ const base: Preview = {
   payload: null,
   ends: [],
   stages: [],
+  sinks: [],
   results: [],
   sampled: "messages",
   note: null,
