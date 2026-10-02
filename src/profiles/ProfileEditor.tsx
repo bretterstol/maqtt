@@ -251,6 +251,16 @@ export function ProfileEditor({
 
         <Section title="API Specs">
           <Specs paths={draft.specs} onChange={(specs) => set({ specs })} />
+          <label className="editor__check">
+            <input
+              type="checkbox"
+              checked={draft.checkSpecs}
+              disabled={draft.specs.length === 0}
+              onChange={(e) => set({ checkSpecs: e.target.checked })}
+            />
+            Check received messages against these specs, and mark topics that
+            differ
+          </label>
         </Section>
 
         <Section title="Subscriptions on connect">

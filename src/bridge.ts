@@ -2,6 +2,8 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Batch } from "./generated/Batch";
+import type { TopicCheck } from "./generated/TopicCheck";
+import type { CheckUpdate } from "./generated/CheckUpdate";
 import type { SpecChannel } from "./generated/SpecChannel";
 import type { SpecParameter } from "./generated/SpecParameter";
 import type { PayloadProblem } from "./generated/PayloadProblem";
@@ -40,6 +42,8 @@ import type { TopicUpdate } from "./generated/TopicUpdate";
 // Generated from the backend's Rust types by ts-rs, when its tests run.
 export type {
   Batch,
+  TopicCheck,
+  CheckUpdate,
   SpecChannel,
   SpecParameter,
   PayloadProblem,
@@ -226,4 +230,9 @@ export function checkPayload(
   payload: string,
 ): Promise<PayloadProblem[]> {
   return invoke("check_payload", { schemas, payload });
+}
+
+/** How each topic's messages compare with its Broker's API Specs, for starting over. */
+export function specChecks(): Promise<CheckUpdate[]> {
+  return invoke("spec_checks");
 }

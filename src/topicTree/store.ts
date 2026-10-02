@@ -1,5 +1,11 @@
 import type { TreeOpens } from "../generated/TreeOpens";
-import type { ConnectionId, LogEntry, TopicUpdate } from "../bridge";
+import type {
+  ConnectionId,
+  LogEntry,
+  TopicUpdate,
+  CheckUpdate,
+  TopicCheck,
+} from "../bridge";
 import { isTopicFilter, topicFilterError, topicMatches } from "./match";
 
 /** A topic's current state, present on nodes where messages were received. */
@@ -92,6 +98,15 @@ export class TopicTreeStore {
     for (const level of prefix.split("/")) node = node?.children.get(level);
     if (!node) return;
 
+    for (const key of [...this.checks.keys()]) {
+      const [c, topic] = key.split("\u0000");
+      if (
+        Number(c) === connectionId &&
+        (topic === prefix || topic.startsWith(`${prefix}/`))
+      )
+        this.checks.delete(key);
+    }
+
     const gone = new Set<TreeNode>();
     const collect = (n: TreeNode) => {
       if (n.topic) gone.add(n);
@@ -129,6 +144,26 @@ export class TopicTreeStore {
       for (const level of path.split("/")) node = node?.children.get(level);
     }
     return node ?? null;
+  }
+
+  /**
+   * Takes in changes to topics' spec checks (none when a Profile stops checking). They're
+   * kept by topic, so a check can arrive before its topic does.
+   */
+  applyChecks(updates: CheckUpdate[]): void {
+    if (updates.length === 0) return;
+    for (const { connectionId, topic, check } of updates) {
+      const key = checkKey(connectionId, topic);
+      if (check) this.checks.set(key, check);
+      else this.checks.delete(key);
+    }
+    this.notify();
+  }
+
+  /** How a topic's messages compare with its Broker's API Specs, when they're checked. */
+  checkOf(node: TreeNode): TopicCheck | null {
+    if (!node.topic) return null;
+    return this.checks.get(checkKey(node.connectionId, node.path)) ?? null;
   }
 
   /** The topics seen on a Connection. */
@@ -319,6 +354,8 @@ export class TopicTreeStore {
     return this.topicNodes.filter((n) => n.path.toLowerCase().includes(needle));
   }
 
+  private readonly checks = new Map<string, TopicCheck>();
+
   private structureChanged(): void {
     this.cachedRows = null;
   }
@@ -328,6 +365,9 @@ export class TopicTreeStore {
     this.listeners.forEach((listener) => listener());
   }
 }
+
+const checkKey = (connectionId: ConnectionId, topic: string) =>
+  `${connectionId}\u0000${topic}`;
 
 function bucketOf(now: number): number {
   return Math.floor(now / ACTIVITY_BUCKET_MS);

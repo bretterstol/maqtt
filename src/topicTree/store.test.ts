@@ -317,4 +317,27 @@ describe("expand modes", () => {
     store.apply([update("a/b/c", 3)]);
     expect(store.find(1, "a/b/c")?.topic?.latest.seq).toBe(3);
   });
+
+  it("keeps topics' spec checks, even one that arrives first, and drops them when cleared", () => {
+    const store = new TopicTreeStore();
+    const check = {
+      channel: "a/{x}",
+      messages: 2,
+      mismatched: 1,
+      problem: "no",
+    };
+    store.applyChecks([{ connectionId: 1, topic: "a/b", check }]);
+    store.apply([update("a/b", 1), update("a/c", 2)]);
+    expect(store.checkOf(store.find(1, "a/b")!)).toEqual(check);
+    expect(store.checkOf(store.find(1, "a/c")!)).toBeNull();
+    expect(store.checkOf(store.find(1, "a")!)).toBeNull();
+
+    store.applyChecks([{ connectionId: 1, topic: "a/b", check: null }]);
+    expect(store.checkOf(store.find(1, "a/b")!)).toBeNull();
+
+    store.applyChecks([{ connectionId: 1, topic: "a/b", check }]);
+    store.clear(1, "a");
+    store.apply([update("a/b", 3)]);
+    expect(store.checkOf(store.find(1, "a/b")!)).toBeNull();
+  });
 });

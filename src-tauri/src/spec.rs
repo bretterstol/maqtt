@@ -397,34 +397,31 @@ pub struct PayloadProblem {
     pub message: String,
 }
 
-/// Checks a payload against each of a channel's message schemas: the problems with the one it
-/// fits best, none when it fits one. Problems with the payload as a whole (a missing field, the
-/// wrong type) say it's another message more than problems inside it do. A payload that isn't JSON has no problems here; the
-/// editor reports that itself.
-pub fn check_payload(schemas: &[Value], payload: &str) -> Vec<PayloadProblem> {
-    let Ok(instance) = serde_json::from_str::<Value>(payload) else {
-        return Vec::new();
-    };
+/// A message schema made ready to check payloads with; None for one that doesn't compile.
+pub fn compile(schema: &Value) -> Option<jsonschema::Validator> {
+    jsonschema::draft7::new(schema).ok()
+}
+
+/// What a payload does against each of a channel's message validators: the problems with the
+/// one it fits best, none when it fits one. Problems with the payload as a whole (a missing
+/// field, the wrong type) say it's another message more than problems inside it do.
+pub fn best_fit(validators: &[jsonschema::Validator], instance: &Value) -> Vec<PayloadProblem> {
     let mut best: Option<Vec<PayloadProblem>> = None;
-    for schema in schemas {
-        let problems = match jsonschema::draft7::new(schema) {
-            Ok(validator) => validator
-                .iter_errors(&instance)
-                .map(|error| PayloadProblem {
-                    path: error
-                        .instance_path()
-                        .into_iter()
-                        .map(|segment| match segment {
-                            jsonschema::paths::LocationSegment::Property(p) => p.to_string(),
-                            jsonschema::paths::LocationSegment::Index(i) => i.to_string(),
-                        })
-                        .collect(),
-                    message: error.to_string(),
-                })
-                .collect(),
-            // A schema that doesn't compile can't be checked against.
-            Err(_) => Vec::new(),
-        };
+    for validator in validators {
+        let problems: Vec<PayloadProblem> = validator
+            .iter_errors(instance)
+            .map(|error| PayloadProblem {
+                path: error
+                    .instance_path()
+                    .into_iter()
+                    .map(|segment| match segment {
+                        jsonschema::paths::LocationSegment::Property(p) => p.to_string(),
+                        jsonschema::paths::LocationSegment::Index(i) => i.to_string(),
+                    })
+                    .collect(),
+                message: error.to_string(),
+            })
+            .collect();
         if problems.is_empty() {
             return problems;
         }
@@ -434,6 +431,16 @@ pub fn check_payload(schemas: &[Value], payload: &str) -> Vec<PayloadProblem> {
         }
     }
     best.unwrap_or_default()
+}
+
+/// Checks a payload against a channel's message schemas, as [`best_fit`] does. A payload that
+/// isn't JSON has no problems here; the editor reports that itself.
+pub fn check_payload(schemas: &[Value], payload: &str) -> Vec<PayloadProblem> {
+    let Ok(instance) = serde_json::from_str::<Value>(payload) else {
+        return Vec::new();
+    };
+    let validators: Vec<_> = schemas.iter().filter_map(compile).collect();
+    best_fit(&validators, &instance)
 }
 
 #[cfg(test)]

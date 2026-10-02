@@ -76,7 +76,7 @@ dev/env.sh down                       # stop the Broker
 
 ## Broker Profiles
 
-A Profile can have API Specs: AsyncAPI files (2.x or 3.x, YAML or JSON) describing the Broker's topics. Add them in the Profile editor; the Publish panel then suggests their topics, with parameters filled in from the spec and from topics already seen, and their payloads' keys and values, and underlines what a payload's schema doesn't allow. Specs are read where they are, and again when they change.
+A Profile can have API Specs: AsyncAPI files (2.x or 3.x, YAML or JSON) describing the Broker's topics. Add them in the Profile editor; the Publish panel then suggests their topics, with parameters filled in from the spec and from topics already seen, and their payloads' keys and values, and underlines what a payload's schema doesn't allow. Specs are read where they are, and again when they change. With **Check received messages against these specs** ticked, each message received is compared with them: topics no channel describes, and payloads their schema doesn't allow, get a ≠ spec mark in the Topic Tree, and the topic's panel says how many differed and why.
 
 Profiles are stored in `~/.config/maqtt/profiles.toml` (Linux) or `~/Library/Application Support/maqtt/profiles.toml` (macOS); set `MAQTT_CONFIG_DIR` to use another directory. Passwords are kept in the OS keyring (Secret Service / Keychain), never in the file.
 

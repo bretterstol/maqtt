@@ -13,6 +13,7 @@ import {
   listProfiles,
   messageDetail,
   newProfile,
+  specChecks,
   streamMessages,
   topicSnapshot,
   type ConnectionId,
@@ -171,6 +172,7 @@ function App() {
         setSelected((node) => (node && !tree.contains(node) ? null : node));
       }
       tree.apply(batch.topics);
+      tree.applyChecks(batch.checks);
       const watched = watchingRef.current;
       const back = watched && cameBack(watched, (c, p) => tree.find(c, p));
       if (back) {
@@ -190,6 +192,7 @@ function App() {
       // Backfill from the History Store, e.g. after a reload of the frontend.
       .then(async (generation) => {
         tree.apply(await topicSnapshot(), { live: false });
+        tree.applyChecks(await specChecks());
         await controller.resetForStream(generation);
       })
       .catch((err) => console.error("stream_messages failed", err));
