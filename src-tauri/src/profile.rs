@@ -53,6 +53,9 @@ pub struct Profile {
     /// API Specs (AsyncAPI files) describing the Broker's topics, by path.
     #[serde(default)]
     pub specs: Vec<String>,
+    /// Compare received messages with the API Specs, marking topics that differ.
+    #[serde(default)]
+    pub check_specs: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
@@ -114,6 +117,7 @@ impl Profile {
             history_per_topic: default_history_per_topic(),
             connect_at_startup: false,
             specs: Vec::new(),
+            check_specs: false,
         }
     }
 

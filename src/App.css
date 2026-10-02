@@ -113,6 +113,11 @@ textarea {
   color: var(--text-muted);
 }
 
+.badge--bad {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
 button,
 input,
 select {

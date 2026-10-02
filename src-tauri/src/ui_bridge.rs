@@ -1,6 +1,7 @@
 //! The UI Bridge: drains the Message Bus and streams it to the frontend in batches, so the
 //! webview gets a steady ~20 updates per second no matter how busy the Brokers are.
 
+use crate::spec_check::{CheckUpdate, SpecChecks};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -40,6 +41,8 @@ pub struct Batch {
     pub received: u64,
     /// Matching messages that never reached the frontend since the previous batch.
     pub dropped: u64,
+    /// Topics whose spec check changed since the previous batch.
+    pub checks: Vec<CheckUpdate>,
 }
 
 /// The topics at and under `prefix` on a Connection are gone.
@@ -259,19 +262,21 @@ pub fn spawn(
     bus: &Bus,
     statuses: &ConnectionStatuses,
     history: Arc<Mutex<HistoryStore>>,
+    checks: Arc<Mutex<SpecChecks>>,
     filter: watch::Receiver<LiveFilter>,
     channel: Channel<Batch>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     // Subscribe before taking the snapshot so no state change falls between the two.
     let rx = bus.subscribe();
     let initial = statuses.snapshot();
-    tauri::async_runtime::spawn(run(rx, initial, history, filter, channel))
+    tauri::async_runtime::spawn(run(rx, initial, history, checks, filter, channel))
 }
 
 async fn run(
     mut rx: broadcast::Receiver<BusEvent>,
     initial: Vec<ConnectionStatus>,
     history: Arc<Mutex<HistoryStore>>,
+    checks: Arc<Mutex<SpecChecks>>,
     mut filter: watch::Receiver<LiveFilter>,
     channel: Channel<Batch>,
 ) {
@@ -331,7 +336,9 @@ async fn run(
                         .collect();
                     (cleared, topics)
                 };
+                let checks = checks.lock().unwrap().take_changed();
                 let idle = pending.is_empty()
+                    && checks.is_empty()
                     && cleared.is_empty()
                     && connection_states.is_empty()
                     && topics.is_empty()
@@ -348,6 +355,7 @@ async fn run(
                     topics,
                     received: std::mem::take(&mut received),
                     dropped: std::mem::take(&mut dropped),
+                    checks,
                 };
                 if channel.send(batch).is_err() {
                     return;

@@ -12,6 +12,7 @@ import {
   type MessageDetail,
   type PropertiesView,
   type PayloadData,
+  type TopicCheck,
 } from "../bridge";
 import { ActivityMeter } from "../topicTree/ActivityMeter";
 import { useAsking } from "../ui/asking";
@@ -81,6 +82,7 @@ export function TopicDetail({
             <span>{plural(node.topicCount, "topic")} below</span>
           )}
         </div>
+        <SpecLine check={tree.checkOf(node)} />
         {node.depth > 0 && (
           <div className="topic-detail__actions">
             <button onClick={() => void copy(node.path, "topic")}>
@@ -189,6 +191,33 @@ function Messages({ node, latestSeq }: { node: TreeNode; latestSeq: number }) {
         <p className="topic-detail__hint">This message has left the history.</p>
       )}
     </>
+  );
+}
+
+/** How the topic's messages compare with the Broker's API Specs, when they're checked. */
+function SpecLine({ check }: { check: TopicCheck | null }) {
+  if (!check) return null;
+  if (check.channel === null) {
+    return (
+      <p className="topic-detail__spec topic-detail__spec--bad">
+        Not in the spec: no channel describes this topic.
+      </p>
+    );
+  }
+  if (check.mismatched === 0) {
+    return (
+      <p className="topic-detail__spec">
+        Matches the spec&apos;s <code>{check.channel}</code> (
+        {plural(check.messages, "message")} checked).
+      </p>
+    );
+  }
+  return (
+    <p className="topic-detail__spec topic-detail__spec--bad">
+      {check.mismatched.toLocaleString()} of {plural(check.messages, "message")}{" "}
+      differ from the spec&apos;s <code>{check.channel}</code>. Latest:{" "}
+      {check.problem}
+    </p>
   );
 }
 

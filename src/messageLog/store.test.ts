@@ -23,6 +23,7 @@ const batch = (seqs: number[], extra: Partial<Batch> = {}): Batch => ({
   topics: [],
   received: seqs.length,
   dropped: 0,
+  checks: [],
   ...extra,
 });
 

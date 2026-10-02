@@ -17,4 +17,8 @@ connectAtStartup: boolean,
 /**
  * API Specs (AsyncAPI files) describing the Broker's topics, by path.
  */
-specs: Array<string>, };
+specs: Array<string>, 
+/**
+ * Compare received messages with the API Specs, marking topics that differ.
+ */
+checkSpecs: boolean, };

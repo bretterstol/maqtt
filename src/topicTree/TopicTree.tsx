@@ -7,7 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ConnectionId, ConnectionState } from "../bridge";
+import type { ConnectionId, ConnectionState, TopicCheck } from "../bridge";
 import { plural } from "../format";
 import { useNow } from "../ui/useNow";
 import { ActivityMeter } from "./ActivityMeter";
@@ -113,6 +113,7 @@ export function TopicTree({
                 rootName={connectionNames.get(node.connectionId)}
                 rootState={connectionStates.get(node.connectionId)}
                 branch={labelFor(node, branchLabel)}
+                check={store.checkOf(node)}
                 onToggle={() => store.toggle(node)}
                 onSelect={() => onSelect(node)}
                 onContextMenu={(x, y) => onContextMenu(node, x, y)}
@@ -185,6 +186,8 @@ interface RowProps {
   onToggle: () => void;
   onSelect: () => void;
   onContextMenu: (x: number, y: number) => void;
+  /** How its messages compare with the Broker's API Specs, when they're checked. */
+  check: TopicCheck | null;
 }
 
 function Row({
@@ -199,6 +202,7 @@ function Row({
   onToggle,
   onSelect,
   onContextMenu,
+  check,
 }: RowProps) {
   const isRoot = node.depth === 0;
   const hasChildren = node.children.size > 0;
@@ -258,6 +262,14 @@ function Row({
       <span className="topic-tree__meta">
         {branch?.own && <span className="badge">{branch.label}</span>}
         <ActivityMeter node={node} now={now} />
+        {check && check.mismatched > 0 && (
+          <span
+            className="badge badge--bad"
+            title={`${check.mismatched.toLocaleString()} of ${check.messages.toLocaleString()} messages differ from the spec: ${check.problem ?? ""}`}
+          >
+            ≠ spec
+          </span>
+        )}
         {node.topic?.retained && (
           <span className="badge" title="The Broker holds a Retained Message">
             R

@@ -11,6 +11,7 @@ mod profile_store;
 mod publish;
 mod settings;
 mod spec;
+mod spec_check;
 mod topics;
 mod ui_bridge;
 
@@ -47,6 +48,8 @@ struct AppState {
     settings: Mutex<SettingsStore>,
     /// API Specs as last read, read again when their files change.
     specs: Mutex<spec::SpecCache>,
+    /// How received messages compare with their Broker's API Specs, for Profiles that check.
+    spec_checks: Arc<Mutex<spec_check::SpecChecks>>,
 }
 
 #[tauri::command]
@@ -93,6 +96,7 @@ fn stream_messages(state: State<'_, AppState>, on_batch: Channel<ui_bridge::Batc
         &state.bus,
         &state.statuses,
         state.history.clone(),
+        state.spec_checks.clone(),
         state.live_filter.subscribe(),
         on_batch,
     );
@@ -242,6 +246,33 @@ fn list_profiles(state: State<'_, AppState>) -> Vec<ProfileView> {
 fn read_specs(state: State<'_, AppState>, paths: Vec<String>) -> Vec<spec::SpecView> {
     let mut cache = state.specs.lock().unwrap();
     paths.iter().map(|path| cache.get(path)).collect()
+}
+
+/// The API Specs a Connection's messages are checked against; None when its Profile doesn't
+/// check them.
+fn specs_checked_on(state: &AppState, connection: ConnectionId) -> Option<Vec<spec::SpecView>> {
+    let profile_id = state
+        .statuses
+        .snapshot()
+        .into_iter()
+        .find(|s| s.connection_id == connection)?
+        .profile_id;
+    let paths = {
+        let profiles = state.profiles.lock().unwrap();
+        let profile = profiles.get(&profile_id)?;
+        if !profile.check_specs || profile.specs.is_empty() {
+            return None;
+        }
+        profile.specs.clone()
+    };
+    let mut cache = state.specs.lock().unwrap();
+    Some(paths.iter().map(|path| cache.get(path)).collect())
+}
+
+/// How each topic's messages compare with its Broker's API Specs, for a frontend starting over.
+#[tauri::command]
+fn spec_checks(state: State<'_, AppState>) -> Vec<spec_check::CheckUpdate> {
+    state.spec_checks.lock().unwrap().snapshot()
 }
 
 /// Checks a payload against a channel's message schemas; none when it fits one of them.
@@ -490,6 +521,7 @@ pub fn run() {
             .expect("config directory")
             .with_file_name("settings.toml"),
     );
+    let checks = Arc::new(Mutex::new(spec_check::SpecChecks::default()));
     let history = Arc::new(Mutex::new(HistoryStore::new(HistoryLimits {
         per_connection: settings.get().history.per_connection,
         ..HistoryLimits::default()
@@ -517,8 +549,13 @@ pub fn run() {
         .setup({
             let bus = bus.clone();
             let history = history.clone();
+            let checks = checks.clone();
             move |app| {
                 history::spawn_recorder(&bus, history);
+                let handle = app.handle().clone();
+                spec_check::spawn_checker(&bus, checks, move |connection| {
+                    specs_checked_on(&handle.state::<AppState>(), connection)
+                });
                 autoconnect(&app.state::<AppState>());
                 if app
                     .state::<AppState>()
@@ -546,6 +583,7 @@ pub fn run() {
             ui_bridge: Mutex::new(None),
             settings: Mutex::new(settings),
             specs: Mutex::default(),
+            spec_checks: checks,
         })
         // Pipelines (ADR 0004): this `manage` and the `processing::` commands below are the
         // whole of the feature's footprint here.
@@ -579,6 +617,7 @@ pub fn run() {
             clear_topic_messages,
             read_specs,
             check_payload,
+            spec_checks,
             publish_history,
             clear_publish_history,
             processing::list_pipelines,

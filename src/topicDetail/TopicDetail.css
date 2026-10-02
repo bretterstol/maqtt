@@ -202,3 +202,17 @@
 .topic-detail__confirm span {
   flex-basis: 100%;
 }
+
+.topic-detail__spec {
+  margin: 0.35rem 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.topic-detail__spec--bad {
+  color: var(--bad);
+}
+
+.topic-detail__spec code {
+  font-variation-settings: var(--mono);
+}
