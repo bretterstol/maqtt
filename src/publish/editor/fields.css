@@ -1,0 +1,41 @@
+.publish-field {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.publish-field:focus-within {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 1px;
+}
+
+.publish-field .cm-editor {
+  background: var(--bg-field);
+}
+
+.publish-field--topic {
+  flex: 1;
+  min-width: 0;
+}
+
+.publish-field--topic .cm-scroller {
+  overflow: hidden;
+}
+
+.publish-field--topic .cm-content {
+  padding: 0.25rem 0.35rem;
+}
+
+.publish-field--payload {
+  flex: 1;
+  min-height: 5rem;
+}
+
+.publish-field--payload .cm-editor {
+  height: 100%;
+  font-size: 12px;
+}
+
+.publish-field .cm-placeholder {
+  color: var(--text-muted);
+}

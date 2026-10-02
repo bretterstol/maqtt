@@ -18,6 +18,14 @@ _Avoid_: Connection settings, config, account
 A live session to a Broker, opened from a Broker Profile. A Broker Profile has at most one Connection at a time.
 _Avoid_: Session, client, link
 
+**API Spec**:
+An AsyncAPI document (2.x or 3.x) describing a Broker's topics and their messages, attached to a Broker Profile by path. Publishing suggests its Channels and payloads from it. måqtt reads it where it lives and again when it changes.
+_Avoid_: OpenAPI, schema, contract
+
+**Channel**:
+A topic as an API Spec describes it, with `{name}` parameters standing for one level each (`home/{room}/climate`), and the messages that go on it, each with a JSON Schema for its payload.
+_Avoid_: Endpoint, route
+
 **Subscription**:
 A topic filter that a Connection is subscribed to. Subscriptions saved on a Broker Profile are applied automatically when its Connection opens.
 _Avoid_: Filter, watch

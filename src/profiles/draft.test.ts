@@ -24,6 +24,7 @@ const profile: Profile = {
   ],
   historyPerTopic: 100,
   connectAtStartup: false,
+  specs: [],
 };
 
 describe("passwordChange", () => {

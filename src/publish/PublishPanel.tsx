@@ -3,10 +3,16 @@ import {
   clearPublishHistory,
   publish,
   publishHistory,
+  readSpecs,
   type ConnectionStatus,
   type ProfileView,
   type PublishRecord,
+  type SpecView,
 } from "../bridge";
+import { matchChannel, type ChannelMatch } from "../spec/channels";
+import { skeleton } from "../spec/schema";
+import { useAsking } from "../ui/asking";
+import { PayloadField, TopicField } from "./editor/fields";
 import { formatTime } from "../format";
 import {
   draftError,
@@ -23,14 +29,20 @@ interface Props {
   profiles: ProfileView[];
   /** Live Connections by Profile. */
   statuses: Map<string, ConnectionStatus>;
+  /** The topics seen on a Profile's Connection, for suggestions. */
+  seenTopics: (profileId: string) => string[];
   onClose: () => void;
 }
+
+/** How often the Profile's API Specs are looked at again, to follow edits to them. */
+const SPECS_EVERY_MS = 2_000;
 
 export function PublishPanel({
   draft,
   onDraftChange,
   profiles,
   statuses,
+  seenTopics,
   onClose,
 }: Props) {
   const [history, setHistory] = useState<PublishRecord[]>([]);
@@ -50,6 +62,29 @@ export function PublishPanel({
   );
   const profile = profiles.find((p) => p.id === draft.profileId);
   const mqtt5 = profile?.protocol !== "mqtt311";
+
+  // The chosen Profile's API Specs, read again when their files change.
+  const specPaths = profile?.specs ?? [];
+  const [specs, setSpecs] = useState<{ key: string; views: SpecView[] }>({
+    key: "",
+    views: [],
+  });
+  const specsKey = specPaths.join("\n");
+  useAsking(
+    () => readSpecs(specPaths),
+    {
+      onValue: (views) => setSpecs({ key: specsKey, views }),
+      onError: () => {},
+    },
+    { every: SPECS_EVERY_MS, enabled: specPaths.length > 0 },
+    [specsKey],
+  );
+  const views = specs.key === specsKey && specsKey ? specs.views : [];
+  const channels = views.flatMap((v) => v.spec?.channels ?? []);
+  const match = matchChannel(channels, draft.topic);
+  const schemas =
+    match?.channel.messages.flatMap((m) => (m.payload ? [m.payload] : [])) ??
+    [];
   const error = draftError(draft, mqtt5);
   const set = (change: Partial<PublishDraft>) => {
     setResult(null);
@@ -103,12 +138,14 @@ export function PublishPanel({
               </option>
             ))}
           </select>
-          <input
-            id="publish-topic"
-            className="publish__grow"
-            placeholder="Topic, e.g. home/lamp/set"
+          <TopicField
             value={draft.topic}
-            onChange={(e) => set({ topic: e.target.value })}
+            onChange={(topic) => set({ topic })}
+            onSubmit={submit}
+            hints={{
+              channels,
+              seen: () => (draft.profileId ? seenTopics(draft.profileId) : []),
+            }}
           />
           <select
             id="publish-qos"
@@ -133,13 +170,24 @@ export function PublishPanel({
             ×
           </button>
         </div>
-        <textarea
-          id="publish-payload"
-          className="publish__payload"
-          placeholder="Payload"
+        {match && (
+          <ChannelLine
+            match={match}
+            onPayload={(payload) => set({ payload })}
+          />
+        )}
+        {views
+          .filter((v) => v.problem)
+          .map((v) => (
+            <p className="publish__hint publish__hint--bad" key={v.path}>
+              {v.problem}
+            </p>
+          ))}
+        <PayloadField
           value={draft.payload}
-          onChange={(e) => set({ payload: e.target.value })}
-          spellCheck={false}
+          onChange={(payload) => set({ payload })}
+          onSubmit={submit}
+          schemas={schemas}
         />
         <label className="publish__check">
           <input
@@ -189,6 +237,55 @@ export function PublishPanel({
         }}
       />
     </section>
+  );
+}
+
+/** The channel the topic is on: what the spec says of it, and payloads to start from. */
+function ChannelLine({
+  match,
+  onPayload,
+}: {
+  match: ChannelMatch;
+  onPayload: (payload: string) => void;
+}) {
+  const { channel } = match;
+  const several = channel.messages.length > 1;
+  const pretty = (value: unknown) => JSON.stringify(value, null, 2);
+  return (
+    <div className="publish__channel">
+      <code>{channel.address}</code>
+      {channel.description && (
+        <span className="publish__hint">{channel.description}</span>
+      )}
+      <span className="publish__grow" />
+      {channel.messages.map((message, i) => {
+        const name = several ? ` ${message.name || i + 1}` : "";
+        return (
+          <span className="publish__starts" key={`${message.name}-${i}`}>
+            {message.examples.map((example, j) => (
+              <button
+                type="button"
+                key={j}
+                title={message.summary ?? undefined}
+                onClick={() => onPayload(pretty(example))}
+              >
+                Example{name}
+                {message.examples.length > 1 ? ` ${j + 1}` : ""}
+              </button>
+            ))}
+            {message.payload != null && (
+              <button
+                type="button"
+                title="A payload with the schema's required fields"
+                onClick={() => onPayload(pretty(skeleton(message.payload)))}
+              >
+                Skeleton{name}
+              </button>
+            )}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 

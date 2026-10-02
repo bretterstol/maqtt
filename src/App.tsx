@@ -26,7 +26,6 @@ import { MessageLogStore } from "./messageLog/store";
 import { ProfileEditor } from "./profiles/ProfileEditor";
 import { ProfileList } from "./profiles/ProfileList";
 import { emptyDraft, type PublishDraft } from "./publish/draft";
-import { PublishPanel } from "./publish/PublishPanel";
 import { payloadAsText } from "./topicDetail/format";
 import { copy } from "./ui/clipboard";
 import { ContextMenu } from "./ui/ContextMenu";
@@ -51,6 +50,10 @@ import "./App.css";
 
 // Pipelines live in their own folder and load only when their tab opens (ADR 0004).
 const PipelinesTab = lazy(() => import("./processing/PipelinesTab"));
+// With its code editors, loaded when first opened.
+const PublishPanel = lazy(() =>
+  import("./publish/PublishPanel").then((m) => ({ default: m.PublishPanel })),
+);
 
 interface Editing {
   profile: Profile;
@@ -445,13 +448,19 @@ function App() {
               </Suspense>
             )}
             {publishing && (
-              <PublishPanel
-                draft={draft}
-                onDraftChange={setDraft}
-                profiles={profiles}
-                statuses={statusesByProfile}
-                onClose={() => setPublishing(false)}
-              />
+              <Suspense fallback={null}>
+                <PublishPanel
+                  draft={draft}
+                  onDraftChange={setDraft}
+                  profiles={profiles}
+                  statuses={statusesByProfile}
+                  seenTopics={(profileId) => {
+                    const status = statusesByProfile.get(profileId);
+                    return status ? tree.topics(status.connectionId) : [];
+                  }}
+                  onClose={() => setPublishing(false)}
+                />
+              </Suspense>
             )}
           </main>
         </div>

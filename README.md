@@ -76,6 +76,8 @@ dev/env.sh down                       # stop the Broker
 
 ## Broker Profiles
 
+A Profile can have API Specs: AsyncAPI files (2.x or 3.x, YAML or JSON) describing the Broker's topics. Add them in the Profile editor; the Publish panel then suggests their topics, with parameters filled in from the spec and from topics already seen, and their payloads' keys and values, and underlines what a payload's schema doesn't allow. Specs are read where they are, and again when they change.
+
 Profiles are stored in `~/.config/maqtt/profiles.toml` (Linux) or `~/Library/Application Support/maqtt/profiles.toml` (macOS); set `MAQTT_CONFIG_DIR` to use another directory. Passwords are kept in the OS keyring (Secret Service / Keychain), never in the file.
 
 On first run, debug builds create Profiles for the dev Broker (plain, TLS and mTLS) so you can connect straight away. A Profile with **Connect when måqtt starts** ticked connects at startup; `MAQTT_AUTOCONNECT=all` (or a comma-separated list of Profile names) connects others too, for a single run.

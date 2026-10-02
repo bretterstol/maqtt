@@ -400,40 +400,6 @@
   font-size: 11px;
 }
 
-/* Autocomplete and hover help inside the editor. */
-.pipelines .cm-tooltip-autocomplete > ul {
-  font-family: var(--font);
-  font-variation-settings: var(--mono);
-  max-height: 16rem;
-}
-
-.pipelines .cm-tooltip-autocomplete > ul > li {
-  padding: 0.1rem 0.6rem !important;
-}
-
-.pipelines .cm-tooltip-autocomplete > ul > li[aria-selected] {
-  background: var(--select);
-  color: var(--text);
-}
-
-.pipelines .cm-completionDetail {
-  margin-left: 1.25rem;
-  font-style: normal;
-  font-variation-settings: var(--sans);
-  color: var(--text-muted);
-}
-
-.pipelines .cm-completionMatchedText {
-  text-decoration: none;
-  font-weight: 700;
-}
-
-.pipelines .cm-tooltip.cm-completionInfo,
-.pipelines .cm-tooltip-hover {
-  max-width: 26rem;
-  padding: 0.45rem 0.6rem;
-}
-
 .pipe-doc {
   font-size: 12px;
   line-height: 1.45;

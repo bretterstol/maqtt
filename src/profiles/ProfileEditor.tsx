@@ -1,10 +1,12 @@
 import { ask } from "@tauri-apps/plugin-dialog";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   deleteProfile,
+  readSpecs,
   saveProfile,
   type Profile,
   type ProfileView,
+  type SpecView,
   type TlsSettings,
 } from "../bridge";
 import { chooseFile } from "../ui/dialogs";
@@ -247,6 +249,10 @@ export function ProfileEditor({
           </div>
         </Section>
 
+        <Section title="API Specs">
+          <Specs paths={draft.specs} onChange={(specs) => set({ specs })} />
+        </Section>
+
         <Section title="Subscriptions on connect">
           {draft.subscriptions.map((sub, i) => (
             <div className="editor__row" key={i}>
@@ -382,5 +388,73 @@ function FileField({
         </button>
       </div>
     </Field>
+  );
+}
+
+/** The AsyncAPI files describing this Broker, each with what was read from it. */
+function Specs({
+  paths,
+  onChange,
+}: {
+  paths: string[];
+  onChange: (paths: string[]) => void;
+}) {
+  const [read, setRead] = useState<SpecView[]>([]);
+  useEffect(() => {
+    let current = true;
+    readSpecs(paths).then(
+      (views) => current && setRead(views),
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [paths]);
+
+  const add = async () => {
+    const path = await chooseFile({
+      title: "Add an AsyncAPI spec",
+      filters: [{ name: "AsyncAPI", extensions: ["yaml", "yml", "json"] }],
+    });
+    if (path && !paths.includes(path)) onChange([...paths, path]);
+  };
+
+  return (
+    <>
+      <p className="editor__hint">
+        AsyncAPI documents (2.x or 3.x) describing this Broker&apos;s topics.
+        Publishing suggests their topics and payloads. They&apos;re read where
+        they are, and again when they change.
+      </p>
+      {paths.map((path) => {
+        const view = read.find((v) => v.path === path);
+        return (
+          <div className="editor__row" key={path}>
+            <div className="editor__grow editor__spec">
+              <code title={path}>{path}</code>
+              {view?.spec && (
+                <span className="editor__hint">
+                  {view.spec.title || "Untitled"}
+                  {view.spec.version && ` ${view.spec.version}`} · AsyncAPI{" "}
+                  {view.spec.asyncapi} · {view.spec.channels.length} channels
+                </span>
+              )}
+              {view?.problem && (
+                <span className="editor__error">{view.problem}</span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange(paths.filter((p) => p !== path))}
+            >
+              Remove
+            </button>
+          </div>
+        );
+      })}
+      <button type="button" onClick={() => void add()}>
+        Add spec…
+      </button>
+    </>
   );
 }

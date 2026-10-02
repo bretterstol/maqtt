@@ -50,6 +50,9 @@ pub struct Profile {
     /// Connect when måqtt starts.
     #[serde(default)]
     pub connect_at_startup: bool,
+    /// API Specs (AsyncAPI files) describing the Broker's topics, by path.
+    #[serde(default)]
+    pub specs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
@@ -110,6 +113,7 @@ impl Profile {
             }],
             history_per_topic: default_history_per_topic(),
             connect_at_startup: false,
+            specs: Vec::new(),
         }
     }
 

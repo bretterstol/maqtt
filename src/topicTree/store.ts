@@ -131,6 +131,13 @@ export class TopicTreeStore {
     return node ?? null;
   }
 
+  /** The topics seen on a Connection. */
+  topics(connectionId: ConnectionId): string[] {
+    return this.topicNodes
+      .filter((n) => n.connectionId === connectionId)
+      .map((n) => n.path);
+  }
+
   /** Whether a node is still in the tree, rather than cleared away. */
   contains(node: TreeNode): boolean {
     let n = node;
