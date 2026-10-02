@@ -2,6 +2,12 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Batch } from "./generated/Batch";
+import type { SpecChannel } from "./generated/SpecChannel";
+import type { SpecParameter } from "./generated/SpecParameter";
+import type { PayloadProblem } from "./generated/PayloadProblem";
+import type { Spec } from "./generated/Spec";
+import type { SpecMessage } from "./generated/SpecMessage";
+import type { SpecView } from "./generated/SpecView";
 import type { ClearedTopics } from "./generated/ClearedTopics";
 import type { ConnectionId } from "./generated/ConnectionId";
 import type { ConnectionState } from "./generated/ConnectionState";
@@ -34,6 +40,12 @@ import type { TopicUpdate } from "./generated/TopicUpdate";
 // Generated from the backend's Rust types by ts-rs, when its tests run.
 export type {
   Batch,
+  SpecChannel,
+  SpecParameter,
+  PayloadProblem,
+  Spec,
+  SpecMessage,
+  SpecView,
   ClearedTopics,
   ConnectionId,
   ConnectionState,
@@ -201,4 +213,17 @@ export function exportProfiles(path: string): Promise<number> {
 
 export function importProfiles(path: string): Promise<Imported> {
   return invoke("import_profiles", { path });
+}
+
+/** API Specs by path, read again when their files have changed. */
+export function readSpecs(paths: string[]): Promise<SpecView[]> {
+  return invoke("read_specs", { paths });
+}
+
+/** Checks a payload against a channel's message schemas; none when it fits one. */
+export function checkPayload(
+  schemas: unknown[],
+  payload: string,
+): Promise<PayloadProblem[]> {
+  return invoke("check_payload", { schemas, payload });
 }

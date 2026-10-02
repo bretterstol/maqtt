@@ -10,6 +10,7 @@ mod profile;
 mod profile_store;
 mod publish;
 mod settings;
+mod spec;
 mod topics;
 mod ui_bridge;
 
@@ -44,6 +45,8 @@ struct AppState {
     /// Only one UI Bridge at a time; a reloaded frontend replaces the previous stream.
     ui_bridge: Mutex<Option<JoinHandle<()>>>,
     settings: Mutex<SettingsStore>,
+    /// API Specs as last read, read again when their files change.
+    specs: Mutex<spec::SpecCache>,
 }
 
 #[tauri::command]
@@ -231,6 +234,20 @@ fn topic_snapshot(state: State<'_, AppState>) -> Vec<TopicUpdate> {
 #[tauri::command]
 fn list_profiles(state: State<'_, AppState>) -> Vec<ProfileView> {
     state.profiles.lock().unwrap().list()
+}
+
+/// API Specs by path, read again when their files have changed. A spec that can't be read
+/// says why.
+#[tauri::command]
+fn read_specs(state: State<'_, AppState>, paths: Vec<String>) -> Vec<spec::SpecView> {
+    let mut cache = state.specs.lock().unwrap();
+    paths.iter().map(|path| cache.get(path)).collect()
+}
+
+/// Checks a payload against a channel's message schemas; none when it fits one of them.
+#[tauri::command]
+fn check_payload(schemas: Vec<serde_json::Value>, payload: String) -> Vec<spec::PayloadProblem> {
+    spec::check_payload(&schemas, &payload)
 }
 
 /// A new, unsaved Profile with defaults filled in.
@@ -528,6 +545,7 @@ pub fn run() {
             live_filter,
             ui_bridge: Mutex::new(None),
             settings: Mutex::new(settings),
+            specs: Mutex::default(),
         })
         // Pipelines (ADR 0004): this `manage` and the `processing::` commands below are the
         // whole of the feature's footprint here.
@@ -559,6 +577,8 @@ pub fn run() {
             publish,
             clear_retained,
             clear_topic_messages,
+            read_specs,
+            check_payload,
             publish_history,
             clear_publish_history,
             processing::list_pipelines,

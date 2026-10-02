@@ -33,6 +33,8 @@ jaq-std = "3"
 jaq-json = "2"
 jiff = "0.2"
 ts-rs = "12.0.1"
+serde_norway = "0.9.42"
+jsonschema = { version = "0.58.4", default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

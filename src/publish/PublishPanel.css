@@ -154,3 +154,30 @@
 .publish__preview {
   font-variation-settings: var(--mono);
 }
+
+.publish__channel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  font-size: 12px;
+}
+
+.publish__channel code {
+  font-variation-settings: var(--mono);
+  color: var(--text-muted);
+}
+
+.publish__starts {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.publish__starts button {
+  padding: 0.05rem 0.45rem;
+  font-size: 12px;
+}
+
+.publish__hint--bad {
+  color: var(--bad);
+}

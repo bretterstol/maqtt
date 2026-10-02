@@ -1,0 +1,33 @@
+/* Autocomplete and hover help in every code editor. */
+.cm-tooltip-autocomplete > ul {
+  font-family: var(--font);
+  font-variation-settings: var(--mono);
+  max-height: 16rem;
+}
+
+.cm-tooltip-autocomplete > ul > li {
+  padding: 0.1rem 0.6rem !important;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--select);
+  color: var(--text);
+}
+
+.cm-completionDetail {
+  margin-left: 1.25rem;
+  font-style: normal;
+  font-variation-settings: var(--sans);
+  color: var(--text-muted);
+}
+
+.cm-completionMatchedText {
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.cm-tooltip.cm-completionInfo,
+.cm-tooltip-hover {
+  max-width: 26rem;
+  padding: 0.45rem 0.6rem;
+}

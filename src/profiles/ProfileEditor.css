@@ -91,3 +91,23 @@
 .editor__delete {
   color: var(--bad);
 }
+
+.editor__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.editor__spec {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.editor__spec code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}

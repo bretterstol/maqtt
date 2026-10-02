@@ -13,4 +13,8 @@ cleanStart: boolean, keepAliveSecs: number, subscriptions: Array<Subscription>, 
 /**
  * Connect when måqtt starts.
  */
-connectAtStartup: boolean, };
+connectAtStartup: boolean, 
+/**
+ * API Specs (AsyncAPI files) describing the Broker's topics, by path.
+ */
+specs: Array<string>, };
