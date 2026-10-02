@@ -14,6 +14,7 @@ import {
   type PayloadData,
 } from "../bridge";
 import { ActivityMeter } from "../topicTree/ActivityMeter";
+import { useAsking } from "../ui/asking";
 import { useNow } from "../ui/useNow";
 import type { TopicTreeStore, TreeNode } from "../topicTree/store";
 import { jsonDiff, lineDiff, type JsonChange } from "./diff";
@@ -185,25 +186,19 @@ function useTopicHistory(node: TreeNode, latestSeq: number): LogEntry[] {
   const [history, setHistory] = useState<LogEntry[]>([]);
   const [fetchedAt, setFetchedAt] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    const wait = Math.max(0, fetchedAt + REFRESH_MS - Date.now());
-    const timer = setTimeout(() => {
-      topicHistory(node.connectionId, node.path)
-        .then((entries) => {
-          if (cancelled) return;
-          setHistory(entries);
-          setFetchedAt(Date.now());
-        })
-        .catch((err) => console.error("topic_history failed", err));
-    }, wait);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-    // `fetchedAt` only paces the next fetch; a new message is what triggers one.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.connectionId, node.path, latestSeq]);
+  // `fetchedAt` only paces the next fetch; a new message is what triggers one.
+  useAsking(
+    () => topicHistory(node.connectionId, node.path),
+    {
+      onValue: (entries) => {
+        setHistory(entries);
+        setFetchedAt(Date.now());
+      },
+      onError: (err) => console.error("topic_history failed", err),
+    },
+    { delay: () => Math.max(0, fetchedAt + REFRESH_MS - Date.now()) },
+    [node.connectionId, node.path, latestSeq],
+  );
 
   return history;
 }
@@ -217,22 +212,21 @@ function useDetails(
     [MessageDetail | null, MessageDetail | null]
   >([null, null]);
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      messageDetail(connectionId, seq),
-      previousSeq === null
-        ? Promise.resolve(null)
-        : messageDetail(connectionId, previousSeq),
-    ])
-      .then((result) => {
-        if (!cancelled) setDetails(result);
-      })
-      .catch((err) => console.error("message_detail failed", err));
-    return () => {
-      cancelled = true;
-    };
-  }, [connectionId, seq, previousSeq]);
+  useAsking(
+    () =>
+      Promise.all([
+        messageDetail(connectionId, seq),
+        previousSeq === null
+          ? Promise.resolve(null)
+          : messageDetail(connectionId, previousSeq),
+      ]),
+    {
+      onValue: setDetails,
+      onError: (err) => console.error("message_detail failed", err),
+    },
+    {},
+    [connectionId, seq, previousSeq],
+  );
 
   return details;
 }

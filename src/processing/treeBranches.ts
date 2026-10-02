@@ -1,6 +1,7 @@
 // The Topic Tree's one entry point for Pipelines (ADR 0004): it marks a stopped Pipeline's
 // branch under the Pipelines root.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useAsking } from "../ui/asking";
 import type { TreeNode } from "../topicTree/store";
 import { listPipelines, PIPELINES_CONNECTION } from "./api";
 
@@ -15,26 +16,18 @@ export function usePipelineBranchLabel(
 ): (node: TreeNode) => string | null {
   const [running, setRunning] = useState<Set<string> | null>(null);
 
-  useEffect(() => {
-    if (!active) return;
-    let stale = false;
-    const poll = () =>
-      void listPipelines().then(
-        (list) => {
-          if (!stale)
-            setRunning(
-              new Set(list.filter((p) => p.status.running).map((p) => p.name)),
-            );
-        },
-        () => {},
-      );
-    poll();
-    const timer = setInterval(poll, POLL_MS);
-    return () => {
-      stale = true;
-      clearInterval(timer);
-    };
-  }, [active]);
+  useAsking(
+    listPipelines,
+    {
+      onValue: (list) =>
+        setRunning(
+          new Set(list.filter((p) => p.status.running).map((p) => p.name)),
+        ),
+      onError: () => {},
+    },
+    { every: POLL_MS, enabled: active },
+    [],
+  );
 
   return useCallback(
     (node: TreeNode) =>
