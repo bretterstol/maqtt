@@ -103,8 +103,9 @@ impl Processing {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct PipelineView {
     name: String,
     source: String,

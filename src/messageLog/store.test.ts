@@ -26,7 +26,7 @@ const batch = (seqs: number[], extra: Partial<Batch> = {}): Batch => ({
   ...extra,
 });
 
-const page = (seqs: number[], hasMore = false): LogPage => ({
+const page = (seqs: number[], hasMore = false): LogPage<LogRow> => ({
   entries: seqs.map(entry),
   hasMore,
 });

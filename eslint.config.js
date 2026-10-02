@@ -6,7 +6,15 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "target", "src-tauri"] },
+  {
+    ignores: [
+      "dist",
+      "target",
+      "src-tauri",
+      "src/generated",
+      "src/processing/generated",
+    ],
+  },
   {
     files: ["**/*.{ts,tsx}"],
     extends: [

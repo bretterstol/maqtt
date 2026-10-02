@@ -1,167 +1,66 @@
 // Types and entry point for the backend's UI Bridge stream (src-tauri/src/ui_bridge.rs).
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { Batch } from "./generated/Batch";
+import type { ConnectionId } from "./generated/ConnectionId";
+import type { ConnectionState } from "./generated/ConnectionState";
+import type { ConnectionStatus } from "./generated/ConnectionStatus";
+import type { ImportReport } from "./generated/ImportReport";
+import type { Imported } from "./generated/Imported";
+import type { LogEntry } from "./generated/LogEntry";
+import type { LogFilter } from "./generated/LogFilter";
+import type { LogPage } from "./generated/LogPage";
+import type { LogQuery } from "./generated/LogQuery";
+import type { LogRow } from "./generated/LogRow";
+import type { MarkerEntry } from "./generated/MarkerEntry";
+import type { MarkerEvent } from "./generated/MarkerEvent";
+import type { MessageDetail } from "./generated/MessageDetail";
+import type { OutgoingMessage } from "./generated/OutgoingMessage";
+import type { OutgoingProperties } from "./generated/OutgoingProperties";
+import type { PasswordChange } from "./generated/PasswordChange";
+import type { PayloadData } from "./generated/PayloadData";
+import type { Profile } from "./generated/Profile";
+import type { ProfileId } from "./generated/ProfileId";
+import type { ProfileView } from "./generated/ProfileView";
+import type { PropertiesView } from "./generated/PropertiesView";
+import type { PublishRecord } from "./generated/PublishRecord";
+import type { Subscription } from "./generated/Subscription";
+import type { SubscriptionState } from "./generated/SubscriptionState";
+import type { SubscriptionStatus } from "./generated/SubscriptionStatus";
+import type { TlsSettings } from "./generated/TlsSettings";
+import type { TopicUpdate } from "./generated/TopicUpdate";
 
-export type ConnectionId = number;
-
-export type ProfileId = string;
-
-export type ConnectionState =
-  | { kind: "connecting" }
-  | { kind: "connected" }
-  | { kind: "disconnected"; reason: string; retryAtMs: number }
-  | { kind: "closed" };
-
-export type SubscriptionState =
-  | { kind: "pending" }
-  | { kind: "active"; grantedQos: number }
-  | { kind: "rejected"; reason: string };
-
-export interface SubscriptionStatus {
-  filter: string;
-  qos: number;
-  state: SubscriptionState;
-}
-
-export interface ConnectionStatus {
-  connectionId: ConnectionId;
-  profileId: ProfileId;
-  name: string;
-  state: ConnectionState;
-  subscriptions: SubscriptionStatus[];
-}
-
-export interface Subscription {
-  filter: string;
-  qos: number;
-}
-
-export interface TlsSettings {
-  caFile?: string | null;
-  clientCertFile?: string | null;
-  clientKeyFile?: string | null;
-  insecureSkipVerify: boolean;
-}
-
-export interface Profile {
-  id: ProfileId;
-  name: string;
-  host: string;
-  port: number;
-  protocol: "mqtt5" | "mqtt311";
-  clientId: string;
-  username?: string | null;
-  tls?: TlsSettings | null;
-  cleanStart: boolean;
-  keepAliveSecs: number;
-  subscriptions: Subscription[];
-  historyPerTopic: number;
-  /** Connect when måqtt starts. */
-  connectAtStartup: boolean;
-}
-
-export interface ProfileView extends Profile {
-  hasPassword: boolean;
-}
-
-export type PasswordChange =
-  { kind: "keep" } | { kind: "set"; value: string } | { kind: "clear" };
-
-export interface LogEntry {
-  seq: number;
-  connectionId: ConnectionId;
-  topic: string;
-  preview: string;
-  binary: boolean;
-  payloadSize: number;
-  qos: number;
-  retain: boolean;
-  receivedAtMs: number;
-}
-
-/** A change in a Connection's link, shown as a row in the Message Log. */
-export type MarkerEvent =
-  | { kind: "connected" }
-  | { kind: "reconnected"; offlineMs: number }
-  | { kind: "lost"; reason: string }
-  | { kind: "failed"; reason: string }
-  | { kind: "closed" };
-
-export interface MarkerEntry {
-  kind: "marker";
-  seq: number;
-  connectionId: ConnectionId;
-  atMs: number;
-  event: MarkerEvent;
-}
-
-/** One Message Log row: a message or a marker. */
-export type LogRow = ({ kind: "message" } & LogEntry) | MarkerEntry;
-
-/** Text when the bytes are UTF-8, base64 otherwise. */
-export type PayloadData =
-  { kind: "text"; text: string } | { kind: "binary"; base64: string };
-
-export interface MessageProperties {
-  payloadFormatIndicator?: number | null;
-  messageExpiryInterval?: number | null;
-  contentType?: string | null;
-  responseTopic?: string | null;
-  correlationData?: PayloadData | null;
-  userProperties: [string, string][];
-}
-
-/** One message in full, for the topic detail panel. */
-export interface MessageDetail extends LogEntry {
-  payload: PayloadData;
-  /** The payload was cut for display. */
-  truncated: boolean;
-  /** Present only for messages received over MQTT 5. */
-  properties?: MessageProperties | null;
-}
-
-/** A topic's full current state; the update with the newest `latest.seq` wins. */
-export interface TopicUpdate {
-  connectionId: ConnectionId;
-  topic: string;
-  count: number;
-  retained: boolean;
-  latest: LogEntry;
-}
-
-export interface Batch {
-  /** New rows matching the filter of `filterGeneration`, oldest first. */
-  messages: LogRow[];
-  filterGeneration: number;
-  connectionStates: ConnectionStatus[];
-  /** Topic prefixes cleared since the previous batch; apply these before `topics`. */
-  cleared: { connectionId: ConnectionId; prefix: string }[];
-  /** Topics that changed since the previous batch, each with its full current stats. */
-  topics: TopicUpdate[];
-  /** Every message received since the previous batch, matching the filter or not. */
-  received: number;
-  /** Matching messages that never reached the frontend. */
-  dropped: number;
-}
-
-export interface LogFilter {
-  connectionId?: ConnectionId | null;
-  /** Matches the topic or the payload, ignoring case. */
-  text?: string | null;
-}
-
-export interface LogQuery {
-  filter: LogFilter;
-  /** Only entries older than this; omit to start from the newest. */
-  beforeSeq?: number;
-  limit: number;
-}
-
-export interface LogPage {
-  /** Oldest first. */
-  entries: LogRow[];
-  hasMore: boolean;
-}
+// Generated from the backend's Rust types by ts-rs, when its tests run.
+export type {
+  Batch,
+  ConnectionId,
+  ConnectionState,
+  ConnectionStatus,
+  ImportReport,
+  Imported,
+  LogEntry,
+  LogFilter,
+  LogPage,
+  LogQuery,
+  LogRow,
+  MarkerEntry,
+  MarkerEvent,
+  MessageDetail,
+  OutgoingMessage,
+  OutgoingProperties,
+  PasswordChange,
+  PayloadData,
+  Profile,
+  ProfileId,
+  ProfileView,
+  PropertiesView,
+  PublishRecord,
+  Subscription,
+  SubscriptionState,
+  SubscriptionStatus,
+  TlsSettings,
+  TopicUpdate,
+};
 
 /**
  * Starts the stream with the Message Log filter reset; resolves to that filter's generation.
@@ -180,7 +79,7 @@ export function setLogFilter(filter: LogFilter): Promise<number> {
   return invoke("set_log_filter", { filter });
 }
 
-export function queryLog(query: LogQuery): Promise<LogPage> {
+export function queryLog(query: LogQuery): Promise<LogPage<LogRow>> {
   return invoke("query_log", { query });
 }
 
@@ -253,31 +152,6 @@ export function messageDetail(
   return invoke("message_detail", { connectionId, seq });
 }
 
-export interface OutgoingProperties {
-  contentType?: string | null;
-  responseTopic?: string | null;
-  correlationData?: string | null;
-  messageExpiryInterval?: number | null;
-  payloadIsUtf8: boolean;
-  userProperties: [string, string][];
-}
-
-export interface OutgoingMessage {
-  topic: string;
-  payload: string;
-  qos: number;
-  retain: boolean;
-  /** MQTT 5 only. */
-  properties?: OutgoingProperties | null;
-}
-
-/** One entry in the Publish History, newest first. */
-export interface PublishRecord {
-  profileId: ProfileId;
-  message: OutgoingMessage;
-  atMs: number;
-}
-
 /** Publishes on the Profile's Connection; resolves to the updated Publish History. */
 export function publish(
   profileId: ProfileId,
@@ -312,15 +186,6 @@ export function exportProfiles(path: string): Promise<number> {
   return invoke("export_profiles", { path });
 }
 
-export interface ImportReport {
-  added: string[];
-  /** Already here; left untouched. */
-  skipped: string[];
-  invalid: string[];
-}
-
-export function importProfiles(
-  path: string,
-): Promise<{ report: ImportReport; profiles: ProfileView[] }> {
+export function importProfiles(path: string): Promise<Imported> {
   return invoke("import_profiles", { path });
 }

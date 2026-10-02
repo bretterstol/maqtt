@@ -294,8 +294,9 @@ pub(super) fn parse_csv_record(line: &str) -> Vec<String> {
 }
 
 /// A file in the Pipeline files folder, for the list in the tab.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct FileEntry {
     /// Relative to the folder, with `/` between levels: what `from file` takes.
     pub name: String,

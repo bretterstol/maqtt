@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { formatDateTime, formatSize } from "../format";
 import { copy } from "../ui/clipboard";
-import { listPipelineFiles, tailPipelineFile, type PipelineFile } from "./api";
+import { listPipelineFiles, tailPipelineFile, type FileEntry } from "./api";
 
 const LIST_EVERY_MS = 2_000;
 const TAIL_EVERY_MS = 1_000;
 
 /** Keeps the files folder's list fresh while the tab is open. */
-export function usePipelineFiles(): PipelineFile[] {
-  const [files, setFiles] = useState<PipelineFile[]>([]);
+export function usePipelineFiles(): FileEntry[] {
+  const [files, setFiles] = useState<FileEntry[]>([]);
   useEffect(() => {
     let live = true;
     const load = () =>
@@ -32,7 +32,7 @@ export function FileList({
   viewing,
   onView,
 }: {
-  files: PipelineFile[];
+  files: FileEntry[];
   viewing: string | null;
   onView: (name: string) => void;
 }) {
@@ -77,7 +77,7 @@ export function FileView({
 }: {
   name: string;
   /** The file as listed; null once it's no longer there. */
-  file: PipelineFile | null;
+  file: FileEntry | null;
   folder: string;
 }) {
   const [tail, setTail] = useState<{ name: string; text: string } | null>(null);

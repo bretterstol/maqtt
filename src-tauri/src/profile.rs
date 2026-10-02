@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "generated/")]
 pub struct ProfileId(pub String);
 
 impl ProfileId {
@@ -15,15 +15,17 @@ impl ProfileId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub enum Protocol {
     Mqtt5,
     Mqtt311,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct Profile {
     pub id: ProfileId,
     pub name: String,
@@ -50,8 +52,9 @@ pub struct Profile {
     pub connect_at_startup: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct TlsSettings {
     /// Trust only this CA (PEM). Without it, the system's trusted roots are used.
     #[serde(default)]
@@ -65,8 +68,9 @@ pub struct TlsSettings {
     pub insecure_skip_verify: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct Subscription {
     pub filter: String,
     #[serde(default)]

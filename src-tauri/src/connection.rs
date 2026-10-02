@@ -19,8 +19,9 @@ const BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// How long a closing Connection waits for its DISCONNECT to go out.
 const DISCONNECT_GRACE: Duration = Duration::from_secs(2);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct ConnectionStatus {
     pub connection_id: ConnectionId,
     pub profile_id: ProfileId,
@@ -29,13 +30,14 @@ pub struct ConnectionStatus {
     pub subscriptions: Vec<SubscriptionStatus>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 // `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[ts(export, export_to = "generated/")]
 pub enum ConnectionState {
     Connecting,
     Connected,
@@ -48,21 +50,23 @@ pub enum ConnectionState {
     Closed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct SubscriptionStatus {
     pub filter: String,
     pub qos: u8,
     pub state: SubscriptionState,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 // `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[ts(export, export_to = "generated/")]
 pub enum SubscriptionState {
     Pending,
     Active { granted_qos: u8 },

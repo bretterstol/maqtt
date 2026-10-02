@@ -82,8 +82,9 @@ pub enum Effect {
 }
 
 /// What went through one Stage, kept only when Preview asks for it.
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct StageTrace {
     /// Values the Stage passed on.
     pub passed: usize,

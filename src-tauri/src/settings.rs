@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct Settings {
     pub pipelines: PipelinesSettings,
     pub history: HistorySettings,
@@ -15,15 +16,17 @@ pub struct Settings {
     pub topic_tree: TopicTreeSettings,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct AppearanceSettings {
     pub theme: Theme,
 }
 
 /// Light or dark, or whatever the system uses.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub enum Theme {
     #[default]
     System,
@@ -31,15 +34,17 @@ pub enum Theme {
     Dark,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct TopicTreeSettings {
     pub opens: TreeOpens,
 }
 
 /// How the Topic Tree opens itself.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub enum TreeOpens {
     /// Only what's opened by hand.
     #[default]
@@ -50,15 +55,17 @@ pub enum TreeOpens {
     All,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct HistorySettings {
     /// Messages kept per Connection, oldest dropped first. (Per topic is on each Profile.)
     pub per_connection: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct MessageLogSettings {
     /// The Message Log tab is shown.
     pub shown: bool,
@@ -118,8 +125,9 @@ impl Settings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct PipelinesSettings {
     /// The Pipelines tab and Topic Tree branch are shown, and Pipelines may run.
     pub enabled: bool,
@@ -132,8 +140,9 @@ impl Default for PipelinesSettings {
 }
 
 /// The settings as the Settings view sees them.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct SettingsView {
     pub settings: Settings,
     /// Where the file is, to show it.

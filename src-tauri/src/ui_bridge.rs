@@ -24,8 +24,9 @@ const MAX_BATCH: usize = 2_000;
 const PREVIEW_CHARS: usize = 200;
 const PREVIEW_BYTES_BINARY: usize = 32;
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct Batch {
     /// New Message Log rows matching the filter of `filter_generation`, oldest first.
     pub messages: Vec<LogRow>,
@@ -42,8 +43,9 @@ pub struct Batch {
 }
 
 /// The topics at and under `prefix` on a Connection are gone.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct ClearedTopics {
     pub connection_id: ConnectionId,
     pub prefix: String,
@@ -57,8 +59,9 @@ pub struct LiveFilter {
     pub filter: LogFilter,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct LogEntry {
     pub seq: u64,
     pub connection_id: ConnectionId,
@@ -72,15 +75,17 @@ pub struct LogEntry {
 }
 
 /// One Message Log row, tagged by `kind`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub enum LogRow {
     Message(LogEntry),
     Marker(MarkerEntry),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct MarkerEntry {
     pub seq: u64,
     pub connection_id: ConnectionId,
@@ -104,8 +109,9 @@ impl From<&LogItem> for LogRow {
 
 /// A topic's full current state for the Topic Tree. Absolute, not a delta, so updates can be
 /// applied in any order: the one with the newest `latest.seq` wins.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct TopicUpdate {
     pub connection_id: ConnectionId,
     pub topic: String,
@@ -147,8 +153,9 @@ impl From<&ReceivedMessage> for LogEntry {
 const MAX_DETAIL_PAYLOAD: usize = 4 * 1024 * 1024;
 
 /// One message in full, for the topic detail panel.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct MessageDetail {
     #[serde(flatten)]
     pub entry: LogEntry,
@@ -159,13 +166,14 @@ pub struct MessageDetail {
 }
 
 /// Text when the bytes are UTF-8, base64 otherwise.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 // `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[ts(export, export_to = "generated/")]
 pub enum PayloadData {
     Text { text: String },
     Binary { base64: String },
@@ -186,8 +194,9 @@ impl PayloadData {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct PropertiesView {
     pub payload_format_indicator: Option<u8>,
     pub message_expiry_interval: Option<u32>,

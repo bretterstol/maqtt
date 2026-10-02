@@ -11,8 +11,9 @@ use crate::profile::{ProfileId, validate_topic_name};
 
 const MAX_HISTORY: usize = 50;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct OutgoingMessage {
     pub topic: String,
     pub payload: String,
@@ -23,8 +24,9 @@ pub struct OutgoingMessage {
     pub properties: Option<OutgoingProperties>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", default)]
+#[ts(export, export_to = "generated/")]
 pub struct OutgoingProperties {
     pub content_type: Option<String>,
     pub response_topic: Option<String>,
@@ -59,8 +61,9 @@ impl OutgoingMessage {
 }
 
 /// One entry in the Publish History.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct PublishRecord {
     pub profile_id: ProfileId,
     pub message: OutgoingMessage,

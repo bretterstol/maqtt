@@ -10,7 +10,7 @@ import {
   topicHistory,
   type LogEntry,
   type MessageDetail,
-  type MessageProperties,
+  type PropertiesView,
   type PayloadData,
 } from "../bridge";
 import { ActivityMeter } from "../topicTree/ActivityMeter";
@@ -422,7 +422,7 @@ function JsonChanges({ changes }: { changes: JsonChange[] }) {
   );
 }
 
-function Properties({ properties }: { properties: MessageProperties }) {
+function Properties({ properties }: { properties: PropertiesView }) {
   const rows: [string, ReactNode][] = [];
   if (properties.contentType)
     rows.push(["Content type", properties.contentType]);

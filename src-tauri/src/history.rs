@@ -49,8 +49,10 @@ impl LogItem {
 const MAX_MARKERS: usize = 1_000;
 
 /// Which messages the Message Log shows.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+// Only read from the frontend, where a missing field is None.
+#[ts(export, export_to = "generated/", optional_fields = nullable)]
 pub struct LogFilter {
     pub connection_id: Option<ConnectionId>,
     /// Matches the topic or the payload, ignoring ASCII case.
@@ -92,8 +94,10 @@ fn contains_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
             .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+// Only read from the frontend, where a missing field is None.
+#[ts(export, export_to = "generated/", optional_fields = nullable)]
 pub struct LogQuery {
     #[serde(default)]
     pub filter: LogFilter,
@@ -102,8 +106,9 @@ pub struct LogQuery {
     pub limit: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct LogPage<T> {
     /// Oldest first.
     pub entries: Vec<T>,

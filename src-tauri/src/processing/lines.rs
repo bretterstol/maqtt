@@ -17,15 +17,18 @@ pub const MAX_LINES: usize = 8;
 /// Series past the limit remembered by name, to count them.
 const MAX_HIDDEN: usize = 1_000;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "processing/generated/")]
 pub struct Line {
     pub name: String,
     /// `[time in ms, value]`, oldest first.
+    #[ts(as = "Vec<[f64; 2]>")]
     pub points: VecDeque<[f64; 2]>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct Lines {
     pub lines: Vec<Line>,
     /// Series that arrived once the chart was full, and aren't drawn.

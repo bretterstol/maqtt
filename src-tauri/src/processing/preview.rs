@@ -21,8 +21,9 @@ const SHOWN: usize = 50;
 /// Store.
 pub type RecentMessages = Arc<dyn Fn(usize) -> Vec<Arc<ReceivedMessage>> + Send + Sync>;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct Preview {
     /// When not empty, nothing ran.
     pub problems: Vec<Diagnostic>,
@@ -47,8 +48,9 @@ pub struct Preview {
     pub outputs: Outputs,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct PreviewValue {
     /// For results: the Sink, as written (`to app`, `to broker "Office"`).
     pub sink: Option<String>,

@@ -194,8 +194,9 @@ fn export_profiles(state: State<'_, AppState>, path: std::path::PathBuf) -> Resu
         .export_to(&path, &home_dir()?)
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 struct Imported {
     report: ImportReport,
     profiles: Vec<ProfileView>,

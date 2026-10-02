@@ -32,8 +32,9 @@ pub const PIPELINES: ConnectionId = ConnectionId(0);
 /// How long stopping waits for a Pipeline's thread before giving up on it.
 const STOP_WAIT: Duration = Duration::from_secs(1);
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct PipelineStatus {
     pub name: String,
     pub running: bool,

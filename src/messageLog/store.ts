@@ -75,7 +75,7 @@ export class MessageLogStore {
   }
 
   /** Shows the newest page and resumes following. */
-  showLatest(page: LogPage): void {
+  showLatest(page: LogPage<LogRow>): void {
     const newestInPage = page.entries.at(-1)?.seq ?? 0;
     // Live entries that arrived while the page was being fetched.
     const newer = this.following
@@ -90,7 +90,7 @@ export class MessageLogStore {
   }
 
   /** Adds an older page in front; returns how many entries were added. */
-  prependOlder(page: LogPage): number {
+  prependOlder(page: LogPage<LogRow>): number {
     const oldest = this.oldestSeq ?? Infinity;
     const older = page.entries.filter((entry) => entry.seq < oldest);
     this.entries = [...older, ...this.entries];

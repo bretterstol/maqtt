@@ -11,8 +11,9 @@ use super::scanner::{Kind as ScanKind, scan};
 use crate::profile::{topic_matches, validate_topic_filter};
 
 /// A problem in a Pipeline's source, for the editor.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct Diagnostic {
     pub message: String,
     /// 1-based.

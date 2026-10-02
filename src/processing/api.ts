@@ -2,75 +2,39 @@
 // whole feature lives in this folder (ADR 0004).
 
 import { invoke } from "@tauri-apps/api/core";
+import type { Diagnostic } from "./generated/Diagnostic";
+import type { FileEntry } from "./generated/FileEntry";
+import type { Inspected } from "./generated/Inspected";
+import type { Line } from "./generated/Line";
+import type { Lines } from "./generated/Lines";
+import type { Marker } from "./generated/Marker";
+import type { Outputs } from "./generated/Outputs";
+import type { PipelineStatus } from "./generated/PipelineStatus";
+import type { PipelineView } from "./generated/PipelineView";
+import type { Preview } from "./generated/Preview";
+import type { PreviewValue } from "./generated/PreviewValue";
+import type { Sampled } from "./generated/Sampled";
+import type { StageTrace } from "./generated/StageTrace";
+
+// Generated from the backend's Rust types by ts-rs, when its tests run.
+export type {
+  Diagnostic,
+  FileEntry,
+  Inspected,
+  Line,
+  Lines,
+  Marker,
+  Outputs,
+  PipelineStatus,
+  PipelineView,
+  Preview,
+  PreviewValue,
+  Sampled,
+  StageTrace,
+};
 
 /** The pseudo-Connection Derived Topics arrive on (`PIPELINES` in runner.rs). */
 export const PIPELINES_CONNECTION = 0;
-
-/** A problem in a Pipeline's source; `start` and `end` are UTF-8 byte offsets. */
-export interface Diagnostic {
-  message: string;
-  line: number;
-  column: number;
-  start: number;
-  end: number;
-}
-
-export interface Inspected {
-  label: string | null;
-  topic: string;
-  value: string;
-  atMs: number;
-}
-
-/** Where one key's `to geo` values put it, and a short trail of where it was. */
-export interface Marker {
-  key: string;
-  label: string | null;
-  lat: number;
-  lon: number;
-  /** Earlier positions, oldest first. */
-  trail: [number, number][];
-  atMs: number;
-}
-
-/** `to chart`'s lines: a series each, in the order they first appeared. */
-export interface ChartLines {
-  lines: { name: string; points: [number, number][] }[];
-  /** Series past the chart's limit of 8, not drawn. */
-  hidden: number;
-}
-
-/** What a Pipeline's Sinks show, the same for a running Pipeline and for Preview. */
-export interface Outputs {
-  /** Values its Sinks took. */
-  emitted: number;
-  errors: number;
-  lastError: string | null;
-  /** The latest `inspect` values, newest last. */
-  inspected: Inspected[];
-  markers: Marker[];
-  chart: ChartLines;
-}
-
-export interface PipelineStatus {
-  name: string;
-  running: boolean;
-  /** It stopped by itself: a `take` passed all it would. */
-  finished: boolean;
-  received: number;
-  missed: number;
-  /** Its own republished messages that came back from a Broker and were left out. */
-  returned: number;
-  outputs: Outputs;
-}
-
-export interface PipelineView {
-  name: string;
-  source: string;
-  status: PipelineStatus;
-  /** Starts whenever måqtt starts. */
-  startsWithApp: boolean;
-}
 
 export const listPipelines = (): Promise<PipelineView[]> =>
   invoke("list_pipelines");
@@ -102,15 +66,7 @@ export const stopPipeline = (name: string): Promise<void> =>
 export const pipelinesFolder = (): Promise<string> =>
   invoke("pipelines_folder");
 
-/** A file in the Pipeline files folder. */
-export interface PipelineFile {
-  /** Relative to the folder: what `from file` takes. */
-  name: string;
-  size: number;
-  modifiedMs: number;
-}
-
-export const listPipelineFiles = (): Promise<PipelineFile[]> =>
+export const listPipelineFiles = (): Promise<FileEntry[]> =>
   invoke("list_pipeline_files");
 
 /** The file's last lines. */
@@ -120,45 +76,6 @@ export const tailPipelineFile = (name: string): Promise<string> =>
 /** Where `to file` writes names that aren't absolute. */
 export const pipelineFilesFolder = (): Promise<string> =>
   invoke("pipeline_files_folder");
-
-/** What one Stage did in a Preview. */
-export interface StageTrace {
-  passed: number;
-  last: string | null;
-  errors: number;
-  /** The first error in full: `map on home/a: …`. */
-  firstError: string | null;
-  /** Just what went wrong in it; the note sits on its Stage already. */
-  firstReason: string | null;
-}
-
-export interface PreviewValue {
-  /** For results: the Sink, as written (`to app`, `to broker "Office"`). */
-  sink: string | null;
-  label: string | null;
-  topic: string;
-  value: string;
-}
-
-export interface Preview {
-  /** When not empty, nothing ran. */
-  problems: Diagnostic[];
-  messages: number;
-  /** The newest sample's payload as JSON. */
-  payload: string | null;
-  /** Where `from` and then each Stage end in the source (UTF-8 byte offsets). */
-  ends: number[];
-  stages: StageTrace[];
-  /** The Sinks the draft uses (`app`, `geo`, `chart`, …). */
-  sinks: string[];
-  /** What its Sinks would send, oldest first; nothing is sent. */
-  results: PreviewValue[];
-  /** What it ran over: recent messages, records from files, or Derived Topics. */
-  sampled: "messages" | "records" | "derived";
-  /** A file Source's file that couldn't be read. */
-  note: string | null;
-  outputs: Outputs;
-}
 
 /** Runs a draft over what it reads (recent messages, files' records, Derived Topics) without starting it. */
 export const previewPipeline = (source: string): Promise<Preview> =>
