@@ -43,6 +43,8 @@ interface Props {
   onClearRetained: () => void;
   onConfirmClear: () => void;
   onCancelClear: () => void;
+  /** Forgets the topic's messages (and those below it) in måqtt. */
+  onClearMessages: () => void;
 }
 
 export function TopicDetail({
@@ -55,6 +57,7 @@ export function TopicDetail({
   onClearRetained,
   onConfirmClear,
   onCancelClear,
+  onClearMessages,
 }: Props) {
   // Re-render as the node's stats change; the node object itself is updated in place.
   useSyncExternalStore(tree.subscribe, tree.getVersion);
@@ -85,6 +88,14 @@ export function TopicDetail({
             </button>
             <button onClick={onPublish} disabled={!online}>
               Publish…
+            </button>
+            <button
+              onClick={onClearMessages}
+              title="Forget these messages in måqtt, to see what comes next. The Broker isn't touched."
+            >
+              {node.children.size > 0
+                ? "Clear messages here and below"
+                : "Clear messages"}
             </button>
             {node.topic?.retained && !confirmingClear && (
               <button
