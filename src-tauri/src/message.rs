@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "generated/")]
 pub struct ConnectionId(pub u32);
 
 #[derive(Debug, Clone)]
@@ -55,13 +56,14 @@ pub struct ConnectionMarker {
     pub event: MarkerEvent,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 // `rename_all_fields` too: `rename_all` alone renames variants, not their fields.
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[ts(export, export_to = "generated/")]
 pub enum MarkerEvent {
     Connected,
     Reconnected {

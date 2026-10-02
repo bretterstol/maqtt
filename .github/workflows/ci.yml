@@ -36,3 +36,11 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm test
+      - name: Generated types match the Rust types
+        run: |
+          pnpm types
+          if [ -n "$(git status --porcelain -- src/generated src/processing/generated)" ]; then
+            git status --porcelain -- src/generated src/processing/generated
+            echo "The generated types are out of date: run pnpm types and commit them."
+            exit 1
+          fi

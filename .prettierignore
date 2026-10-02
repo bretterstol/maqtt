@@ -2,3 +2,5 @@ dist
 target
 src-tauri
 pnpm-lock.yaml
+src/generated
+src/processing/generated

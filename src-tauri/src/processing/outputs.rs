@@ -19,8 +19,9 @@ use super::stages::Effect;
 /// `inspect` values kept, newest last.
 pub const INSPECTED_KEPT: usize = 50;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct Inspected {
     pub label: Option<String>,
     pub topic: String,
@@ -29,8 +30,9 @@ pub struct Inspected {
 }
 
 /// A Pipeline's visible outputs, as the tab shows them.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct Outputs {
     /// Values its Sinks took: delivered Derived Topics, messages and file lines, map points
     /// and chart values.
@@ -38,8 +40,10 @@ pub struct Outputs {
     pub errors: u64,
     pub last_error: Option<String>,
     /// The latest `inspect` values, newest last.
+    #[ts(as = "Vec<Inspected>")]
     pub inspected: VecDeque<Inspected>,
     /// Where its `to geo` values put their markers.
+    #[ts(as = "Vec<super::markers::Marker>")]
     pub markers: Markers,
     /// Its `to chart` values, a line per series.
     pub chart: Lines,

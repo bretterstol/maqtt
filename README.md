@@ -96,5 +96,6 @@ The **Settings** button at the right of the title bar opens them: whether Pipeli
 pnpm lint      # ESLint, Prettier, rustfmt, clippy
 pnpm format    # Prettier + rustfmt
 pnpm test      # Vitest + cargo test
+pnpm types     # regenerate the frontend's copies of the Rust types (src/generated, src/processing/generated)
 pnpm test:broker  # integration tests against the dev Broker, one at a time (needs `dev/env.sh broker`; restarts it)
 ```

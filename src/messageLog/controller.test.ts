@@ -22,7 +22,7 @@ const entry = (seq: number): LogRow => ({
   receivedAtMs: 0,
 });
 
-const page = (seqs: number[], hasMore = false): LogPage => ({
+const page = (seqs: number[], hasMore = false): LogPage<LogRow> => ({
   entries: seqs.map(entry),
   hasMore,
 });
@@ -48,8 +48,8 @@ describe("MessageLogController", () => {
   });
 
   it("ignores a latest page that was superseded by a newer request", async () => {
-    const first = deferred<LogPage>();
-    const second = deferred<LogPage>();
+    const first = deferred<LogPage<LogRow>>();
+    const second = deferred<LogPage<LogRow>>();
     vi.mocked(queryLog)
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
@@ -65,7 +65,7 @@ describe("MessageLogController", () => {
   });
 
   it("ignores a latest page when the filter changed while it was fetched", async () => {
-    const pending = deferred<LogPage>();
+    const pending = deferred<LogPage<LogRow>>();
     vi.mocked(queryLog).mockReturnValueOnce(pending.promise);
     const loading = controller.showLatest();
     store.resetForFilter(1);
@@ -75,7 +75,7 @@ describe("MessageLogController", () => {
   });
 
   it("doesn't resume following if the user paused while the latest page loaded", async () => {
-    const pending = deferred<LogPage>();
+    const pending = deferred<LogPage<LogRow>>();
     vi.mocked(queryLog).mockReturnValueOnce(pending.promise);
     const loading = controller.showLatest();
     store.pause();

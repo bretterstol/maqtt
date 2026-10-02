@@ -1,3 +1,4 @@
+import type { TreeOpens } from "../generated/TreeOpens";
 import type { ConnectionId, LogEntry, TopicUpdate } from "../bridge";
 import { isTopicFilter, topicFilterError, topicMatches } from "./match";
 
@@ -12,7 +13,8 @@ export interface TopicInfo {
  * How the tree opens itself: only by hand, every level except the one holding the topics
  * ("groups"), or everything.
  */
-export type ExpandMode = "manual" | "groups" | "all";
+/** How the Topic Tree opens itself (`TreeOpens` in settings.rs). */
+export type ExpandMode = TreeOpens;
 
 /** In "groups" mode, a group with more entries than this stays closed, so it can't flood the tree. */
 export const GROUP_EXPAND_LIMIT = 50;

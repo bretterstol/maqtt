@@ -12,6 +12,7 @@
     "format": "prettier --write . && cargo fmt --all",
     "dev:env": "dev/env.sh up",
     "test": "vitest run && cargo test --workspace",
+    "types": "rm -rf src/generated src/processing/generated && cargo test -q -p maqtt --lib export_bindings",
     "test:broker": "cargo test -p maqtt -- --ignored --test-threads=1"
   },
   "dependencies": {

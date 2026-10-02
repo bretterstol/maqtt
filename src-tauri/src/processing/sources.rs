@@ -221,8 +221,9 @@ fn file_message(seq: u64, name: String, payload: Vec<u8>, at_ms: u64) -> Arc<Rec
 }
 
 /// What a Preview ran over, which is how the tab words it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub enum Sampled {
     /// Recent messages from Brokers.
     Messages,

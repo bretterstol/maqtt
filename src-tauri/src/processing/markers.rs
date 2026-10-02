@@ -11,8 +11,9 @@ pub const TRAIL: usize = 20;
 /// Markers kept at most; past that, the one updated longest ago goes.
 pub const MAX_MARKERS: usize = 1_000;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "processing/generated/")]
 pub struct Marker {
     pub key: String,
     pub label: Option<String>,

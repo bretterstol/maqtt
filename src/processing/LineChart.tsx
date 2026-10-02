@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChartLines } from "./api";
+import type { Lines } from "./api";
 
 // The plot's margins: room for the value ticks on the left and the times below.
 const M = { top: 10, right: 16, bottom: 22, left: 52 };
@@ -72,7 +72,7 @@ function nearest(points: [number, number][], at: number): [number, number] {
  * A legend with each line's latest value comes with two or more; hovering shows every line's
  * value at the nearest time.
  */
-export default function LineChart({ chart }: { chart: ChartLines }) {
+export default function LineChart({ chart }: { chart: Lines }) {
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState<number | null>(null);

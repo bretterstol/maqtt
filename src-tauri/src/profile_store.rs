@@ -68,16 +68,18 @@ impl SecretStore for MemorySecrets {
 
 /// What the frontend sees of a Profile: the Profile itself plus whether a password is stored,
 /// never the password.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct ProfileView {
     #[serde(flatten)]
     pub profile: Profile,
     pub has_password: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub enum PasswordChange {
     Keep,
     Set(String),
@@ -85,8 +87,9 @@ pub enum PasswordChange {
 }
 
 /// What an import did.
-#[derive(Debug, Default, PartialEq, Serialize)]
+#[derive(Debug, Default, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "generated/")]
 pub struct ImportReport {
     pub added: Vec<String>,
     /// Already here (same Profile ID); left untouched.
