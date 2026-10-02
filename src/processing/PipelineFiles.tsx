@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { formatDateTime, formatSize } from "../format";
+import { useAsking } from "../ui/asking";
 import { copy } from "../ui/clipboard";
 import { listPipelineFiles, tailPipelineFile, type FileEntry } from "./api";
 
@@ -9,20 +10,12 @@ const TAIL_EVERY_MS = 1_000;
 /** Keeps the files folder's list fresh while the tab is open. */
 export function usePipelineFiles(): FileEntry[] {
   const [files, setFiles] = useState<FileEntry[]>([]);
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      void listPipelineFiles().then(
-        (list) => live && setFiles(list),
-        () => {},
-      );
-    load();
-    const timer = setInterval(load, LIST_EVERY_MS);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, []);
+  useAsking(
+    listPipelineFiles,
+    { onValue: setFiles, onError: () => {} },
+    { every: LIST_EVERY_MS },
+    [],
+  );
   return files;
 }
 
@@ -83,24 +76,18 @@ export function FileView({
   const [tail, setTail] = useState<{ name: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      void tailPipelineFile(name).then(
-        (text) => {
-          if (!live) return;
-          setTail({ name, text });
-          setError(null);
-        },
-        (err) => live && setError(String(err)),
-      );
-    load();
-    const timer = setInterval(load, TAIL_EVERY_MS);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, [name]);
+  useAsking(
+    () => tailPipelineFile(name),
+    {
+      onValue: (text) => {
+        setTail({ name, text });
+        setError(null);
+      },
+      onError: (err) => setError(String(err)),
+    },
+    { every: TAIL_EVERY_MS },
+    [name],
+  );
 
   if (!file) {
     return (

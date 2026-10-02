@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAsking } from "../ui/asking";
 import { toast } from "../ui/toast";
 import {
   brokerNames,
@@ -133,27 +134,23 @@ export default function PipelinesTab() {
     );
   }, []);
 
-  // A poll sent before a save can answer after it; only the newest answer counts.
-  const asked = useRef(0);
-  const refresh = useCallback(() => {
-    const ask = ++asked.current;
-    return listPipelines().then(
-      (list) => {
-        if (ask === asked.current) show(list);
-      },
-      (error) => toast(`Couldn't read the Pipelines: ${String(error)}`, true),
-    );
-  }, [show]);
+  // Polled, and asked again after each change; a poll sent before a save can't answer after it.
+  const refresh = useAsking(
+    listPipelines,
+    {
+      onValue: show,
+      onError: (error) =>
+        toast(`Couldn't read the Pipelines: ${String(error)}`, true),
+    },
+    { every: POLL_MS },
+    [],
+  );
 
   useEffect(() => {
     void pipelinesFolder().then(setFolder);
     void pipelineFilesFolder().then(setFilesFolder, () => {});
     void brokerNames().then(setBrokers, () => {});
-    const poll = () => void refresh();
-    poll();
-    const timer = setInterval(poll, POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+  }, []);
 
   const current = pipelines.find((p) => p.name === selected) ?? null;
   const text = current ? (drafts.get(current.name) ?? current.source) : "";
@@ -178,43 +175,38 @@ export default function PipelinesTab() {
     [preview, brokers, pipelines, current?.name],
   );
 
-  // Preview the text shortly after typing stops, then keep it fresh: each run schedules the
-  // next once it has succeeded. A failed run isn't retried (the same text would fail, or get
-  // stuck, again); an edit runs it. It also finds the problems underlined in the editor. An
-  // answer for text that has since changed is dropped.
-  useEffect(() => {
-    if (!current) return;
-    const name = current.name;
-    let stale = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const run = () =>
-      void previewPipeline(text).then(
-        (result) => {
-          if (stale) return;
-          setPreviewError(null);
-          if (result.problems.length === 0) {
-            setKnownSinks((old) => new Map(old).set(name, result.sinks));
-          }
-          setPreviewed({
-            name,
-            preview: result,
-            notes: stageNotes(text, result),
-          });
-          timer = setTimeout(run, PREVIEW_EVERY_MS);
-        },
-        (error) => {
-          if (stale) return;
-          // What the previous draft showed no longer applies.
-          setPreviewed(null);
-          setPreviewError({ name, message: String(error) });
-        },
-      );
-    timer = setTimeout(run, PREVIEW_DELAY_MS);
-    return () => {
-      stale = true;
-      clearTimeout(timer);
-    };
-  }, [current?.name, text]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Preview the text shortly after typing stops, then keep it fresh. A failed run isn't
+  // retried (the same text would fail, or get stuck, again); an edit runs it. It also finds the
+  // problems underlined in the editor. An answer for text that has since changed is dropped.
+  const name = current?.name ?? "";
+  useAsking(
+    () => previewPipeline(text),
+    {
+      onValue: (result) => {
+        setPreviewError(null);
+        if (result.problems.length === 0) {
+          setKnownSinks((old) => new Map(old).set(name, result.sinks));
+        }
+        setPreviewed({
+          name,
+          preview: result,
+          notes: stageNotes(text, result),
+        });
+      },
+      onError: (error) => {
+        // What the previous draft showed no longer applies.
+        setPreviewed(null);
+        setPreviewError({ name, message: String(error) });
+      },
+    },
+    {
+      delay: PREVIEW_DELAY_MS,
+      every: PREVIEW_EVERY_MS,
+      untilError: true,
+      enabled: current !== null,
+    },
+    [name, text],
+  );
 
   const edit = (value: string) => {
     if (!current) return;
