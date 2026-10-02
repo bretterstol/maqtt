@@ -20,7 +20,7 @@ use tauri::ipc::Channel;
 use tauri::{Manager, State};
 use tokio::sync::watch;
 
-use bus::Bus;
+use bus::{Bus, BusEvent};
 use connection::{ConnectionManager, ConnectionStatuses};
 use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
@@ -337,6 +337,24 @@ async fn publish(
     Ok(history.list())
 }
 
+/// Forgets a topic's messages in måqtt, and those of the topics below it: the History Store, the
+/// Topic Tree and Preview's samples. The Broker isn't touched.
+#[tauri::command]
+fn clear_topic_messages(
+    state: State<'_, AppState>,
+    connection_id: ConnectionId,
+    topic: String,
+) -> Result<(), String> {
+    if topic.is_empty() {
+        return Err("Pick a topic to clear".into());
+    }
+    state.bus.publish(BusEvent::TopicsCleared {
+        connection_id,
+        prefix: topic,
+    });
+    Ok(())
+}
+
 /// Clears the Broker's Retained Message for a topic by publishing an empty retained message.
 #[tauri::command]
 async fn clear_retained(
@@ -540,6 +558,7 @@ pub fn run() {
             disconnect,
             publish,
             clear_retained,
+            clear_topic_messages,
             publish_history,
             clear_publish_history,
             processing::list_pipelines,

@@ -4,10 +4,12 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
   clearRetained,
+  clearTopicMessages,
   listProfiles,
   messageDetail,
   newProfile,
@@ -33,6 +35,7 @@ import { toast } from "./ui/toast";
 import { TopicTreeStore, type TreeNode } from "./topicTree/store";
 import { takeOldExpandMode } from "./topicTree/expandPreference";
 import { TopicTree } from "./topicTree/TopicTree";
+import { cameBack, type Watching } from "./topicTree/watching";
 import { TopicDetail } from "./topicDetail/TopicDetail";
 import { PIPELINES_CONNECTION } from "./processing/api";
 import { usePipelineBranchLabel } from "./processing/treeBranches";
@@ -69,6 +72,18 @@ function App() {
   const [tree] = useState(() => new TopicTreeStore());
   const [tab, setTab] = useState<"topics" | "log" | "pipelines">("topics");
   const [selected, setSelected] = useState<TreeNode | null>(null);
+  // A topic the user cleared while looking at it: the panel stays on it, and picks it up again
+  // once the clear has come through and the topic is back.
+  const [watching, setWatching] = useState<Watching | null>(null);
+  // For the message stream's handler, which outlives renders.
+  const watchingRef = useRef<Watching | null>(null);
+  useEffect(() => {
+    watchingRef.current = watching;
+  }, [watching]);
+  const select = useCallback((node: TreeNode | null) => {
+    setWatching(null);
+    setSelected(node);
+  }, []);
   const [statuses, setStatuses] = useState<Map<ConnectionId, ConnectionStatus>>(
     new Map(),
   );
@@ -153,6 +168,13 @@ function App() {
         setSelected((node) => (node && !tree.contains(node) ? null : node));
       }
       tree.apply(batch.topics);
+      const watched = watchingRef.current;
+      const back = watched && cameBack(watched, (c, p) => tree.find(c, p));
+      if (back) {
+        watchingRef.current = null;
+        setWatching(null);
+        setSelected(back);
+      }
       if (batch.connectionStates.length > 0) {
         setStatuses((previous) => {
           const next = new Map(previous);
@@ -219,6 +241,22 @@ function App() {
     }
   };
 
+  const clearMessagesOn = async (node: TreeNode) => {
+    if (selected?.key === node.key) {
+      setWatching({
+        connectionId: node.connectionId,
+        path: node.path,
+        was: node,
+      });
+    }
+    try {
+      await clearTopicMessages(node.connectionId, node.path);
+    } catch (err) {
+      setWatching(null);
+      toast(`Couldn't clear ${node.path}: ${String(err)}`, true);
+    }
+  };
+
   const copyLatestPayload = async (node: TreeNode) => {
     if (!node.topic) return;
     const detail = await messageDetail(
@@ -251,6 +289,17 @@ function App() {
               {
                 label: "Publish to this topic…",
                 onSelect: () => publishTo(menu.node),
+              },
+            ]
+          : []),
+        ...(menu.node.depth > 0
+          ? [
+              {
+                label:
+                  menu.node.children.size > 0
+                    ? "Clear messages here and below"
+                    : "Clear messages",
+                onSelect: () => void clearMessagesOn(menu.node),
               },
             ]
           : []),
@@ -348,7 +397,7 @@ function App() {
                   connectionNames={connectionNames}
                   connectionStates={connectionStates}
                   selectedKey={selected?.key ?? null}
-                  onSelect={setSelected}
+                  onSelect={select}
                   onContextMenu={(node, x, y) => setMenu({ node, x, y })}
                   branchLabel={pipelineBranchLabel}
                   hidden={pipelinesOn ? undefined : PIPELINES_CONNECTION}
@@ -356,6 +405,18 @@ function App() {
                     void changeSettings({ ...inForce, topicTree: { opens } })
                   }
                 />
+                {!selected && watching && (
+                  <aside className="topic-detail">
+                    <header className="topic-detail__header">
+                      <code className="topic-detail__topic">
+                        {watching.path}
+                      </code>
+                    </header>
+                    <p className="topic-detail__hint">
+                      Cleared. Its messages show here again as they arrive.
+                    </p>
+                  </aside>
+                )}
                 {selected && (
                   <TopicDetail
                     // A fresh panel per topic, so its history, pin and rate start over.
@@ -369,6 +430,7 @@ function App() {
                     onClearRetained={() => setClearing(selected.key)}
                     onConfirmClear={() => void clearRetainedOn(selected)}
                     onCancelClear={() => setClearing(null)}
+                    onClearMessages={() => void clearMessagesOn(selected)}
                   />
                 )}
               </div>

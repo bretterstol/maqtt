@@ -302,4 +302,19 @@ describe("expand modes", () => {
     expect(store.topicCount).toBe(1);
     expect(store.contains(find(store, "a/bc"))).toBe(true);
   });
+
+  it("finds a node by its path, and loses it once cleared", () => {
+    const store = new TopicTreeStore();
+    store.apply([update("a/b/c", 1), update("a/bc", 2)]);
+    expect(store.find(1, "a/b/c")?.topic?.count).toBe(1);
+    expect(store.find(1, "a/b")?.children.size).toBe(1);
+    expect(store.find(1, "")?.depth).toBe(0);
+    expect(store.find(1, "a/x")).toBeNull();
+    expect(store.find(2, "a")).toBeNull();
+    store.clear(1, "a/b");
+    expect(store.find(1, "a/b")).toBeNull();
+    expect(store.find(1, "a/bc")).not.toBeNull();
+    store.apply([update("a/b/c", 3)]);
+    expect(store.find(1, "a/b/c")?.topic?.latest.seq).toBe(3);
+  });
 });

@@ -2,6 +2,7 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Batch } from "./generated/Batch";
+import type { ClearedTopics } from "./generated/ClearedTopics";
 import type { ConnectionId } from "./generated/ConnectionId";
 import type { ConnectionState } from "./generated/ConnectionState";
 import type { ConnectionStatus } from "./generated/ConnectionStatus";
@@ -33,6 +34,7 @@ import type { TopicUpdate } from "./generated/TopicUpdate";
 // Generated from the backend's Rust types by ts-rs, when its tests run.
 export type {
   Batch,
+  ClearedTopics,
   ConnectionId,
   ConnectionState,
   ConnectionStatus,
@@ -158,6 +160,17 @@ export function publish(
   message: OutgoingMessage,
 ): Promise<PublishRecord[]> {
   return invoke("publish", { profileId, message });
+}
+
+/**
+ * Forgets a topic's messages in måqtt, and those of the topics below it; the Broker isn't
+ * touched. The tree hears of it in the next batch's `cleared`.
+ */
+export function clearTopicMessages(
+  connectionId: ConnectionId,
+  topic: string,
+): Promise<void> {
+  return invoke("clear_topic_messages", { connectionId, topic });
 }
 
 /** Clears the Broker's Retained Message for a topic. */

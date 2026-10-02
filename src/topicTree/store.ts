@@ -122,6 +122,15 @@ export class TopicTreeStore {
     this.notify();
   }
 
+  /** The node at `path` on a Connection (its root for ""), if the tree has it. */
+  find(connectionId: ConnectionId, path: string): TreeNode | null {
+    let node = this.roots.get(connectionId);
+    if (path !== "") {
+      for (const level of path.split("/")) node = node?.children.get(level);
+    }
+    return node ?? null;
+  }
+
   /** Whether a node is still in the tree, rather than cleared away. */
   contains(node: TreeNode): boolean {
     let n = node;
