@@ -498,6 +498,8 @@
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   overflow: hidden;
+  /* Keeps Leaflet's z-indexes (400 and up) inside the map, below dialogs, menus and toasts. */
+  isolation: isolate;
 }
 
 .marker-map__canvas {
