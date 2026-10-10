@@ -5,7 +5,7 @@ import type { ExpandMode } from "./store";
 const KEY = "maqtt.expandMode";
 const MODES: ExpandMode[] = ["manual", "groups", "all"];
 
-/** A choice left in browser storage by an older måqtt, removed as it's read; null if none. */
+/** A choice left in browser storage by an older mÅqtt, removed as it's read; null if none. */
 export function takeOldExpandMode(): ExpandMode | null {
   try {
     const saved = localStorage.getItem(KEY);

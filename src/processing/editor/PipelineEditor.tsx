@@ -29,7 +29,7 @@ interface Props {
   hints: Hints;
 }
 
-/** CodeMirror with måqtt's pipeline language; the parent owns the text. */
+/** CodeMirror with mÅqtt's pipeline language; the parent owns the text. */
 export function PipelineEditor({
   docKey,
   value,

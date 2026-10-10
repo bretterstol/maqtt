@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dev environment for måqtt: a Mosquitto Broker in a container plus the traffic generator.
+# Dev environment for mÅqtt: a Mosquitto Broker in a container plus the traffic generator.
 #
 #   dev/env.sh up      start the Broker (detached) and run trafficgen in the foreground
 #   dev/env.sh broker  start the Broker only

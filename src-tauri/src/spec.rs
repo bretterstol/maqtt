@@ -1,5 +1,5 @@
 //! API Specs: AsyncAPI documents (2.x and 3.x, YAML or JSON) attached to a Broker Profile,
-//! describing its topics (Channels) and their messages' payloads. måqtt reads them for
+//! describing its topics (Channels) and their messages' payloads. mÅqtt reads them for
 //! suggestions when publishing, and checks payloads against their schemas.
 //!
 //! A spec is read from where it lives, and read again when the file changes. `$ref`s are

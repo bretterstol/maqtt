@@ -1182,10 +1182,10 @@ fn expression_in(
     }
     if let Some((at, word)) = endless_construct(text) {
         let message = if word == "def" {
-            "Defining functions with `def` isn't available in Pipelines: one that calls itself without end would take måqtt down with it".to_string()
+            "Defining functions with `def` isn't available in Pipelines: one that calls itself without end would take mÅqtt down with it".to_string()
         } else {
             format!(
-                "`{word}(…)` isn't available in Pipelines: it can loop without end, which would take måqtt down with it"
+                "`{word}(…)` isn't available in Pipelines: it can loop without end, which would take mÅqtt down with it"
             )
         };
         problems.at(start + at, start + at + word.len(), message);
@@ -1375,7 +1375,7 @@ fn split_stages(code: &str) -> Vec<Span> {
     spans
 }
 
-/// Rewrites måqtt's `{…}` string filling into jq's `\(…)`, and `{{` and `}}` into literal braces
+/// Rewrites mÅqtt's `{…}` string filling into jq's `\(…)`, and `{{` and `}}` into literal braces
 /// (as in Python's f-strings). Also returns, for every byte of the result, the byte offset in
 /// `text` it came from, to map jq's errors back.
 pub fn to_jq(text: &str) -> (String, Vec<usize>) {

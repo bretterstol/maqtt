@@ -200,7 +200,7 @@ impl ProfileStore {
         let text = toml::to_string_pretty(&ProfilesFile { profiles })
             .map_err(|err| format!("Couldn't serialize Profiles: {err}"))?;
         let text =
-            format!("# Broker Profiles exported from måqtt. Passwords are not included.\n\n{text}");
+            format!("# Broker Profiles exported from mÅqtt. Passwords are not included.\n\n{text}");
         write_atomically(path, &text)
             .map_err(|err| format!("Couldn't write {}: {err}", path.display()))?;
         Ok(count)
@@ -211,7 +211,7 @@ impl ProfileStore {
         let text = std::fs::read_to_string(path)
             .map_err(|err| format!("Couldn't read {}: {err}", path.display()))?;
         let file: ProfilesFile = toml::from_str(&text)
-            .map_err(|err| format!("{} isn't a måqtt Profiles file: {err}", path.display()))?;
+            .map_err(|err| format!("{} isn't a mÅqtt Profiles file: {err}", path.display()))?;
         let mut report = ImportReport::default();
         for mut profile in file.profiles {
             if self.get(&profile.id).is_some() {
@@ -420,7 +420,7 @@ mod tests {
         let err = store(&temp_path("import-garbage-store"))
             .import_from(&file, Path::new("/home/me"))
             .unwrap_err();
-        assert!(err.contains("isn't a måqtt Profiles file"), "{err}");
+        assert!(err.contains("isn't a mÅqtt Profiles file"), "{err}");
     }
 
     #[test]

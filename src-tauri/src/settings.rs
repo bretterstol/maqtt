@@ -1,4 +1,4 @@
-//! Settings: how måqtt behaves, in `settings.toml` beside `profiles.toml`. A missing file or
+//! Settings: how mÅqtt behaves, in `settings.toml` beside `profiles.toml`. A missing file or
 //! key means today's behaviour, so nobody's setup changes when a setting is added.
 
 use std::path::PathBuf;
@@ -94,7 +94,7 @@ impl Default for MessageLogSettings {
 }
 
 impl Settings {
-    /// Refuses values that would make måqtt misbehave, saying what's allowed.
+    /// Refuses values that would make mÅqtt misbehave, saying what's allowed.
     pub fn check(&self) -> Result<(), String> {
         let within = |what: &str, v: usize, lo: usize, hi: usize| {
             if (lo..=hi).contains(&v) {

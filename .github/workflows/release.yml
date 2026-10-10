@@ -1,4 +1,4 @@
-# Builds måqtt for Linux and macOS when a version tag is pushed, and attaches the packages to a
+# Builds mÅqtt for Linux and macOS when a version tag is pushed, and attaches the packages to a
 # draft GitHub release. macOS builds are unsigned; see the README for opening them.
 name: Release
 
@@ -50,7 +50,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: måqtt ${{ github.ref_name }}
+          releaseName: mÅqtt ${{ github.ref_name }}
           releaseBody: |
             Linux: the .rpm (Fedora), .deb (Debian, Ubuntu) or the AppImage.
             macOS: the .dmg. It isn't signed; see "Installing" in the README to open it.

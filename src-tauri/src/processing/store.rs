@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 const EXTENSION: &str = "pipe";
-/// Beside the `.pipe` files: which Pipelines start with måqtt.
+/// Beside the `.pipe` files: which Pipelines start with mÅqtt.
 const SETTINGS: &str = "settings.json";
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -73,12 +73,12 @@ impl PipelineFiles {
         &self.dir
     }
 
-    /// The Pipelines marked to start with måqtt, sorted.
+    /// The Pipelines marked to start with mÅqtt, sorted.
     pub fn starts_with_app(&self) -> Vec<String> {
         self.settings().start_with_app
     }
 
-    /// Marks a Pipeline to start with måqtt, or unmarks it.
+    /// Marks a Pipeline to start with mÅqtt, or unmarks it.
     pub fn set_starts_with_app(&self, name: &str, on: bool) -> Result<(), String> {
         let mut settings = self.settings();
         settings.start_with_app.retain(|n| n != name);

@@ -44,7 +44,7 @@ interface Props {
   onClearRetained: () => void;
   onConfirmClear: () => void;
   onCancelClear: () => void;
-  /** Forgets the topic's messages (and those below it) in måqtt. */
+  /** Forgets the topic's messages (and those below it) in mÅqtt. */
   onClearMessages: () => void;
 }
 
@@ -93,7 +93,7 @@ export function TopicDetail({
             </button>
             <button
               onClick={onClearMessages}
-              title="Forget these messages in måqtt, to see what comes next. The Broker isn't touched."
+              title="Forget these messages in mÅqtt, to see what comes next. The Broker isn't touched."
             >
               {node.children.size > 0
                 ? "Clear messages here and below"

@@ -15,7 +15,7 @@ export type ProfileView = { hasPassword: boolean, id: ProfileId, name: string, h
  */
 cleanStart: boolean, keepAliveSecs: number, subscriptions: Array<Subscription>, historyPerTopic: number, 
 /**
- * Connect when måqtt starts.
+ * Connect when mÅqtt starts.
  */
 connectAtStartup: boolean, 
 /**

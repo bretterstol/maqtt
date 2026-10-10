@@ -199,7 +199,7 @@ export function ProfileEditor({
               </label>
               {tls.insecureSkipVerify && (
                 <p className="editor__warning">
-                  måqtt will accept any certificate this Broker presents, so
+                  mÅqtt will accept any certificate this Broker presents, so
                   anyone between you and the Broker can read and change the
                   traffic, credentials included. Only use this on networks you
                   trust.
@@ -216,7 +216,7 @@ export function ProfileEditor({
               checked={draft.connectAtStartup}
               onChange={(e) => set({ connectAtStartup: e.target.checked })}
             />
-            Connect when måqtt starts
+            Connect when mÅqtt starts
           </label>
           <label className="editor__check">
             <input

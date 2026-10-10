@@ -73,6 +73,11 @@ textarea {
   letter-spacing: -0.01em;
 }
 
+/* The Å of the wordmark, in the icon's lamp amber. */
+.app__brand-ring {
+  color: var(--lamp);
+}
+
 .app__body {
   flex: 1;
   min-height: 0;

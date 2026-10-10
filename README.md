@@ -1,4 +1,4 @@
-# måqtt
+# mÅqtt
 
 A desktop MQTT client for exploring and debugging live traffic on several Brokers at once. Built with Tauri (Rust) and React, for Linux and macOS.
 
@@ -23,7 +23,7 @@ Download a build from the [Releases](https://github.com/bretterstol/maqtt/releas
 - **Fedora:** `sudo dnf install ./maqtt-<version>-1.x86_64.rpm`
 - **Debian, Ubuntu:** `sudo apt install ./maqtt_<version>_amd64.deb`
 - **Any Linux:** `chmod +x maqtt_<version>_amd64.AppImage` and run it
-- **macOS:** open the `.dmg` and drag måqtt to Applications. The build isn't signed, so the first time, right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/maqtt.app`. macOS asks once whether måqtt may use the Keychain; allow it so stored passwords work.
+- **macOS:** open the `.dmg` and drag mÅqtt to Applications. The build isn't signed, so the first time, right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/maqtt.app`. macOS asks once whether mÅqtt may use the Keychain; allow it so stored passwords work.
 
 ## Building a release
 
@@ -80,17 +80,17 @@ A Profile can have API Specs: AsyncAPI files (2.x or 3.x, YAML or JSON) describi
 
 Profiles are stored in `~/.config/maqtt/profiles.toml` (Linux) or `~/Library/Application Support/maqtt/profiles.toml` (macOS); set `MAQTT_CONFIG_DIR` to use another directory. Passwords are kept in the OS keyring (Secret Service / Keychain), never in the file.
 
-On first run, debug builds create Profiles for the dev Broker (plain, TLS and mTLS) so you can connect straight away. A Profile with **Connect when måqtt starts** ticked connects at startup; `MAQTT_AUTOCONNECT=all` (or a comma-separated list of Profile names) connects others too, for a single run.
+On first run, debug builds create Profiles for the dev Broker (plain, TLS and mTLS) so you can connect straight away. A Profile with **Connect when mÅqtt starts** ticked connects at startup; `MAQTT_AUTOCONNECT=all` (or a comma-separated list of Profile names) connects others too, for a single run.
 
 ## Pipelines
 
 The Pipelines tab runs short programs over live messages: `from` a Broker, a file or another Pipeline, through Stages such as `filter`, `map`, `window` and `join` (expressions are jq), `to` the app as Derived Topics, a Broker, a file, a map or a chart. The editor previews a draft on recent messages as you type, and the Reference panel beside it lists every Stage with examples.
 
-Each Pipeline is a `.pipe` file in the `pipelines` folder beside `profiles.toml`, and `to file` and `from file` use the `files` folder next to it. Both can be edited outside måqtt. A Pipeline marked to start with måqtt does so on launch.
+Each Pipeline is a `.pipe` file in the `pipelines` folder beside `profiles.toml`, and `to file` and `from file` use the `files` folder next to it. Both can be edited outside mÅqtt. A Pipeline marked to start with mÅqtt does so on launch.
 
 ## Settings
 
-The **Settings** button at the right of the title bar opens them: whether Pipelines and the Message Log are shown, history and scrollback limits, how the Topic Tree opens, and the theme. They're kept in `settings.toml` beside `profiles.toml`, readable and editable by hand. Whether a Broker connects on start is set in its Profile (**Connect when måqtt starts**).
+The **Settings** button at the right of the title bar opens them: whether Pipelines and the Message Log are shown, history and scrollback limits, how the Topic Tree opens, and the theme. They're kept in `settings.toml` beside `profiles.toml`, readable and editable by hand. Whether a Broker connects on start is set in its Profile (**Connect when mÅqtt starts**).
 
 ## Checks
 

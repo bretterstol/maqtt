@@ -22,7 +22,7 @@ pub const VARIABLES: [&str; 9] = [
 /// A `scan` update runs on `[previous result, value]`, so `$acc` exists only inside it.
 pub const SCAN_WRAP: (&str, &str) = (". as [$acc, $__value] | $__value | (", ")");
 
-/// Functions måqtt adds to jq, mostly for the lists a `window` sends.
+/// Functions mÅqtt adds to jq, mostly for the lists a `window` sends.
 const OWN_DEFS: &str = r#"
 def avg(f): map(f) | if length == 0 then null else add / length end;
 def sum(f): map(f) | add;

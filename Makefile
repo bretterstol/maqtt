@@ -1,4 +1,4 @@
-# Shortcuts for developing and running måqtt. `make` on its own lists them.
+# Shortcuts for developing and running mÅqtt. `make` on its own lists them.
 
 .DEFAULT_GOAL := help
 SHELL := bash

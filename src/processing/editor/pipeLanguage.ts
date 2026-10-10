@@ -17,7 +17,7 @@ const inStringNow = (state: ScanState) =>
 const STRUCTURE = '"#([{)]}';
 
 /**
- * Tokens for måqtt's pipeline language, by the parser's own rules (scanner.ts): the state
+ * Tokens for mÅqtt's pipeline language, by the parser's own rules (scanner.ts): the state
  * carried from line to line is the scanner's, so strings, `{…}` fills and comments end where
  * the parser says. Code, inside fills too, is coloured by the same word rules.
  */

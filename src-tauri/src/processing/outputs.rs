@@ -2,7 +2,7 @@
 //! outputs (markers, chart lines, inspected values, counts, errors), shared by a running
 //! Pipeline and by Preview.
 //!
-//! What has to leave måqtt's own memory (a Derived Topic onto the bus, a republished message,
+//! What has to leave mÅqtt's own memory (a Derived Topic onto the bus, a republished message,
 //! a line in a file) comes back as a [`Delivery`] for the caller: a running Pipeline delivers
 //! it, Preview lists it as what would be sent. Nothing here touches threads, files or the
 //! network, so it's tested by feeding it Effects.
@@ -49,7 +49,7 @@ pub struct Outputs {
     pub chart: Lines,
 }
 
-/// What a Sink sends out of måqtt's own memory, for the caller to deliver (or, in Preview,
+/// What a Sink sends out of mÅqtt's own memory, for the caller to deliver (or, in Preview,
 /// to show as what would be sent). Once delivered, the caller says so with
 /// [`Outputs::delivered`] or [`Outputs::failed`].
 #[derive(Debug, Clone, PartialEq)]

@@ -1,4 +1,4 @@
-// Settings (src-tauri/src/settings.rs): how måqtt behaves, in settings.toml beside the Profiles.
+// Settings (src-tauri/src/settings.rs): how mÅqtt behaves, in settings.toml beside the Profiles.
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Settings } from "../generated/Settings";

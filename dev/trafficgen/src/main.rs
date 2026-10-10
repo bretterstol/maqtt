@@ -1,4 +1,4 @@
-//! Publishes fake, repeatable-ish MQTT traffic against the dev Broker so måqtt has something
+//! Publishes fake, repeatable-ish MQTT traffic against the dev Broker so mÅqtt has something
 //! realistic to explore: slowly drifting JSON sensors, retained status topics, bursts, binary
 //! payloads, and optionally a wide fleet of topics for stress-testing the Topic Tree.
 
@@ -29,7 +29,7 @@ const BATTERY_DRAIN_PER_SEC: f64 = 1.0 / 180.0;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
-    about = "Generate fake MQTT traffic for måqtt development",
+    about = "Generate fake MQTT traffic for mÅqtt development",
     args_override_self = true
 )]
 struct Args {

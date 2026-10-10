@@ -1,4 +1,4 @@
-# måqtt v1 plan
+# mÅqtt v1 plan
 
 v1 = explore, debug, and publish across several Brokers at once. Vocabulary follows [CONTEXT.md](../CONTEXT.md); architectural decisions live in [docs/adr/](./adr/).
 
@@ -9,7 +9,7 @@ Each milestone is a vertical slice that ends in something runnable and checked a
 - **Shell**: Tauri 2, targeting Linux and macOS ([ADR 0001](./adr/0001-rust-tauri-desktop-shell.md))
 - **Backend**: Rust, `tokio`, `rumqttc` (both `rumqttc` and `rumqttc::v5`), `keyring`, `serde` + `toml`, `directories`
 - **Frontend**: React + TypeScript + Vite, TanStack Virtual for large lists, Zustand for state, `jsondiffpatch` (or similar) for payload diffs
-- **Identifiers**: `maqtt` (crate, binary, config dir); display name **måqtt**; bundle ID `io.github.bretterstol.maqtt`
+- **Identifiers**: `maqtt` (crate, binary, config dir); display name **mÅqtt**; bundle ID `io.github.bretterstol.maqtt`
 
 ## Architecture outline
 
@@ -90,7 +90,7 @@ Each milestone is a vertical slice that ends in something runnable and checked a
 - Publish History, re-sendable with one click
 - "Clear retained" from the Topic Tree context menu, with confirmation
 
-**Done when:** a message published from måqtt round-trips into the Topic Tree, and clearing a retained topic removes its retained value on the Broker.
+**Done when:** a message published from mÅqtt round-trips into the Topic Tree, and clearing a retained topic removes its retained value on the Broker.
 
 ### M8: Getting data out
 

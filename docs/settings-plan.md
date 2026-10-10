@@ -1,6 +1,6 @@
 # Settings plan
 
-A place to change how måqtt behaves, instead of environment variables, constants in the code and preferences scattered across browser storage. Vocabulary follows [CONTEXT.md](../CONTEXT.md).
+A place to change how mÅqtt behaves, instead of environment variables, constants in the code and preferences scattered across browser storage. Vocabulary follows [CONTEXT.md](../CONTEXT.md).
 
 Status: done. S1, S2 and S3 are built. The decisions are at the end.
 
@@ -23,7 +23,7 @@ Browser storage is per machine and invisible: it isn't in the config folder, so 
 ## Principles
 
 - **One file, beside the Profiles.** `settings.toml` in the config folder, next to `profiles.toml`: plain text, readable and editable by hand, and carried with the config folder (which also keeps the sandbox, `MAQTT_CONFIG_DIR`, separate).
-- **Defaults are today's behaviour.** A missing file or a missing key means exactly what måqtt does now, so nobody's setup changes on upgrade.
+- **Defaults are today's behaviour.** A missing file or a missing key means exactly what mÅqtt does now, so nobody's setup changes on upgrade.
 - **Settings describe the app, not a Pipeline or a Profile.** What belongs to one Broker stays on its Profile; what belongs to one Pipeline stays with it (its start-with-app mark stays in `pipelines/settings.json`).
 - **Changes apply at once** where they can; the few that need a restart (the history limits, which size the stores) say so beside the control.
 - **Environment variables still win** for the session they're set in, so the sandbox and scripted runs keep working.
@@ -41,7 +41,7 @@ Browser storage is per machine and invisible: it isn't in the config folder, so 
 
 Values out of range are refused with what's allowed (history 1,000 to 10,000,000; live 100 to 100,000; scrollback from the live count to 1,000,000), and nothing is saved.
 
-**Connect at startup** isn't a setting here: it's a tick on each Broker Profile, "Connect when måqtt starts", beside the Broker it's about (as Start with måqtt is on each Pipeline). `MAQTT_AUTOCONNECT` keeps working for its session.
+**Connect at startup** isn't a setting here: it's a tick on each Broker Profile, "Connect when mÅqtt starts", beside the Broker it's about (as Start with mÅqtt is on each Pipeline). `MAQTT_AUTOCONNECT` keeps working for its session.
 
 ## Where it's changed
 
@@ -59,7 +59,7 @@ Status: done on the `settings-s1` branch. A **Settings** button at the right of 
 
 ### S2: Startup, history and defaults
 
-"Connect when måqtt starts" on each Broker Profile, history per Connection, the Message Log's live count and scrollback, and the QoS for new Subscriptions. `MAQTT_AUTOCONNECT` keeps working for its session.
+"Connect when mÅqtt starts" on each Broker Profile, history per Connection, the Message Log's live count and scrollback, and the QoS for new Subscriptions. `MAQTT_AUTOCONNECT` keeps working for its session.
 
 **Done when:** a Broker ticked to connect does so on the next start without the environment variable, and the history, scrollback and QoS settings take effect.
 
@@ -69,9 +69,9 @@ Status: done on the `settings-s2` branch. None of them needs a restart after all
 
 Theme, and the Topic Tree's opening preference moved from browser storage into the file (read once from browser storage, so nobody's current choice is lost).
 
-**Done when:** the theme follows the setting in both directions, and nothing måqtt remembers lives in browser storage any more except what's purely per window.
+**Done when:** the theme follows the setting in both directions, and nothing mÅqtt remembers lives in browser storage any more except what's purely per window.
 
-Status: done on the `settings-s3` branch. The theme sets the page's colour scheme, which every colour follows; the window's own frame is left to the system, as on Linux setting the window's theme back to "system" turns the dark preference off instead of following the desktop (found while checking: a fresh start came up light on a dark desktop). The Topic Tree's own menu and Settings change the same setting; a choice an older måqtt left in browser storage is moved into the file once. What stays in browser storage is the Pipelines Reference panel being open, which is per window. Checked over WebDriver across a restart: the old choice moved into the file and the tree opened with it, the light theme applied from the start, the tree's menu saved to the file, and system, light and dark each gave the right colours on a dark desktop.
+Status: done on the `settings-s3` branch. The theme sets the page's colour scheme, which every colour follows; the window's own frame is left to the system, as on Linux setting the window's theme back to "system" turns the dark preference off instead of following the desktop (found while checking: a fresh start came up light on a dark desktop). The Topic Tree's own menu and Settings change the same setting; a choice an older mÅqtt left in browser storage is moved into the file once. What stays in browser storage is the Pipelines Reference panel being open, which is per window. Checked over WebDriver across a restart: the old choice moved into the file and the tree opened with it, the light theme applied from the start, the tree's menu saved to the file, and system, light and dark each gave the right colours on a dark desktop.
 
 ## Since the plan
 

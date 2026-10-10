@@ -2,7 +2,7 @@ import { EditorView } from "@codemirror/view";
 import "./editor.css";
 
 /**
- * The look every code editor in måqtt shares (Pipelines, Publish): the app's colours and
+ * The look every code editor in mÅqtt shares (Pipelines, Publish): the app's colours and
  * monospace, underlined problems, and tooltips. Languages add their own highlighting.
  */
 export const editorTheme = EditorView.theme({
