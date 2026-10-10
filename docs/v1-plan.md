@@ -107,7 +107,7 @@ Each milestone is a vertical slice that ends in something runnable and checked a
 
 **Done when:** v1 is installed and used day-to-day on both machines.
 
-Status: Linux packages build locally, and the release binary passes the WebDriver scenarios. The `Release` workflow (tag `v*`) and `CI` workflow are written but haven't run yet; the macOS build is untested.
+Status: Linux packages build locally, and the release binary passes the WebDriver scenarios. The `CI` workflow runs on every pull request and push to `main` and passes. The `Release` workflow (tag `v*`) has run for v0.1.0 through v0.1.4 and passes, building the Linux packages and an unsigned universal macOS .dmg into a draft GitHub release. The macOS .dmg builds in CI; running it day-to-day on the Mac is what's left for "done".
 
 ## Risks and things to check early
 
