@@ -1,4 +1,4 @@
-//! One face over `rumqttc`'s separate MQTT 3.1.1 and MQTT 5 clients, so the rest of måqtt
+//! One face over `rumqttc`'s separate MQTT 3.1.1 and MQTT 5 clients, so the rest of mÅqtt
 //! never needs to know which protocol a Connection speaks.
 
 use std::sync::Arc;

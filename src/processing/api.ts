@@ -48,7 +48,7 @@ export const savePipeline = (
 export const deletePipeline = (name: string): Promise<void> =>
   invoke("delete_pipeline", { name });
 
-/** Marks a Pipeline to start with måqtt, or unmarks it; doesn't start or stop it now. */
+/** Marks a Pipeline to start with mÅqtt, or unmarks it; doesn't start or stop it now. */
 export const setPipelineStartsWithApp = (
   name: string,
   on: boolean,

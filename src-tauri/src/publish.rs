@@ -1,4 +1,4 @@
-//! Publishing from måqtt: what a message to send looks like, and the Publish History of
+//! Publishing from mÅqtt: what a message to send looks like, and the Publish History of
 //! recent sends, kept in the config directory so it survives restarts.
 
 use std::collections::VecDeque;

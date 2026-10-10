@@ -1,4 +1,4 @@
-//! Getting data out of måqtt: the Message Log as JSON Lines, and portable paths for Broker
+//! Getting data out of mÅqtt: the Message Log as JSON Lines, and portable paths for Broker
 //! Profile files moved between machines.
 
 use std::collections::HashMap;

@@ -26,7 +26,7 @@ interface Props {
   onImported: (profiles: ProfileView[]) => void;
 }
 
-const PROFILE_FILE_FILTER = [{ name: "måqtt Profiles", extensions: ["toml"] }];
+const PROFILE_FILE_FILTER = [{ name: "mÅqtt Profiles", extensions: ["toml"] }];
 
 async function exportAll() {
   const path = await chooseSavePath({

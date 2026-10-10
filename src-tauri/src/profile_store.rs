@@ -44,6 +44,49 @@ fn entry(key: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, key).map_err(|err| format!("Keyring unavailable: {err}"))
 }
 
+/// Remembers what another SecretStore holds, so each secret is read from it at most once per
+/// run. On macOS every Keychain read may ask the user for permission; this keeps it to one ask
+/// per secret. Failed reads aren't remembered, so they're tried again.
+pub struct CachedSecrets<S> {
+    inner: S,
+    known: std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
+}
+
+impl<S> CachedSecrets<S> {
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner,
+            known: Default::default(),
+        }
+    }
+}
+
+impl<S: SecretStore> SecretStore for CachedSecrets<S> {
+    fn get(&self, key: &str) -> Result<Option<String>, String> {
+        let mut known = self.known.lock().unwrap();
+        if let Some(secret) = known.get(key) {
+            return Ok(secret.clone());
+        }
+        let secret = self.inner.get(key)?;
+        known.insert(key.into(), secret.clone());
+        Ok(secret)
+    }
+
+    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+        let mut known = self.known.lock().unwrap();
+        self.inner.set(key, secret)?;
+        known.insert(key.into(), Some(secret.into()));
+        Ok(())
+    }
+
+    fn delete(&self, key: &str) -> Result<(), String> {
+        let mut known = self.known.lock().unwrap();
+        self.inner.delete(key)?;
+        known.insert(key.into(), None);
+        Ok(())
+    }
+}
+
 /// Keeps secrets in memory; for tests.
 #[cfg(test)]
 #[derive(Default)]
@@ -200,7 +243,7 @@ impl ProfileStore {
         let text = toml::to_string_pretty(&ProfilesFile { profiles })
             .map_err(|err| format!("Couldn't serialize Profiles: {err}"))?;
         let text =
-            format!("# Broker Profiles exported from måqtt. Passwords are not included.\n\n{text}");
+            format!("# Broker Profiles exported from mÅqtt. Passwords are not included.\n\n{text}");
         write_atomically(path, &text)
             .map_err(|err| format!("Couldn't write {}: {err}", path.display()))?;
         Ok(count)
@@ -211,7 +254,7 @@ impl ProfileStore {
         let text = std::fs::read_to_string(path)
             .map_err(|err| format!("Couldn't read {}: {err}", path.display()))?;
         let file: ProfilesFile = toml::from_str(&text)
-            .map_err(|err| format!("{} isn't a måqtt Profiles file: {err}", path.display()))?;
+            .map_err(|err| format!("{} isn't a mÅqtt Profiles file: {err}", path.display()))?;
         let mut report = ImportReport::default();
         for mut profile in file.profiles {
             if self.get(&profile.id).is_some() {
@@ -280,6 +323,71 @@ mod tests {
 
     fn store(path: &Path) -> ProfileStore {
         ProfileStore::load(path.to_path_buf(), Box::new(MemorySecrets::default())).unwrap()
+    }
+
+    /// A MemorySecrets that counts reads, and fails them while `failing` is set.
+    #[derive(Default)]
+    struct CountingSecrets {
+        secrets: MemorySecrets,
+        reads: std::sync::atomic::AtomicUsize,
+        failing: std::sync::atomic::AtomicBool,
+    }
+
+    impl SecretStore for &CountingSecrets {
+        fn get(&self, key: &str) -> Result<Option<String>, String> {
+            use std::sync::atomic::Ordering;
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.failing.load(Ordering::SeqCst) {
+                return Err("locked".into());
+            }
+            self.secrets.get(key)
+        }
+
+        fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+            self.secrets.set(key, secret)
+        }
+
+        fn delete(&self, key: &str) -> Result<(), String> {
+            self.secrets.delete(key)
+        }
+    }
+
+    #[test]
+    fn cached_secrets_read_each_secret_once() {
+        use std::sync::atomic::Ordering;
+        let counting = CountingSecrets::default();
+        counting.secrets.set("a", "hunter2").unwrap();
+        let cached = CachedSecrets::new(&counting);
+
+        assert_eq!(cached.get("a").unwrap().as_deref(), Some("hunter2"));
+        assert_eq!(cached.get("a").unwrap().as_deref(), Some("hunter2"));
+        assert_eq!(cached.get("missing").unwrap(), None);
+        assert_eq!(cached.get("missing").unwrap(), None);
+        assert_eq!(counting.reads.load(Ordering::SeqCst), 2);
+
+        cached.set("a", "changed").unwrap();
+        cached.delete("missing").unwrap();
+        assert_eq!(cached.get("a").unwrap().as_deref(), Some("changed"));
+        assert_eq!(cached.get("missing").unwrap(), None);
+        assert_eq!(
+            counting.secrets.get("a").unwrap().as_deref(),
+            Some("changed")
+        );
+        assert_eq!(counting.reads.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn cached_secrets_try_failed_reads_again() {
+        use std::sync::atomic::Ordering;
+        let counting = CountingSecrets::default();
+        counting.secrets.set("a", "hunter2").unwrap();
+        let cached = CachedSecrets::new(&counting);
+
+        counting.failing.store(true, Ordering::SeqCst);
+        assert!(cached.get("a").is_err());
+        counting.failing.store(false, Ordering::SeqCst);
+        assert_eq!(cached.get("a").unwrap().as_deref(), Some("hunter2"));
+        assert_eq!(counting.reads.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -420,7 +528,7 @@ mod tests {
         let err = store(&temp_path("import-garbage-store"))
             .import_from(&file, Path::new("/home/me"))
             .unwrap_err();
-        assert!(err.contains("isn't a måqtt Profiles file"), "{err}");
+        assert!(err.contains("isn't a mÅqtt Profiles file"), "{err}");
     }
 
     #[test]

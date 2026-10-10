@@ -109,7 +109,7 @@ function App() {
   useEffect(() => {
     void getSettings().then(
       async (view) => {
-        // An older måqtt kept how the tree opens in browser storage: hand it over, once.
+        // An older mÅqtt kept how the tree opens in browser storage: hand it over, once.
         const old = takeOldExpandMode();
         if (old && old !== view.settings.topicTree.opens) {
           view = await saveSettings({
@@ -334,7 +334,9 @@ function App() {
     <SettingsContext.Provider value={inForce}>
       <div className="app">
         <header className="app__header">
-          <strong>måqtt</strong>
+          <strong>
+            m<span className="app__brand-ring">Å</span>qtt
+          </strong>
           <button
             className={publishing ? "is-active" : undefined}
             onClick={() => setPublishing((open) => !open)}

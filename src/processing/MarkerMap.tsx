@@ -3,7 +3,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Marker } from "./api";
 
-// OpenStreetMap's tiles: the one server besides the Brokers that måqtt talks to, and only while
+// OpenStreetMap's tiles: the one server besides the Brokers that mÅqtt talks to, and only while
 // a map is shown. Their policy asks for this credit; it's plain text, as a link would open
 // inside the app.
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";

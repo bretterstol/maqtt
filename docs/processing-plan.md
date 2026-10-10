@@ -1,6 +1,6 @@
 # Pipelines plan
 
-Pipelines let you write short `|>` programs that take live messages, transform them, and send the results somewhere: first back into måqtt as Derived Topics, later to Brokers, files and a map. Vocabulary follows [CONTEXT.md](../CONTEXT.md); the big decisions are [ADR 0003](./adr/0003-pipeline-language.md) (language and runtime) and [ADR 0004](./adr/0004-processing-is-removable.md) (a removable module).
+Pipelines let you write short `|>` programs that take live messages, transform them, and send the results somewhere: first back into mÅqtt as Derived Topics, later to Brokers, files and a map. Vocabulary follows [CONTEXT.md](../CONTEXT.md); the big decisions are [ADR 0003](./adr/0003-pipeline-language.md) (language and runtime) and [ADR 0004](./adr/0004-processing-is-removable.md) (a removable module).
 
 Work happens on the `processing` branch. Each milestone is merged into `main` after you have tried it and approved it.
 
@@ -127,7 +127,7 @@ from "Fleet" |> filter topic "trucks/+id/gps" |> map { lat: .lat, lon: .lng, lab
 - `lat` must be a number from -90 to 90 and `lon` from -180 to 180; other values are reported as errors.
 - A list of points is a snapshot of the whole map: markers named in it move on (keeping their trails), new ones are placed, and the rest are removed. Each point is kept under its `label`, or its place in the list without one; a bad point is reported and the rest are still used. So `map { lat: .lat, lon: .lng, label: .id } |> window 3s |> to geo` shows exactly the trucks that reported in the last 3 s. Empty windows send nothing, so if every truck goes quiet the last snapshot stays.
 - **Map** in the output panel shows the markers instead of the list: the draft's under Preview, the running Pipeline's under Live. It zooms to the markers when they first appear.
-- The map is Leaflet (loaded only when first shown) with OpenStreetMap's raster tiles. That is the one server besides the Brokers that måqtt contacts, only while a map is on screen, and the app's content security policy allows images from `tile.openstreetmap.org` for it. OpenStreetMap's credit is shown as plain text, since a link would open inside the app.
+- The map is Leaflet (loaded only when first shown) with OpenStreetMap's raster tiles. That is the one server besides the Brokers that mÅqtt contacts, only while a map is on screen, and the app's content security policy allows images from `tile.openstreetmap.org` for it. OpenStreetMap's credit is shown as plain text, since a link would open inside the app.
 
 ### Charts
 
@@ -180,12 +180,12 @@ from pipeline "clean" |> filter topic "rooms/+room" |> filter .t > 25 |> to app 
 - Preview samples the named Pipelines' recent Derived Topics from history.
 - A source that isn't running sends nothing; renaming one means updating the `from pipeline` lines that name it.
 
-### Starting with måqtt
+### Starting with mÅqtt
 
-**Start with måqtt** in a Pipeline's header marks it to start whenever the app starts, so a recording with `to file` or a mirror with `to broker` keeps going without anyone pressing Start. Ticking it doesn't start or stop the Pipeline now.
+**Start with mÅqtt** in a Pipeline's header marks it to start whenever the app starts, so a recording with `to file` or a mirror with `to broker` keeps going without anyone pressing Start. Ticking it doesn't start or stop the Pipeline now.
 
 - Marked Pipelines start right after the Brokers set to autoconnect begin connecting. A Pipeline reading a Broker that isn't connected yet simply waits for its messages, as a started one always does.
-- One that can't start (its file was edited into something that doesn't parse) shows "Didn't start with måqtt" and why in its panel. A mark for a file that's gone is dropped.
+- One that can't start (its file was edited into something that doesn't parse) shows "Didn't start with mÅqtt" and why in its panel. A mark for a file that's gone is dropped.
 - The marks are kept in `settings.json` beside the `.pipe` files, not in the Pipeline's code, so the language stays about what a Pipeline does. Renaming a Pipeline carries its mark; deleting it removes it.
 
 ### Storage

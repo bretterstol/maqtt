@@ -353,7 +353,7 @@ export default function PipelinesTab() {
                       : p.status.finished
                         ? "Finished"
                         : "Stopped") +
-                    (p.startsWithApp ? ", starts with måqtt" : "")
+                    (p.startsWithApp ? ", starts with mÅqtt" : "")
                   }
                 />
                 <span className="pipelines__name">
@@ -460,7 +460,7 @@ export default function PipelinesTab() {
                 </button>
                 <label
                   className="pipelines__autostart"
-                  title="Start this Pipeline whenever måqtt starts. It follows its Brokers as they connect."
+                  title="Start this Pipeline whenever mÅqtt starts. It follows its Brokers as they connect."
                 >
                   <input
                     type="checkbox"
@@ -469,7 +469,7 @@ export default function PipelinesTab() {
                       void setStartsWithApp(current.name, e.target.checked)
                     }
                   />
-                  Start with måqtt
+                  Start with mÅqtt
                 </label>
                 <button
                   disabled={!dirty}

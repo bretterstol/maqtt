@@ -1,6 +1,6 @@
 //! Pipelines: user code that transforms live messages. See docs/processing-plan.md.
 //!
-//! Per ADR 0004 this module is removable: it reaches the rest of måqtt only through the Message
+//! Per ADR 0004 this module is removable: it reaches the rest of mÅqtt only through the Message
 //! Bus, the Connection names it reads, a read-only view of recent messages for Preview, a way to
 //! send on a Connection for `to broker`, and the commands below, which `lib.rs` registers.
 
@@ -75,7 +75,7 @@ impl Processing {
         self.runner.stop_all();
     }
 
-    /// Starts the Pipelines marked to start with måqtt: once, as the app starts. One that can't
+    /// Starts the Pipelines marked to start with mÅqtt: once, as the app starts. One that can't
     /// start says why in its panel; one whose file is gone is unmarked.
     pub fn start_marked(&self) {
         for name in self.files.starts_with_app() {
@@ -97,7 +97,7 @@ impl Processing {
                 .and_then(|pipeline| self.runner.start(&name, pipeline));
             if let Err(err) = started {
                 self.runner
-                    .failed(&name, format!("Didn't start with måqtt: {err}"));
+                    .failed(&name, format!("Didn't start with mÅqtt: {err}"));
             }
         }
     }
@@ -163,7 +163,7 @@ pub fn delete_pipeline(state: State<'_, Processing>, name: String) -> Result<(),
     state.files.delete(&name)
 }
 
-/// Marks a Pipeline to start when måqtt starts, or unmarks it. It doesn't start or stop it now.
+/// Marks a Pipeline to start when mÅqtt starts, or unmarks it. It doesn't start or stop it now.
 #[tauri::command]
 pub fn set_pipeline_starts_with_app(
     state: State<'_, Processing>,
@@ -248,7 +248,7 @@ pub async fn preview_pipeline(
 ) -> Result<Preview, String> {
     let busy = Busy(state.previewing.clone());
     if state.previewing.fetch_add(1, Ordering::SeqCst) >= MAX_PREVIEWS {
-        return Err("Earlier Previews are stuck on expressions that never end, each keeping a CPU busy. Restart måqtt to free them.".into());
+        return Err("Earlier Previews are stuck on expressions that never end, each keeping a CPU busy. Restart mÅqtt to free them.".into());
     }
     let names = state
         .statuses
@@ -321,7 +321,7 @@ mod tests {
         );
         let files = &processing.files;
         files.save("good", "from all |> to app \"x\"").unwrap();
-        // Edited outside måqtt into something that doesn't parse.
+        // Edited outside mÅqtt into something that doesn't parse.
         std::fs::write(dir.join("pipelines/broken.pipe"), "from all |> sort").unwrap();
         for name in ["good", "broken", "gone"] {
             files.set_starts_with_app(name, true).unwrap();
@@ -337,7 +337,7 @@ mod tests {
                 .outputs
                 .last_error
                 .unwrap()
-                .starts_with("Didn't start with måqtt: Line 1, column 13: Unknown Stage `sort`")
+                .starts_with("Didn't start with mÅqtt: Line 1, column 13: Unknown Stage `sort`")
         );
         assert_eq!(files.starts_with_app(), ["broken", "good"]);
 

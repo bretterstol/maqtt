@@ -1,4 +1,4 @@
-# måqtt
+# mÅqtt
 
 A personal desktop MQTT client for exploring and debugging live traffic on one or more Brokers at the same time.
 
@@ -7,7 +7,7 @@ A personal desktop MQTT client for exploring and debugging live traffic on one o
 ### Brokers and connections
 
 **Broker**:
-An external MQTT server that måqtt connects to. måqtt never acts as a Broker itself.
+An external MQTT server that mÅqtt connects to. mÅqtt never acts as a Broker itself.
 _Avoid_: Server, host
 
 **Broker Profile**:
@@ -19,7 +19,7 @@ A live session to a Broker, opened from a Broker Profile. A Broker Profile has a
 _Avoid_: Session, client, link
 
 **API Spec**:
-An AsyncAPI document (2.x or 3.x) describing a Broker's topics and their messages, attached to a Broker Profile by path. Publishing suggests its Channels and payloads from it. måqtt reads it where it lives and again when it changes.
+An AsyncAPI document (2.x or 3.x) describing a Broker's topics and their messages, attached to a Broker Profile by path. Publishing suggests its Channels and payloads from it. mÅqtt reads it where it lives and again when it changes.
 _Avoid_: OpenAPI, schema, contract
 
 **Channel**:
@@ -41,7 +41,7 @@ A message the Broker stores for a topic and replays to every new subscriber. Cle
 _Avoid_: Sticky message, last value
 
 **Publish History**:
-The list of messages recently published from måqtt, which can be sent again.
+The list of messages recently published from mÅqtt, which can be sent again.
 _Avoid_: Sent log, outbox
 
 **Message Log**:
@@ -51,7 +51,7 @@ _Avoid_: Feed, history, console
 ### Processing
 
 **Pipeline**:
-A piece of code, written in måqtt's pipeline language, that takes messages from a Source, passes them through Stages and hands the results to Sinks. It runs only while you have started it.
+A piece of code, written in mÅqtt's pipeline language, that takes messages from a Source, passes them through Stages and hands the results to Sinks. It runs only while you have started it.
 _Avoid_: Script, rule, flow, job
 
 **Stage**:

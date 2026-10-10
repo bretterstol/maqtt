@@ -4,7 +4,7 @@ import { setSettings, type Settings, type SettingsView } from "./api";
 import "../profiles/ProfileEditor.css";
 import "./SettingsView.css";
 
-/** How måqtt behaves. Changes apply at once and are saved to settings.toml. */
+/** How mÅqtt behaves. Changes apply at once and are saved to settings.toml. */
 export function SettingsDialog({
   view,
   onChanged,
@@ -150,7 +150,7 @@ export function SettingsDialog({
           <p className="settings__does">
             Shows the Pipelines tab and their branch in the Topic Tree. Turned
             off, running Pipelines stop and none start, not even those marked to
-            start with måqtt. Turned on again, those start.
+            start with mÅqtt. Turned on again, those start.
           </p>
         </fieldset>
 

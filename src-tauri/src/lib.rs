@@ -27,7 +27,9 @@ use connection::{ConnectionManager, ConnectionStatuses};
 use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
-use profile_store::{ImportReport, KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
+use profile_store::{
+    CachedSecrets, ImportReport, KeyringSecrets, PasswordChange, ProfileStore, ProfileView,
+};
 use publish::{OutgoingMessage, PublishHistory, PublishRecord};
 use settings::{Settings, SettingsStore, SettingsView};
 use ui_bridge::{LiveFilter, LogEntry, LogRow, MessageDetail, TopicUpdate};
@@ -59,7 +61,7 @@ fn get_settings(state: State<'_, AppState>) -> SettingsView {
 
 /// Saves new settings and applies them: a new history limit trims at once, turning Pipelines
 /// off stops every running one, and turning them on again starts the ones marked to start
-/// with måqtt.
+/// with mÅqtt.
 #[tauri::command]
 fn set_settings(
     state: State<'_, AppState>,
@@ -335,7 +337,7 @@ fn connect_profile(state: &AppState, profile_id: &ProfileId) -> Result<(), Strin
     Ok(())
 }
 
-/// Connects the Profiles ticked "Connect when måqtt starts", and for this session also those
+/// Connects the Profiles ticked "Connect when mÅqtt starts", and for this session also those
 /// `MAQTT_AUTOCONNECT` names (`all`, or a comma-separated list of Profile names).
 fn autoconnect(state: &AppState) {
     let wanted = std::env::var("MAQTT_AUTOCONNECT").unwrap_or_default();
@@ -385,7 +387,7 @@ async fn publish(
     Ok(history.list())
 }
 
-/// Forgets a topic's messages in måqtt, and those of the topics below it: the History Store, the
+/// Forgets a topic's messages in mÅqtt, and those of the topics below it: the History Store, the
 /// Topic Tree and Preview's samples. The Broker isn't touched.
 #[tauri::command]
 fn clear_topic_messages(
@@ -469,7 +471,10 @@ fn unsubscribe(
 }
 
 fn load_profiles() -> Result<ProfileStore, String> {
-    let mut store = ProfileStore::load(ProfileStore::default_path()?, Box::new(KeyringSecrets))?;
+    let mut store = ProfileStore::load(
+        ProfileStore::default_path()?,
+        Box::new(CachedSecrets::new(KeyringSecrets)),
+    )?;
     if cfg!(debug_assertions) && !store.exists() {
         dev_profiles::seed(&mut store)?;
     }

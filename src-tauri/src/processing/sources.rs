@@ -70,7 +70,7 @@ pub enum Arrival {
     Problem(String),
     /// Nothing more will come: the files are read to the end.
     Done,
-    /// The bus closed: måqtt is shutting down.
+    /// The bus closed: mÅqtt is shutting down.
     Closed,
 }
 

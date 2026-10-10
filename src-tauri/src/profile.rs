@@ -47,7 +47,7 @@ pub struct Profile {
     pub subscriptions: Vec<Subscription>,
     #[serde(default = "default_history_per_topic")]
     pub history_per_topic: usize,
-    /// Connect when måqtt starts.
+    /// Connect when mÅqtt starts.
     #[serde(default)]
     pub connect_at_startup: bool,
     /// API Specs (AsyncAPI files) describing the Broker's topics, by path.

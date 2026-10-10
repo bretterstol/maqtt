@@ -11,7 +11,7 @@ export type Profile = { id: ProfileId, name: string, host: string, port: number,
  */
 cleanStart: boolean, keepAliveSecs: number, subscriptions: Array<Subscription>, historyPerTopic: number, 
 /**
- * Connect when måqtt starts.
+ * Connect when mÅqtt starts.
  */
 connectAtStartup: boolean, 
 /**

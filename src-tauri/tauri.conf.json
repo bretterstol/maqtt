@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "måqtt",
+        "title": "mÅqtt",
         "width": 1280,
         "height": 800
       }
@@ -40,7 +40,7 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Explore and debug MQTT traffic on several Brokers at once",
-    "longDescription": "måqtt is a desktop MQTT client for exploring and debugging live traffic: several Brokers side by side, a Topic Tree, message history and diffs, and publishing.",
+    "longDescription": "mÅqtt is a desktop MQTT client for exploring and debugging live traffic: several Brokers side by side, a Topic Tree, message history and diffs, and publishing.",
     "copyright": "© 2026 Åsmund Bryne Retterstøl",
     "linux": {
       "deb": {

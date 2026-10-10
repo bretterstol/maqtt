@@ -179,7 +179,7 @@ export function publish(
 }
 
 /**
- * Forgets a topic's messages in måqtt, and those of the topics below it; the Broker isn't
+ * Forgets a topic's messages in mÅqtt, and those of the topics below it; the Broker isn't
  * touched. The tree hears of it in the next batch's `cleared`.
  */
 export function clearTopicMessages(

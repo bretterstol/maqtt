@@ -1253,7 +1253,7 @@ mod dev_broker_tests {
             republish,
             std::env::temp_dir(),
         );
-        // Reads `in/`, writes `out/` on the same Broker; the Broker sends `out/` back to måqtt,
+        // Reads `in/`, writes `out/` on the same Broker; the Broker sends `out/` back to mÅqtt,
         // which the Pipeline must not take in again.
         let source = format!(
             r#"from "republish test"
