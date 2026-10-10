@@ -27,7 +27,9 @@ use connection::{ConnectionManager, ConnectionStatuses};
 use history::{HistoryLimits, HistoryStore, LogFilter, LogPage, LogQuery};
 use message::ConnectionId;
 use profile::{Profile, ProfileId, Subscription};
-use profile_store::{ImportReport, KeyringSecrets, PasswordChange, ProfileStore, ProfileView};
+use profile_store::{
+    CachedSecrets, ImportReport, KeyringSecrets, PasswordChange, ProfileStore, ProfileView,
+};
 use publish::{OutgoingMessage, PublishHistory, PublishRecord};
 use settings::{Settings, SettingsStore, SettingsView};
 use ui_bridge::{LiveFilter, LogEntry, LogRow, MessageDetail, TopicUpdate};
@@ -469,7 +471,10 @@ fn unsubscribe(
 }
 
 fn load_profiles() -> Result<ProfileStore, String> {
-    let mut store = ProfileStore::load(ProfileStore::default_path()?, Box::new(KeyringSecrets))?;
+    let mut store = ProfileStore::load(
+        ProfileStore::default_path()?,
+        Box::new(CachedSecrets::new(KeyringSecrets)),
+    )?;
     if cfg!(debug_assertions) && !store.exists() {
         dev_profiles::seed(&mut store)?;
     }
